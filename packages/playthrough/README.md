@@ -48,6 +48,11 @@ Launcher, on a server started without `--supervise`:
   start is logged in `keeper_history.jsonl` and the run goes on.
 - The app runs from the bg3-ai checkout: the defaults of `--repo` and `--web` and the memory tools' paths are
   computed from the source tree, and the package isn't published. Relative path options are made absolute at start.
+- Operator messages: with `[operator] messages = true` in the playthrough's `playthrough.toml` (the Launcher's
+  "Allow operator messages"), the Watch screen can send the agent a message. It goes into the next tool result the
+  bg3 server finishes (in a walk, when the walk returns; between sessions, in the next session's first result), once.
+  The files are `runtime/sessions/<pt>/operator.jsonl` (sent) and `operator.delivered.jsonl` (delivered); those
+  sessions are marked guided with their counts in `supervisor.json`. A bench run never takes one.
 - The files the app shares with `runner/play.py` have JSON Schemas in `schemas/`: `supervisor.json`
   (`supervisor.v1`), `runner.json` and `runner.status.json` (no version field yet: play.py writes them too).
 

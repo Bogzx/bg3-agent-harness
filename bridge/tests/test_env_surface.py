@@ -38,6 +38,8 @@ KNOWN = frozenset(
         "BG3AI_METRICS_SAMPLE_S",
         "BG3AI_MOVIE_SKIP",
         "BG3AI_NEW_GAME_ASYNC",
+        "BG3AI_OPERATOR_DIR",  # the app's operator messages (bg3ai.operator): the app's runner sets it, the session's
+        # history row records it (supervisor.json operator); a bench run's env never has it (RunHost._setup)
         "BG3AI_PLAY_DIR",
         "BG3AI_PLAYTHROUGH",
         "BG3AI_PROFILE_DIR",

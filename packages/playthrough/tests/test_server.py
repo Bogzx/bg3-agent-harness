@@ -370,6 +370,40 @@ def test_control_start_stop_resume(store: RunStore, web: Path, tmp_path: Path):
         srv.server_close()
 
 
+def test_operator_messages_post(store: RunStore, web: Path):
+    from bg3play import config
+
+    now = [1_762_340_531.0]
+    srv = serve(App(store, Hub(store, generation="g"), web, clock=lambda: now[0]), "127.0.0.1", 0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    s = ("127.0.0.1", srv.server_address[1], None)
+    path = f"/api/v1/playthroughs/{PT}/messages"
+    inbox = store.session_dir(PT) / "operator.jsonl"
+    try:
+        assert post(s, path, {"text": "rest first"}) == (409, {"v": 1, "error": "operator messages are off for this "
+                                                                         "playthrough"})  # fmt: skip
+        assert not inbox.exists()
+        cfg = config.validate({"v": 1, "name": PT, "operator": {"messages": True}})
+        config.save(store.playthroughs_dir / PT, cfg)
+        assert post(s, path, {"text": "rest first"}) == (201, {"v": 1, "id": "m1", "t": now[0], "status": "queued"})
+        assert post(s, path, {"text": "again"})[0] == 429  # one per 5 s
+        now[0] += 5
+        assert post(s, path, {"text": ""}) == (400, {"v": 1, "error": "text: empty"})
+        assert post(s, path, ["text"])[0] == 400  # not a JSON object
+        assert post(s, path, {"text": "go"}, {"Origin": "http://evil.test"})[0] == 403
+        assert post(s, "/api/v1/playthroughs/nope/messages", {"text": "go"})[0] == 404
+        assert post(s, path, {"text": "then go north"})[1]["id"] == "m2"
+        snap = get_json(s, f"/api/v1/playthroughs/{PT}/watch")[1]["operator"]
+        assert snap["enabled"] is True and [m["id"] for m in snap["messages"]] == ["m1", "m2"]
+        (store.session_dir(PT) / "manifest.json").write_text("{}")  # a bench run's dir never takes one
+        now[0] += 60
+        assert post(s, path, {"text": "go"})[0] == 409
+        assert get_json(s, f"/api/v1/playthroughs/{PT}/watch")[1]["operator"]["enabled"] is False
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 def test_replay_endpoint(server):
     code, r = get_json(server, f"/api/v1/playthroughs/{PT}/replay/S096")
     assert code == 200 and r["session"] == "S096" and r["events"] and r["segments"] == []

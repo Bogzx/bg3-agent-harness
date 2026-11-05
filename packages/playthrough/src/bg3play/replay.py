@@ -1,13 +1,15 @@
 """The Replay screen's data: one session's events on one wall-clock axis, and the recorded video that covers it.
 
     GET /api/v1/playthroughs/<pt>/replay/<session> ->
-        {session, started, ended, events: [{t, kind: "action"|"say"|"memory", ...}], segments: [index rows]}
+        {session, started, ended, events: [{t, kind: "action"|"say"|"memory"|"operator", ...}],
+         segments: [index rows]}
 
 Times are epoch seconds. Tool calls carry their own `t` (actions.jsonl, shared by every playthrough, so cut to the
 session's window); the agent's lines carry only a local HH:MM:SS clock, put on the axis from the session's start
 (the log is written in the machine's local time, so read it on the machine or in the same time zone); memory commits
-have their commit time. Video segments come from recorder.py's index; `recorder.locate` maps a time to (segment,
-offset) and the web app does the same.
+have their commit time; operator messages (operator.py) an event when sent ({id, text, status: "queued"}) and one
+when delivered into a tool result (status "delivered", delivered: {t, session, tool}). Video segments come from
+recorder.py's index; `recorder.locate` maps a time to (segment, offset) and the web app does the same.
 """
 
 from __future__ import annotations
@@ -17,7 +19,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import parse
+from bg3ai import operator as op
+
+from . import operator, parse
 from . import recorder as rec
 from .store import RunStore
 
@@ -73,6 +77,17 @@ def window_actions(path: Path, t0: float, t1: float, limit: int = MAX_EVENTS) ->
     return out
 
 
+def operator_events(sdir: Path, t0: float, t1: float) -> list[dict[str, Any]]:
+    """The operator messages sent, and those delivered (not the redeliver rows), within t0..t1."""
+    msgs = {r["id"]: r for r in op.valid(op.read_rows(sdir / op.INBOX))}
+    out = [dict(operator.row(r, None), kind="operator") for r in msgs.values() if t0 <= r["t"] <= t1]
+    for d in op.read_rows(sdir / op.DELIVERED):
+        t, msg = d.get("t"), msgs.get(str(d.get("id")))
+        if msg is not None and not d.get("redeliver") and isinstance(t, (int, float)) and t0 <= t <= t1:
+            out.append(dict(operator.row(msg, d), t=t, kind="operator"))
+    return out
+
+
 def session_window(store: RunStore, pt: str, session: str, now: float) -> tuple[float, float] | None:
     """(start, end) of a session; a running one ends now (what exists so far)."""
     for s in store.sessions(pt):
@@ -98,6 +113,7 @@ def replay(store: RunStore, pt: str, session: str, video_dir: Path, now: float) 
     for c in store.memory_log(pt, 200):
         if t0 <= c["t"] <= t1 + 900:  # the keeper commits after the session
             events.append({"t": c["t"], "kind": "memory", "subject": c["subject"], "sha": c["sha"]})
+    events += operator_events(store.session_dir(pt), t0, t1)
     events.sort(key=lambda e: e["t"])
     segs = [s for s in rec.read_index(video_dir) if s["start"] <= t1 and (s["end"] is None or s["end"] >= t0)]
     return {"session": session, "started": t0, "ended": t1, "events": events[:MAX_EVENTS], "segments": segs}

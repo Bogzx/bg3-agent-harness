@@ -30,6 +30,8 @@
     height = 720
     [game]
     autoskip = true                    # skip movies, cinematics and voiced lines (play.py --no-autoskip when false)
+    [operator]
+    messages = false                   # the Watch screen may send the agent messages (its sessions are marked guided)
 
 Secrets never go here (keys come from the machine's .env). Parsing, validation and writing are pure functions over
 text and dicts; load/save/migrate are the only file I/O. Unknown keys are errors, so a typo is not silently ignored.
@@ -116,6 +118,11 @@ class GameOptions:
 
 
 @dataclass(frozen=True)
+class Operator:
+    messages: bool = False
+
+
+@dataclass(frozen=True)
 class PlaythroughConfig:
     name: str
     difficulty: str = ""
@@ -125,6 +132,7 @@ class PlaythroughConfig:
     keeper: Keeper = field(default_factory=Keeper)
     recording: Recording = field(default_factory=Recording)
     game: GameOptions = field(default_factory=GameOptions)
+    operator: Operator = field(default_factory=Operator)
     v: int = VERSION
 
 
@@ -135,6 +143,7 @@ SECTIONS: dict[str, type] = {
     "keeper": Keeper,
     "recording": Recording,
     "game": GameOptions,
+    "operator": Operator,
 }
 ENUMS: dict[str, tuple[str, ...]] = {
     "difficulty": ("", *DIFFICULTIES),

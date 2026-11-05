@@ -44,6 +44,7 @@
       <div class="head">
         <h3>{r.session}</h3>
         <span class="faint">{date(r.started)}{r.minutes ? ` · ${num(r.minutes, 0)} min` : ""}</span>
+        {#if r.guided}<span class="chip guided">{r.guided}</span>{/if}
         {#if r.outcome && r.outcome !== "success"}<span class="chip" class:bad={!goodOutcome(r.outcome)} class:ok={goodOutcome(r.outcome)}>{r.outcome}</span>{/if}
         <div class="track" aria-hidden="true">
           {#each r.items as it, i (i)}
@@ -104,6 +105,7 @@
   .head h3 { margin: 0; font: 600 15px var(--mono); }
   .chip.bad { color: var(--bad); }
   .chip.ok { color: var(--ok); }
+  .chip.guided { color: var(--warn); }
   .track { display: flex; flex-wrap: wrap; gap: 2px; flex: 1 1 100%; min-width: 0; }
   .ic { font-size: 12px; line-height: 1; }
   .ic.choice { color: var(--accent-2); }

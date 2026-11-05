@@ -9,7 +9,7 @@
   let sup = $state.raw<SupervisorView | null>(null);
   let enabled = $state(true); // the server runs a supervisor (--supervise)
   let profiles = $state<ClientProfile[] | null>(null); // null until the server answers
-  let form = $state<LaunchForm>({ name: "", profile: "", brief: "", difficulty: "Explorer", minutes: 60, maxCost: 0, recording: true });
+  let form = $state<LaunchForm>({ name: "", profile: "", brief: "", difficulty: "Explorer", minutes: 60, maxCost: 0, recording: true, operator: false });
   let sessions = $state(0);
   let error = $state<string | null>(null);
   let busy = $state(false);
@@ -142,6 +142,7 @@
         <label class="field"><span>Cost cap (USD)</span><input type="number" min="0" step="0.5" bind:value={form.maxCost} />
           <small class="faint">{picked?.client === "pi" ? "required" : "0 = none"}</small></label>
         <label class="check"><input type="checkbox" bind:checked={form.recording} /> Record video</label>
+        <label class="check"><input type="checkbox" bind:checked={form.operator} /> Allow operator messages (the run is marked as guided)</label>
       </div>
     </fieldset>
     {#if error}<div class="error">{error}</div>{/if}

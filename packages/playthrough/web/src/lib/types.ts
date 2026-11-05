@@ -90,6 +90,42 @@ export interface WatchSnapshot {
   latency: Latency | null;
   screenshot: { t: number; name: string } | null;
   stream_id: string;
+  operator?: OperatorView; // absent from a server older than the operator messages
+}
+
+/** Where and when the bridge handed an operator message to the agent: in the result of `tool`. */
+export interface OperatorDelivery {
+  t: number;
+  session: string;
+  tool: string;
+}
+
+/** An operator message: the snapshot's rows and the stream's `operator` event. */
+export interface OperatorMessage {
+  id: string;
+  t: number;
+  text: string;
+  status: "queued" | "delivered";
+  delivered?: OperatorDelivery | null;
+}
+
+export interface OperatorView {
+  enabled: boolean;
+  messages: OperatorMessage[];
+}
+
+/** A session's operator messages (null or absent: the option was off for it). */
+export interface SessionOperator {
+  enabled: boolean;
+  sent: number;
+  delivered: number;
+}
+
+export interface SessionRow {
+  session: string;
+  started: number | null;
+  minutes: number | null;
+  operator?: SessionOperator | null;
 }
 
 export interface Commit {
@@ -146,7 +182,8 @@ export interface Fight {
 export interface TimelinePayload {
   v: number;
   playthrough: string;
-  sessions: { session: string; started: number | null; minutes: number | null; outcome: string | null }[];
+  sessions: { session: string; started: number | null; minutes: number | null; outcome: string | null;
+              operator?: SessionOperator | null }[];
   decisions: Decision[];
   fights: Fight[];
 }
@@ -217,12 +254,14 @@ export interface PlaythroughConfig {
   keeper: { enabled: boolean; model: string; effort: string; minutes: number };
   recording: { enabled: boolean; fps: number; height: number };
   game?: { autoskip: boolean };
+  operator?: { messages: boolean }; // absent from a server older than the operator messages
 }
 
 export type ReplayEvent =
   | { t: number; kind: "action"; tool: string; args: Record<string, unknown>; ms: number | null; ok: boolean; result: string }
   | { t: number; kind: "say"; say: string; text: string }
-  | { t: number; kind: "memory"; subject: string; sha: string };
+  | { t: number; kind: "memory"; subject: string; sha: string }
+  | ({ kind: "operator" } & OperatorMessage); // at its sent time (queued), and again at its delivery (delivered)
 
 export interface ReplayPayload {
   v: number;
@@ -423,6 +462,7 @@ export interface GoalSession {
 
 export interface GoalsPayload {
   v: number;
+  playthrough?: string | null; // the runner's playthrough, whose sessions these are
   goals: Goal[];
   sessions: GoalSession[];
   milestones: Milestones | null;

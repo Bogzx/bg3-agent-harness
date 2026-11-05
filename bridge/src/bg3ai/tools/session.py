@@ -221,6 +221,9 @@ def _compacted(name: str, fn: Callable) -> Callable:
         if isinstance(out, str) and compact.enabled():
             head, sep, body = out.rpartition(BRIEFING_SEP)
             out = head + sep + compact.apply(name, body)
+        if isinstance(out, str):
+            told = reporting.operator_told(name)  # the outermost result only; not compacted (the person's words)
+            out = out + "\n" + told if told else out
         return out
     wrapper.__compacted__ = True
     return wrapper

@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { clock, hpPct, mmss, num } from "../lib/format";
+  import { guidedLine, guidedSessions } from "../lib/operator";
   import { checkAllLine, eventLine, hours, OP_TEXT, passClass, spark, thermalLine } from "../lib/stats";
   import type { BenchGrade, GoalsPayload, LatencyPayload, LivePayload, Milestones, ProgressPayload } from "../lib/types";
   import Bench from "./Bench.svelte";
@@ -16,6 +17,7 @@
   let bench = $state.raw<BenchGrade | null>(null);
   let error = $state<string | null>(null);
   let frameRev = $state(0);
+  let guided = $state.raw<Record<string, string>>({}); // the scorecard's sessions with operator messages on
 
   function every(ms: number, fn: () => Promise<void>): () => void {
     let stopped = false;
@@ -41,7 +43,10 @@
       }),
       every(3000, async () => void (lat = await api.latency())),
       every(5000, async () => void (prog = await api.progress())),
-      every(15000, async () => void (goals = await api.goals())),
+      every(15000, async () => {
+        goals = await api.goals();
+        guided = goals.playthrough ? guidedSessions((await api.sessions(goals.playthrough)).sessions) : {};
+      }),
     ];
     return () => stops.forEach((s) => s());
   });
@@ -139,7 +144,7 @@
       <div class="scroll">
         <table class="goals">
           <thead><tr><th>goal</th><th>target</th>
-            {#each shownSessions as s (s.session)}<th class:live={s.live} class:short={s.short} title={num(s.minutes, 1, " min")}>{s.session}{s.live ? " ●" : ""}</th>{/each}
+            {#each shownSessions as s (s.session)}<th class:live={s.live} class:short={s.short} title={num(s.minutes, 1, " min")}>{s.session}{s.live ? " ●" : ""}{#if guided[s.session]}<span class="guided" title={guided[s.session]}> ⚑</span>{/if}</th>{/each}
             <th>trend</th><th>best</th><th>pass rate</th></tr></thead>
           <tbody>
             {#each goals.goals as g (g.key)}
@@ -160,6 +165,7 @@
         </table>
       </div>
       <div class="body">
+        {#if guidedLine(guided)}<div class="guided">⚑ {guidedLine(guided)}</div>{/if}
         {@render milestones(goals.milestones)}
         {#if u}
           <div class="ms">
@@ -286,6 +292,7 @@
   .kpi .l { font-size: 11px; color: var(--muted); }
   .kpi.pass .v { color: var(--ok); }
   .kpi.fail .v { color: var(--bad); }
+  .guided { color: var(--warn); font-size: 13px; }
   .ms { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; font-size: 13px; }
   .ev { width: 100%; font-size: 12.5px; }
   .ev.ok { color: var(--ok); }

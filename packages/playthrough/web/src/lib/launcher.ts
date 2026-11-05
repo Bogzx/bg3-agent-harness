@@ -12,12 +12,14 @@ export interface LaunchForm {
   minutes: number;
   maxCost: number; // USD per session run, 0 = no cap; pi profiles need one
   recording: boolean;
+  operator: boolean; // operator messages allowed: the sessions are marked as guided
 }
 
 export function formFrom(cfg: PlaythroughConfig): LaunchForm {
   return {
     name: cfg.name, profile: cfg.agent.profile, brief: cfg.character.brief, difficulty: cfg.difficulty || "Explorer",
     minutes: cfg.session.minutes, maxCost: cfg.session.max_cost_usd ?? 0, recording: cfg.recording.enabled,
+    operator: cfg.operator?.messages ?? false,
   };
 }
 
@@ -47,7 +49,7 @@ export function launchBody(f: LaunchForm, profiles: ClientProfile[] | null = nul
   return {
     body: {
       profile: f.profile, brief: f.brief.trim(), difficulty: f.difficulty, session_minutes: f.minutes, max_cost: f.maxCost,
-      recording: f.recording,
+      recording: f.recording, operator_messages: f.operator,
     },
   };
 }

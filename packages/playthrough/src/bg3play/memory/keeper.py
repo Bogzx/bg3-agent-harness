@@ -50,7 +50,7 @@ import sys
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -296,6 +296,15 @@ def _errors(mem: Path, session: int) -> list[str]:
     return [f"{k}: {m}" for k, m in lint.lint(mem, "any", session).errors]
 
 
+# The play session's env the keeper's client and bg3 server never get: its clock, its metrics file, and the app's
+# operator messages (BG3AI_OPERATOR_DIR: they are for the player only, as in the harness's RunHost._setup).
+_PLAY_ONLY = ("BG3AI_SESSION_DEADLINE", "BG3AI_SESSION_WRAPUP", "BG3AI_METRICS_PATH")
+
+
+def keeper_env(env: Mapping[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in env.items() if k not in _PLAY_ONLY and not k.startswith("BG3AI_OPERATOR_")}
+
+
 def _run_claude(
     cmd: list[str],
     cwd: Path,
@@ -309,9 +318,7 @@ def _run_claude(
     """Runs one claude (or other client) call with its stream into log_path; kills its process group at the
     timeout (the keeper-mode MCP server is in that group too), once `stop` is set (as a timeout), or when `watch`
     (each stream line; the cost cap, keeper_spend.py) returns True."""
-    env = {**os.environ, "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", **(extra_env or {})}
-    for k in ("BG3AI_SESSION_DEADLINE", "BG3AI_SESSION_WRAPUP", "BG3AI_METRICS_PATH"):
-        env.pop(k, None)
+    env = keeper_env({**os.environ, "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", **(extra_env or {})})
     with open(log_path, "a") as out:
         proc = subprocess.Popen(
             cmd,
@@ -375,14 +382,10 @@ def _pump(proc: subprocess.Popen[str], out: Any, watch: Callable[[str], bool]) -
 
 def keeper_server_env(mem: Path, knowledge: Path, task: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     """(server spec, env) of the keeper-mode bg3 server run over http on the host: the env a stdio server started
-    by the client would get (_run_claude's, which drops the play session's deadline and metrics) + its own."""
+    by the client would get (_run_claude's keeper_env: no play session clock, metrics or operator messages) + its
+    own."""
     server = keeper_server(mem, knowledge, task)
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("BG3AI_SESSION_DEADLINE", "BG3AI_SESSION_WRAPUP", "BG3AI_METRICS_PATH")
-    }
-    return server, {**env, **server["env"]}
+    return server, {**keeper_env(os.environ), **server["env"]}
 
 
 def _run_sandboxed(
