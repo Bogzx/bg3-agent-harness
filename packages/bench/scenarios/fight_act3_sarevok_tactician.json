@@ -9,9 +9,8 @@
  "holdout": false,
  "start": {
   "kind": "save",
-  "save": null,
-  "save_sha1": null,
-  "needs_save": "Act 3, fight_act3_sarevok's start moment: its start save Tav-29221265940__SCN-fight_act3_sarevok (lsv sha1 77283ecc232d) (once it is registered: see its start.not_ready) loaded with BG3AI_SCENARIO_SETUP=1, the game's difficulty switched from Balanced to Tactician (game menu > Difficulty > Change Difficulty > Tactician > Confirm) and nothing else done: party level 8, companions (Wyll, Karlach, Shadowheart). Avatar named Tav (a paladin, Oath of Devotion), Karmic Dice off, Tactician (the difficulty lives in the save), out of combat with no dialogue open, saved as SCN-<name> (docs/SCENARIOS-AUTHORING.md).",
+  "save": "Tav-49512631040__SCN-fight_act3_sarevok_tactician",
+  "save_sha1": "2776e7ec2a164f38607e9bcf2b6846bc84eebbf5",
   "note": {
    "where": "The Murder Tribunal's hall under the Lower City, out of combat, the tribunal not yet hostile.",
    "objective": "Defeat Sarevok.",

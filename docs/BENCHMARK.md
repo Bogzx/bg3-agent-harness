@@ -190,8 +190,9 @@ uv run python runner/play.py run --scenario nautiloid --runs 5 --client codex --
 One line per run in `runtime/sessions/<series>/runs.jsonl`; the fields are listed in
 [runner/README.md](../runner/README.md), "Run record". The ones a comparison uses:
 
-- `outcome` (`reached` | `failed` | `timeout` | `over_budget` | `gave_up` | `runner_error`; `failed`: a goal run that its live
-  verdict ended on a fired "never"), `cap`, `clean`
+- `outcome` (`reached` | `failed` | `timeout` | `ended_by_agent` | `over_budget` | `gave_up` | `runner_error`; `failed`: a goal
+  run that its live verdict ended on a fired "never"; `ended_by_agent`: a maximise run that ended at a turn's end with no
+  acting call since its last restart, before its time cap, from bench-v0.11 on: earlier runs keep `timeout`), `cap`, `clean`
 - `time_to_milestone_s`, `wall_min`, `play_min`, `sessions`, `turns`
 - `cost_usd`, `tokens` (input, output, cache read, cache write)
 - `failures` (each with its class, below), `operator`, `deaths`, `fairness_flags`
@@ -260,9 +261,9 @@ model's full set (Underdark at its caps) or 4-5 models' Nautiloid series.
 
 `packages/bench/matrices/variance-pilot.toml` (BENCHMARK-PLAN.md phase 2, not run): DeepSeek V4.1 Flash through pi
 and Opus 5.5 through Claude Code (account 2's subscription), 10 scenarios (two of each family but fights, four
-fights including `fight_act1_windmill` and its Tactician twin; no holdout), condition `rules`, 6 runs each. Two of
-the ten have no start save yet (`fight_act1_windmill_tactician`, `fight_act2_house_of_healing`: `start.not_ready`),
-so the plan skips them: 96 runs, 48 paid. Six runs per cell give each scenario's pass rate to about ±0.3 (a Wilson
+fights including `fight_act1_windmill` and its Tactician twin; no holdout), condition `rules`, 6 runs each. One of
+the ten has no start save yet (`fight_act2_house_of_healing`: `start.not_ready`), so the plan skips it: 108 runs,
+54 paid. Six runs per cell give each scenario's pass rate to about ±0.3 (a Wilson
 95% interval at 3/6 is 19-81%, at 0/6 0-39%), enough to see which scenarios are near 0 or 1 for both models (no
 spread: fewer runs) and which sit in between (the ones that need 5 or more). The run count per scenario is fixed
 from these rates before any published series.
@@ -280,8 +281,9 @@ default; the legacy runner refuses every goal that isn't one milestone) and need
 
 - Every scenario but `nautiloid` in a bench run: 17 start saves are made and registered (research/ovh/live6.md §2),
   but no run has loaded one yet.
-- A Tactician scenario: its save is not made. The run's settings check reads the game's difficulty back
-  (`scn.difficulty`) and stops a run whose save has another one, but no Tactician save has been through it.
+- A Tactician scenario with an agent: the four listed twins' saves went through a run's start and its settings check
+  (`scn.difficulty` read back Tactician) in a no-model start-state capture on 2026-11-05, but no agent has played one.
+  The holdout twin's save has not been through it.
 - `model_time` and `persona` in run records (both unit-tested on real session files).
 - Any non-Claude client in a series (section 3).
 - `tools/bench_preflight.py` on a machine other than the test machine (unit-tested with fixture Steam trees; its

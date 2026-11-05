@@ -343,7 +343,7 @@ STREAM_KINDS = (
     "bg_timeout",
     "ui_hang",
 )
-OUTCOME_KINDS = ("timeout", "cost_cap", "tokens_cap", "time_cap")
+OUTCOME_KINDS = ("timeout", "ended_by_agent", "cost_cap", "tokens_cap", "time_cap")
 
 
 def restream_failures(record: dict, state_dir: Path) -> list[dict]:
@@ -381,24 +381,16 @@ def reload_failures(actions: list[dict]) -> list[dict]:
 
 
 def outcome_failure(outcome: str, why: str, t: float, others: list[dict], cap: str | None = None) -> list[dict]:
-    """The run's own ending as a failure: a timeout or a cost/token cap is the agent's (unknown when harness failures
-    hit the run), a give-up and a runner error are ours."""
-    if outcome in ("timeout", "over_budget"):
+    """The run's own ending as a failure: a timeout, a maximise run's end rule (ended_by_agent) or a cost/token cap is
+    the agent's (unknown when harness failures hit the run), a give-up and a runner error are ours."""
+    if outcome in ("timeout", "ended_by_agent", "over_budget"):
         cls = UNKNOWN if any(f["class"] == HARNESS for f in others) else AGENT
-        kind = "timeout" if outcome == "timeout" else f"{cap or 'cost'}_cap"
-        return [
-            failure(
-                t,
-                kind,
-                cls,
-                why
-                or (
-                    "the run's time ran out before the milestone"
-                    if outcome == "timeout"
-                    else f"the run's {cap or 'cost'} cap was used up before the milestone"
-                ),
-            )
-        ]
+        kind = f"{cap or 'cost'}_cap" if outcome == "over_budget" else outcome
+        default = {
+            "timeout": "the run's time ran out before the milestone",
+            "ended_by_agent": "the run ended at its turn's end with no acting call since its last (re)start",
+        }.get(outcome, f"the run's {cap or 'cost'} cap was used up before the milestone")
+        return [failure(t, kind, cls, why or default)]
     if outcome == "gave_up":
         return [failure(t, "gave_up", HARNESS, why)]
     if outcome == "runner_error":

@@ -201,8 +201,9 @@ class RunFiles(unittest.TestCase):
     def test_claude_gets_the_tool_count_and_the_manifest(self):
         got, logs = self.run_files("claude", {})
         n = len(cs.tool_names(TOOLS))
-        self.assertEqual(set(got), {"tools_expected", "manifest"})  # no system file: claude reads play/CLAUDE.md
+        self.assertEqual(set(got), {"tools_expected", "tools_served", "manifest"})  # no system file: play/CLAUDE.md
         self.assertEqual(got["tools_expected"], n)
+        self.assertEqual(got["tools_served"], tuple(sorted(cs.tool_names(TOOLS))))
         m = got["manifest"]
         self.assertEqual(
             (m["seed"], m["timing"], m["client"], m["condition"], m["tools"]["count"]),
@@ -215,6 +216,8 @@ class RunFiles(unittest.TestCase):
         got, _ = self.run_files("pi", {"BG3AI_TOOLS_OFF": "wiki"})
         self.assertTrue(got["system_file"].endswith("pi-system.txt"))
         self.assertEqual(got["tools_expected"], len(cs.tool_names(TOOLS)) - 2)
+        self.assertEqual(len(got["tools_served"]), got["tools_expected"])
+        self.assertNotIn("wiki_search", got["tools_served"])
         self.assertEqual(
             (got["manifest"]["condition"], got["manifest"]["tools"]["count"]), ("rules", got["tools_expected"])
         )

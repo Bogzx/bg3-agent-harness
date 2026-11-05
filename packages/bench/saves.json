@@ -2080,6 +2080,42 @@
      }
     },
     {
+     "name": "Tav-30512631021__SCN-fight_act1_windmill_tactician",
+     "scenarios": [
+      "fight_act1_windmill_tactician"
+     ],
+     "save_sha1": "e6e6a815b3204ee5858cd205939fb8dd072ad21d",
+     "zip": "Tav-30512631021__SCN-fight_act1_windmill_tactician.zip",
+     "key": "saves/bench-v0.11/Tav-30512631021__SCN-fight_act1_windmill_tactician.zip",
+     "bytes": 15287387,
+     "sha256": "bfa68875d49ac3f56d41154cef7ccce5495fc645052f88bc746b3744367816e3",
+     "fingerprint": {
+      "party": [
+       [
+        "Gale",
+        3
+       ],
+       [
+        "Shadowheart",
+        3
+       ],
+       [
+        "Tav",
+        3
+       ],
+       [
+        "Wyll",
+        3
+       ]
+      ],
+      "gold": 156,
+      "region": "Wilderness",
+      "area": "Blighted Village",
+      "difficulty": "Tactician",
+      "name": "Tav"
+     }
+    },
+    {
      "name": "Tav-34221263934__SCN-crash_site_grove",
      "scenarios": [
       "crash_site_grove"
@@ -2104,6 +2140,78 @@
       "region": "Wilderness",
       "area": null,
       "difficulty": "Balanced",
+      "name": "Tav"
+     }
+    },
+    {
+     "name": "Tav-34512631016__SCN-fight_act1_dror_ragzlin_tactician",
+     "scenarios": [
+      "fight_act1_dror_ragzlin_tactician"
+     ],
+     "save_sha1": "3d6b01b9bf78e3b5df2f9a06312bda4458e057d8",
+     "zip": "Tav-34512631016__SCN-fight_act1_dror_ragzlin_tactician.zip",
+     "key": "saves/bench-v0.11/Tav-34512631016__SCN-fight_act1_dror_ragzlin_tactician.zip",
+     "bytes": 15361949,
+     "sha256": "7c9bdd09e46a00a8fc76bba1636e39d93235eff0f5158903eeaa021b5414b03a",
+     "fingerprint": {
+      "party": [
+       [
+        "Gale",
+        3
+       ],
+       [
+        "Shadowheart",
+        3
+       ],
+       [
+        "Tav",
+        3
+       ],
+       [
+        "Wyll",
+        3
+       ]
+      ],
+      "gold": 156,
+      "region": "Wilderness",
+      "area": "Shattered Sanctum",
+      "difficulty": "Tactician",
+      "name": "Tav"
+     }
+    },
+    {
+     "name": "Tav-37512631030__SCN-fight_act2_balthazar_tactician",
+     "scenarios": [
+      "fight_act2_balthazar_tactician"
+     ],
+     "save_sha1": "b88f9c6b6c787d967375057fc5d3e294e4fbb7a1",
+     "zip": "Tav-37512631030__SCN-fight_act2_balthazar_tactician.zip",
+     "key": "saves/bench-v0.11/Tav-37512631030__SCN-fight_act2_balthazar_tactician.zip",
+     "bytes": 15008231,
+     "sha256": "caf197543d721a5696d2fe0528d6b0d6af7b225a7fef69948a08cba1f48cd6ed",
+     "fingerprint": {
+      "party": [
+       [
+        "Karlach",
+        6
+       ],
+       [
+        "Shadowheart",
+        6
+       ],
+       [
+        "Tav",
+        6
+       ],
+       [
+        "Wyll",
+        6
+       ]
+      ],
+      "gold": 60,
+      "region": "Shadow-Cursed Lands",
+      "area": "Nightsong's Prison",
+      "difficulty": "Tactician",
       "name": "Tav"
      }
     },
@@ -2236,6 +2344,42 @@
       "region": "Wilderness",
       "area": "Shattered Sanctum",
       "difficulty": "Balanced",
+      "name": "Tav"
+     }
+    },
+    {
+     "name": "Tav-49512631040__SCN-fight_act3_sarevok_tactician",
+     "scenarios": [
+      "fight_act3_sarevok_tactician"
+     ],
+     "save_sha1": "2776e7ec2a164f38607e9bcf2b6846bc84eebbf5",
+     "zip": "Tav-49512631040__SCN-fight_act3_sarevok_tactician.zip",
+     "key": "saves/bench-v0.11/Tav-49512631040__SCN-fight_act3_sarevok_tactician.zip",
+     "bytes": 24464220,
+     "sha256": "4e8cc9a82645498a9d6275ab06c08535abd7215ed783b2065a3a0753355d31cc",
+     "fingerprint": {
+      "party": [
+       [
+        "Karlach",
+        8
+       ],
+       [
+        "Shadowheart",
+        8
+       ],
+       [
+        "Tav",
+        8
+       ],
+       [
+        "Wyll",
+        8
+       ]
+      ],
+      "gold": 410,
+      "region": "Lower City",
+      "area": "Bhaalist Crypt",
+      "difficulty": "Tactician",
       "name": "Tav"
      }
     },

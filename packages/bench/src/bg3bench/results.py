@@ -55,7 +55,8 @@ from bg3bench import stats, suite
 
 SCHEMA = 1
 # failed: a run that its live verdict ended on a fired never or a party wipe (a maximise run's too: its score stands)
-OUTCOMES = ("reached", "failed", "timeout", "over_budget", "gave_up", "runner_error")
+# ended_by_agent: a maximise run its end rule ended before the time cap (its score stands; older records say timeout)
+OUTCOMES = ("reached", "failed", "timeout", "ended_by_agent", "over_budget", "gave_up", "runner_error")
 RANKED_SHARE = 2 / 3  # a model is ranked with valid runs in at least this share of its condition's pass/fail scenarios
 PILOT_CLIENTS = frozenset({"claude"})  # their runs are pilots: build_results leaves them out of a release
 

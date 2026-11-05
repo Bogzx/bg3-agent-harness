@@ -166,11 +166,11 @@ def run_files(
     environ: Mapping[str, str] = os.environ,
 ) -> dict[str, Any]:
     """play.py's Options fields every play process of a pi or claude run shares, from the system text, the bg3
-    server's tool list and its instructions dumped into the playthrough's dir `d`: pi's system_file, the bg3 tools
-    the init must count (claude: its mcp__bg3__* tools) and the run manifest's fields. The condition is the text the
-    client is served: claude's play/CLAUDE.md is rules+coaching, pi's the server's BG3AI_PROMPT_CONDITION (default
-    rules). A condition the prompts don't know leaves the manifest's error instead of its prompt. environ: the
-    session's env (its tools and condition; a bench job's own, LiveRunHost); dump: the server dump (dump_server in
+    server's tool list and its instructions dumped into the playthrough's dir `d`: pi's system_file, the bg3 tools the
+    init must count (claude: its mcp__bg3__* tools), their names and the run manifest's fields. The condition is the
+    text the client is served: claude's play/CLAUDE.md is rules+coaching, pi's the server's BG3AI_PROMPT_CONDITION
+    (default rules). A condition the prompts don't know leaves the manifest's error instead of its prompt. environ:
+    the session's env (its tools and condition; a bench job's own, LiveRunHost); dump: the server dump (dump_server in
     that env)."""
     from bg3harness import run_manifest
 
@@ -198,7 +198,7 @@ def run_files(
         f"{client}: {len(served)} bg3 tools expected, {prompt}"
         + (f"; system text {system} (sha256 {sha256(system)[:12]})" if client == "pi" else "")
     )
-    return {"tools_expected": len(served), "manifest": manifest} | (
+    return {"tools_expected": len(served), "tools_served": tuple(served), "manifest": manifest} | (
         {"system_file": str(system)} if client == "pi" else {}
     )
 

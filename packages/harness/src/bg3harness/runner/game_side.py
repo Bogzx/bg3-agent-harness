@@ -321,13 +321,15 @@ class GameSide:
         g = self.state["game"] or {}
         started = g.get("launched") if self.owns_game() and g.get("launched") else rpolicy.game_started_at()
         ram = rpolicy.game_ram_mb()
+        ram_limit, ram_kill = rpolicy.relaunch_limits(rpolicy.game_cap_mb())
         why = rpolicy.relaunch_reason(started, time.time(), text, session_s=minutes * 60 + rpolicy.FIGHT_HOLD_S if minutes else 0.0,
-                              ram_mb=ram, mod_path=rcode.game_mod_path(), mod_live=str(rcode.MOD_LIVE))
+                              ram_mb=ram, ram_limit_mb=ram_limit, ram_kill_mb=ram_kill,
+                              mod_path=rcode.game_mod_path(), mod_live=str(rcode.MOD_LIVE))
         if why is None:
             if started:
                 renv.log(f"game process {(time.time() - started) / 3600:.1f} h old, {ram if ram is not None else '?'} MB "
                     f"RAM+swap, no ready-check failure last session: kept (relaunch at {renv.GAME_MAX_AGE_H:g} h by the "
-                    f"session's end or {renv.RELAUNCH_RAM_MB} MB)")
+                    f"session's end or {ram_limit} MB)")
             return None
         save, boundary = self.choose_save(), None
         if save is None:

@@ -84,3 +84,7 @@ class BackgroundFailures(unittest.TestCase):
         record["failures"] = record["failures"][1:]
         got = [(f["kind"], f["class"]) for f in runs.restream_failures(record, self.d)]
         self.assertEqual(sorted(got), [("bg_timeout", "unknown"), ("timeout", "agent")])
+        # an ended_by_agent failure is the run's ending too: its class is recomputed, it isn't kept as it was
+        record["failures"] = [{"t": 3.0, "kind": "ended_by_agent", "class": "unknown", "detail": "the rule"}]
+        got = [(f["kind"], f["class"]) for f in runs.restream_failures(record, self.d)]
+        self.assertEqual(sorted(got), [("bg_timeout", "unknown"), ("ended_by_agent", "agent")])

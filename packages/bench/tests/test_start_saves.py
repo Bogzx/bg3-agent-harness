@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from bg3bench import saves
-from bg3bench.submission import pack
+from bg3bench import saves, suite
+from bg3bench.submission import pack, release
 
 NAME = "Tav-123__SCN-test_start"
 LSV = b"the save itself"
@@ -100,11 +100,18 @@ def panel(s: saves.Save | None = None, story: FakeStory | None = None) -> saves.
     return saves.Saves({s.name: s}, story or FakeStory(), FakeRecord())
 
 
+def no_save_in_release(tag: str) -> set[str]:
+    doc = json.loads(release.default_path(tag).read_text(encoding="utf-8"))
+    return {name for name, sc in doc["scenarios"].items() if sc["save"] is None}
+
+
 def test_saves_json_agrees_with_the_scenarios():
     index = saves.load()
     scenarios = pack.load_scenarios()
     for tag, entries in index.items():
-        assert saves.disagreements(entries, scenarios) == [], tag
+        # An earlier suite is frozen: a scenario its release shipped without a save got that save in a later suite.
+        later = set() if tag == suite.suite_version() else no_save_in_release(tag)
+        assert saves.disagreements(entries, {n: sc for n, sc in scenarios.items() if n not in later}) == [], tag
     assert all(not scenarios[n].get("holdout") for e in index["bench-v0.8"].values() for n in e.scenarios)
 
 

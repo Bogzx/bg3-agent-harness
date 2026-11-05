@@ -4,14 +4,14 @@
  "about": "A released bg3bench suite (schema release.v1, written by python -m bg3bench.submission.release). versions and pins: what a run's manifest must cite. scenarios: every non-holdout scenario's digest, start save folder, .lsv sha1 and start-state fingerprint (null: none recorded yet). saves: the start save zips, their storage key, size and sha256 (null until published). conditions: per condition id the bg3 tools a play process is served (names, count, allowlist_sha256, and defs_sha256: the sha256 of their served definitions) and per client the sha256 of the prompt it is served; its variants: the same under a client profile's tool groups off (keyed by those groups), which a run naming those tools is checked against.",
  "suite": "bench-v0.11",
  "versions": {
-  "harness": "0.3.0",
+  "harness": "0.4.0",
   "bench": "0.11.0"
  },
  "pins": {
   "game_build": "25605617",
   "bg3le_sha256": "e84d6044c057f3d8e3c4d8ce2259bac944fe873a18f6d5603d891a98e0be0f95",
   "mod_sha1": "0424ba5f367fe8c978adb6ea1c2fa53da8e02e6d",
-  "code_sha1": "bdd70498e38c066d5b8e112e7f599efb502b0153"
+  "code_sha1": "aded8f3d69c918bbe2e3790b0c76ee362d745566"
  },
  "scenarios": {
   "act1_goblin_camp_no_fight": {
@@ -343,10 +343,34 @@
    }
   },
   "fight_act1_dror_ragzlin_tactician": {
-   "digest": "c4ec97e7e6ed0438",
-   "save": null,
-   "save_sha1": null,
-   "fingerprint": null
+   "digest": "53c4437dbb365800",
+   "save": "Tav-34512631016__SCN-fight_act1_dror_ragzlin_tactician",
+   "save_sha1": "3d6b01b9bf78e3b5df2f9a06312bda4458e057d8",
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      3
+     ],
+     [
+      "Shadowheart",
+      3
+     ],
+     [
+      "Tav",
+      3
+     ],
+     [
+      "Wyll",
+      3
+     ]
+    ],
+    "gold": 156,
+    "region": "Wilderness",
+    "area": "Shattered Sanctum",
+    "difficulty": "Tactician",
+    "name": "Tav"
+   }
   },
   "fight_act1_grove_gate": {
    "digest": "1a75a66de27e4a4f",
@@ -405,10 +429,34 @@
    }
   },
   "fight_act1_windmill_tactician": {
-   "digest": "0de93d9f260b0daf",
-   "save": null,
-   "save_sha1": null,
-   "fingerprint": null
+   "digest": "98cd379c26a6b736",
+   "save": "Tav-30512631021__SCN-fight_act1_windmill_tactician",
+   "save_sha1": "e6e6a815b3204ee5858cd205939fb8dd072ad21d",
+   "fingerprint": {
+    "party": [
+     [
+      "Gale",
+      3
+     ],
+     [
+      "Shadowheart",
+      3
+     ],
+     [
+      "Tav",
+      3
+     ],
+     [
+      "Wyll",
+      3
+     ]
+    ],
+    "gold": 156,
+    "region": "Wilderness",
+    "area": "Blighted Village",
+    "difficulty": "Tactician",
+    "name": "Tav"
+   }
   },
   "fight_act2_balthazar": {
    "digest": "5e9f5cd065caaf2d",
@@ -441,10 +489,34 @@
    }
   },
   "fight_act2_balthazar_tactician": {
-   "digest": "fcffadd35c0b200c",
-   "save": null,
-   "save_sha1": null,
-   "fingerprint": null
+   "digest": "cb37eb5cefe96126",
+   "save": "Tav-37512631030__SCN-fight_act2_balthazar_tactician",
+   "save_sha1": "b88f9c6b6c787d967375057fc5d3e294e4fbb7a1",
+   "fingerprint": {
+    "party": [
+     [
+      "Karlach",
+      6
+     ],
+     [
+      "Shadowheart",
+      6
+     ],
+     [
+      "Tav",
+      6
+     ],
+     [
+      "Wyll",
+      6
+     ]
+    ],
+    "gold": 60,
+    "region": "Shadow-Cursed Lands",
+    "area": "Nightsong's Prison",
+    "difficulty": "Tactician",
+    "name": "Tav"
+   }
   },
   "fight_act2_house_of_healing": {
    "digest": "a4106e8c1b871c50",
@@ -513,7 +585,7 @@
    }
   },
   "fight_act3_sarevok": {
-   "digest": "23cea139b0511d07",
+   "digest": "27cf5c7b2f5ba487",
    "save": "Tav-29221265940__SCN-fight_act3_sarevok",
    "save_sha1": "77283ecc232d865ae8ea38c514796cc0b4d3c07d",
    "fingerprint": {
@@ -543,10 +615,34 @@
    }
   },
   "fight_act3_sarevok_tactician": {
-   "digest": "7cd7c14fa325a163",
-   "save": null,
-   "save_sha1": null,
-   "fingerprint": null
+   "digest": "5e23bcef60adb3e7",
+   "save": "Tav-49512631040__SCN-fight_act3_sarevok_tactician",
+   "save_sha1": "2776e7ec2a164f38607e9bcf2b6846bc84eebbf5",
+   "fingerprint": {
+    "party": [
+     [
+      "Karlach",
+      8
+     ],
+     [
+      "Shadowheart",
+      8
+     ],
+     [
+      "Tav",
+      8
+     ],
+     [
+      "Wyll",
+      8
+     ]
+    ],
+    "gold": 410,
+    "region": "Lower City",
+    "area": "Bhaalist Crypt",
+    "difficulty": "Tactician",
+    "name": "Tav"
+   }
   },
   "nautiloid": {
    "digest": "49dde1c5869633c7",
@@ -663,6 +759,17 @@
    "sha256": "69fd2511b7c3e1973dacc5f0e2c8255fa4effb65bfebc671f4507552a9897365"
   },
   {
+   "name": "Tav-30512631021__SCN-fight_act1_windmill_tactician",
+   "scenarios": [
+    "fight_act1_windmill_tactician"
+   ],
+   "save_sha1": "e6e6a815b3204ee5858cd205939fb8dd072ad21d",
+   "zip": "Tav-30512631021__SCN-fight_act1_windmill_tactician.zip",
+   "key": "saves/bench-v0.11/Tav-30512631021__SCN-fight_act1_windmill_tactician.zip",
+   "bytes": 15287387,
+   "sha256": "bfa68875d49ac3f56d41154cef7ccce5495fc645052f88bc746b3744367816e3"
+  },
+  {
    "name": "Tav-34221263934__SCN-crash_site_grove",
    "scenarios": [
     "crash_site_grove"
@@ -672,6 +779,28 @@
    "key": "saves/bench-v0.11/Tav-34221263934__SCN-crash_site_grove.zip",
    "bytes": 14812148,
    "sha256": "18c73bd6fa974a6ee3214ea90542232f479b946c681a37e52538056d490638b5"
+  },
+  {
+   "name": "Tav-34512631016__SCN-fight_act1_dror_ragzlin_tactician",
+   "scenarios": [
+    "fight_act1_dror_ragzlin_tactician"
+   ],
+   "save_sha1": "3d6b01b9bf78e3b5df2f9a06312bda4458e057d8",
+   "zip": "Tav-34512631016__SCN-fight_act1_dror_ragzlin_tactician.zip",
+   "key": "saves/bench-v0.11/Tav-34512631016__SCN-fight_act1_dror_ragzlin_tactician.zip",
+   "bytes": 15361949,
+   "sha256": "7c9bdd09e46a00a8fc76bba1636e39d93235eff0f5158903eeaa021b5414b03a"
+  },
+  {
+   "name": "Tav-37512631030__SCN-fight_act2_balthazar_tactician",
+   "scenarios": [
+    "fight_act2_balthazar_tactician"
+   ],
+   "save_sha1": "b88f9c6b6c787d967375057fc5d3e294e4fbb7a1",
+   "zip": "Tav-37512631030__SCN-fight_act2_balthazar_tactician.zip",
+   "key": "saves/bench-v0.11/Tav-37512631030__SCN-fight_act2_balthazar_tactician.zip",
+   "bytes": 15008231,
+   "sha256": "caf197543d721a5696d2fe0528d6b0d6af7b225a7fef69948a08cba1f48cd6ed"
   },
   {
    "name": "Tav-40221263931__SCN-act1_recruit_3",
@@ -716,6 +845,17 @@
    "key": "saves/bench-v0.11/Tav-47221264946__SCN-choice_act1_minthara.zip",
    "bytes": 15055583,
    "sha256": "7f82d34423f9f0a5b6aa5239e7d6b091f5408f94f8f5cf9f8eb9cdc414226285"
+  },
+  {
+   "name": "Tav-49512631040__SCN-fight_act3_sarevok_tactician",
+   "scenarios": [
+    "fight_act3_sarevok_tactician"
+   ],
+   "save_sha1": "2776e7ec2a164f38607e9bcf2b6846bc84eebbf5",
+   "zip": "Tav-49512631040__SCN-fight_act3_sarevok_tactician.zip",
+   "key": "saves/bench-v0.11/Tav-49512631040__SCN-fight_act3_sarevok_tactician.zip",
+   "bytes": 24464220,
+   "sha256": "4e8cc9a82645498a9d6275ab06c08535abd7215ed783b2065a3a0753355d31cc"
   },
   {
    "name": "Tav-5122126499__SCN-fight_act1_dror_ragzlin",

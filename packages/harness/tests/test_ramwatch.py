@@ -176,6 +176,13 @@ class RamWatchTest(unittest.TestCase):
             self.assertIsNone(R.cap_mb(cap), cap)
         self.assertEqual(R.kill_limits(None), (R.KILL_GAME_MB, R.KILL_ANON_SWAP_MB))
 
+    def test_a_cap_under_10g_defaults_the_swap_to_4g(self):
+        # owner 2026-11-05: act3_gold_max went past 2 GB of swap at 8G (2.2-2.6 GB), and at 2G job 4's game hung
+        for cap in ("8G", "8192M", "7.5g", "8589934592", "9.9G"):
+            self.assertEqual(R.default_swap_max(cap), "4G", cap)
+        for cap in ("10G", "10240M", "12G", "", "infinity", "80%"):
+            self.assertEqual(R.default_swap_max(cap), "2G", cap)
+
     def test_cap_mb_reads_bytes_and_k_t_like_systemd(self):
         # REVIEW-18d NOTE 2: launch_game.sh passes BG3AI_GAME_MEMORY_MAX to MemoryMax as given
         self.assertEqual(R.cap_mb("8589934592"), 8192)
@@ -219,6 +226,19 @@ class RamWatchTest(unittest.TestCase):
             rec = w.sample(100.0, 6000, 6000, [100], anon_swap=7692)
         self.assertEqual((w.kill_game_mb, w.kill_anon_swap_mb), (7692, 7692))
         self.assertEqual((rec["kind"], k.call_args_list), ("kill", [mock.call(100, R.signal.SIGKILL)]))
+
+    def test_game_cap_mb_reads_the_game_scope_before_the_env(self):
+        self._kill_setup()
+        self.scope_tree(memory_max=str(8 * 2**30))
+        with mock.patch.dict(R.os.environ, {R.GAME_CAP_ENV: "6G"}):
+            self.assertEqual(R.game_cap_mb([100], self.w.proc, self.w.cgroup_root), 8192)
+
+    def test_game_cap_mb_falls_back_to_the_env_then_none(self):
+        with mock.patch.dict(R.os.environ, {R.GAME_CAP_ENV: "6G"}):
+            self.assertEqual(R.game_cap_mb([], self.w.proc, self.w.cgroup_root), 6144)
+        with mock.patch.dict(R.os.environ):
+            R.os.environ.pop(R.GAME_CAP_ENV, None)
+            self.assertIsNone(R.game_cap_mb([], self.w.proc, self.w.cgroup_root))
 
     def test_the_cap_is_the_smallest_memory_max_of_the_scope_and_its_ancestors(self):
         # REVIEW-18d NOTE 1: the scope's processes run under every ancestor's limit too (app.slice, user@.service, ...)

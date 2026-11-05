@@ -163,3 +163,10 @@ Explorer -> Balanced switch). Two things it found hold for every start save:
   to `profile.character.name` at a save-start run's start (`scn.rename_avatar`, re-applied by the mod after every
   load), so no start save has to be made again. make_start_save still renames for the folder name and undoes it
   after saving.
+
+## Round 24 (2026-11-05): the Tactician twins' saves
+
+The five twins have their start saves (each its base's start, switched to Tactician and resaved; store
+`~/bg3-start-saves/<twin>/`), and `needs_save` is gone from them. `fight_act3_sarevok`'s save now passes the fixed
+inspector, so its `not_ready` is gone too. `fight_act1_gith_patrol_tactician` is a holdout like its base: its save is
+in its scenario file but never in saves.json, so it has no zip, no fingerprint and no release entry.

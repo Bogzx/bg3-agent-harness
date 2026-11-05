@@ -108,10 +108,10 @@ class LaunchRefusesWithoutDisplay(unittest.TestCase):
                     "BG3AI_GAME_SCOPE": "0", "BG3LE_DEBUG_PORT": "59997",
                     "DISPLAY": ":97", "XAUTHORITY": str(self.tmp / "no-such-xauth")}   # no /tmp/.X11-unix/X97
 
-    def launch(self, *args: str) -> subprocess.CompletedProcess:
+    def launch(self, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
         sh = Path(__file__).resolve().parents[3] / "runner" / "launch_game.sh"
         return subprocess.run(["bash", str(sh), "--no-bg3le", "--no-input-shim", *args], capture_output=True,
-                              text=True, env=self.env, timeout=60)
+                              text=True, env=env or self.env, timeout=60)
 
     def test_refused_exit_5(self):
         self.assertFalse(os.path.exists("/tmp/.X11-unix/X97"))
@@ -139,6 +139,26 @@ class LaunchRefusesWithoutDisplay(unittest.TestCase):
         self.assertIn("BG3LE_UI_STRICT=1", cmd(BG3AI_UI_STRICT="1"))
         self.assertNotIn("BG3LE_UI_STRICT", cmd(BG3AI_UI_STRICT="0"))
         self.assertNotIn("BG3LE_UI_STRICT", cmd())
+        self.assertFalse(self.marker.exists())
+
+    def test_the_game_scope_swap_cap_follows_the_memory_cap(self):
+        """Owner 2026-11-05: an 8G run gets 4G of swap by default, 10G keeps 2G, an explicit swap cap always wins."""
+        fake = self.tmp / "bin" / "systemd-run"  # scopes "work" here, on CI too; --dry-run never starts one
+        fake.write_text("#!/bin/sh\nexit 0\n")
+        fake.chmod(0o755)
+
+        def scope(**caps):
+            env = {k: v for k, v in self.env.items() if k not in ("BG3AI_GAME_MEMORY_MAX", "BG3AI_GAME_SWAP_MAX")}
+            r = self.launch("--dry-run", env={**env, "BG3AI_GAME_SCOPE": "1", **caps})
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return r.stdout
+
+        self.assertIn("MemorySwapMax=4G", scope(BG3AI_GAME_MEMORY_MAX="8G"))
+        self.assertIn("MemorySwapMax=4G", scope(BG3AI_GAME_MEMORY_MAX="8192M"))
+        self.assertIn("MemorySwapMax=2G", scope(BG3AI_GAME_MEMORY_MAX="10G"))
+        self.assertIn("MemorySwapMax=2G", scope())
+        self.assertIn("MemorySwapMax=2G", scope(BG3AI_GAME_MEMORY_MAX="8G", BG3AI_GAME_SWAP_MAX="2G"))
+        self.assertIn("MemorySwapMax=6G", scope(BG3AI_GAME_MEMORY_MAX="10G", BG3AI_GAME_SWAP_MAX="6G"))
         self.assertFalse(self.marker.exists())
 
 

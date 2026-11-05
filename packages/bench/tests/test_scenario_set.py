@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from bg3bench import contamination, predicates, scenario
+from bg3bench.submission import release
 
 HERE = Path(__file__).resolve().parent
 SET = HERE.parent / "scenarios"
@@ -60,12 +61,11 @@ HOLDOUT = {
     "fight_act1_gith_patrol", "fight_act3_cazador", "act1_get_item", "choice_act3_wyll_pact", "act2_last_light",
     "fight_act1_gith_patrol_tactician",
 }  # fmt: skip
-# Start saves not runnable yet (research/ovh/live6.md §2): not made, or made but refused by the inspector; the
-# Tactician variants wait for theirs.
-NOT_MADE = {"fight_act2_house_of_healing", *TACTICIAN}
+# Start saves not runnable yet (research/ovh/live6.md §2): not made, or made but refused by the inspector.
+NOT_MADE = {"fight_act2_house_of_healing"}
 # act1_gold_max plays act1_gold_1000's start save (the same start, without the target).
 SHARED_SAVE = {"act1_gold_max": "act1_gold_1000"}
-UNREGISTERED = {"fight_act2_ketheric", "fight_act3_sarevok", "choice_act3_wyll_pact", "fight_act3_cazador"}
+UNREGISTERED = {"fight_act2_ketheric", "choice_act3_wyll_pact", "fight_act3_cazador"}
 # Scenarios the legacy runner can play today: their goal is one milestone (scenario.resolve).
 RESOLVABLE = {"nautiloid", "crash_site_grove", "act2_last_light"}
 
@@ -239,7 +239,7 @@ def test_each_scenario_tells_the_agent_its_task_and_how_it_is_scored(path):
         assert not re.search(r"protects|promises|distrusts|good|evil", char["brief"].lower()), path.stem
     from bg3harness.runner.run_host import scenario_kickoff
 
-    text = scenario_kickoff(sc, "S001", sc["start"].get("save"))
+    text = scenario_kickoff(sc, "S001", sc["start"].get("save"), served=("move_to",))
     head = text.split("\n\n")
     assert head[1] == f"YOUR TASK: {sc['task']}" and head[2] == f"How it is scored: {sc['scored_by']}"
     cap = round(sc["caps"]["run_hours"] * 60)
@@ -271,11 +271,19 @@ def test_a_tactician_variant_is_its_base_at_tactician(name):
         "seed": var["game_settings"]["seed"],
     }
     vs, bs = var["start"], base["start"]
-    assert vs["note"] == bs["note"] and vs["save"] is None and bs["save"]  # made from the base's start save
-    assert f"its start save {bs['save']} (lsv sha1 {bs['save_sha1'][:12]})" in vs["needs_save"]
-    assert "difficulty switched from Balanced to Tactician" in vs["needs_save"]
+    assert vs["note"] == bs["note"]
+    assert vs["save"] != bs["save"] and vs["save_sha1"] != bs["save_sha1"]  # the difficulty lives in its own save
     vq, bq = (raw(SET / "quizzes" / f"{n}.json") for n in (name, TACTICIAN[name]))
     assert vq == {**bq, "scenario": name}
+
+
+@pytest.mark.parametrize("name", sorted(TACTICIAN.keys() - HOLDOUT))
+def test_a_tactician_variants_release_fingerprint_is_its_bases_but_for_the_difficulty(name):
+    """Each save is its base's start resaved at Tactician, so the start state read from it is the base's. A holdout's
+    save has no fingerprint and no release entry."""
+    shipped = raw(release.default_path())["scenarios"]
+    var, base = shipped[name]["fingerprint"], shipped[TACTICIAN[name]]["fingerprint"]
+    assert base["difficulty"] == "Balanced" and var == {**base, "difficulty": "Tactician"}
 
 
 def test_the_holdout_is_about_a_fifth_and_spans_the_families():

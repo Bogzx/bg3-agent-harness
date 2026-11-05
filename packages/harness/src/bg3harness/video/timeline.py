@@ -130,7 +130,7 @@ class Meta:
     t_pass_s: float | None = None
     site: str = ""  # the leaderboard's host, shown on the id line
     pilot: bool = False  # a pilot run: the header carries a pilot badge
-    ending: str = ""  # how a run that didn't pass ended (WIPED, COST CAP, TIME CAP), shown over its last seconds
+    ending: str = ""  # how a run that did not pass ended (WIPED, ..., ENDED BY AGENT), shown over its last seconds
     # (WIPED: from the wipe's own second, Strip.wiped_s)
 
 
