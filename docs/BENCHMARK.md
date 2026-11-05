@@ -101,6 +101,10 @@ anecdotes removed (`packages/harness/prompts/`), but no live run has used the sp
   (`packages/bench/releases/bench-v0.10.json`) for the mod and bg3 tools after bench-v0.9's fight re-run
   (CHANGELOG.md lists what changed for the agent). `releases/bench-v0.9.json` is frozen. A call's async flag now
   needs its own job still running at return, so async % is not comparable with earlier suites.
+- bench-v0.11 (bg3bench 0.11.0): new suite files (a maximise run's kickoff and the gold_max scenarios no longer say
+  the run always plays all its minutes, so a maximise score can move) and a new release file
+  (`packages/bench/releases/bench-v0.11.json`) for the night follow-up's mod, tool and rules-text changes
+  (CHANGELOG.md lists them). `releases/bench-v0.10.json` is frozen as released and graded.
 
 ### Game Over and the run's own saves (2026-10-25, bench B3)
 

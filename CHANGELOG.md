@@ -6,8 +6,8 @@ version:
 | Package | Version lives in | Now |
 |---|---|---|
 | harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.3.0 |
-| benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.10.0 |
-| benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.10 |
+| benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
+| benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
 
 The pyproject is the only place a version is written; `__version__` reads it (from the source tree, else from the
@@ -348,6 +348,12 @@ game unless it says so.
   - results: a leaderboard row is (client, model, reasoning effort, condition); runs, groups and the ranking's
     models carry `effort` (results v1, optional). The suite digest is re-pinned under bench-v0.10 (no score moves
     for runs of one effort per model).
+  bench-v0.11 (bg3bench 0.11.0, 2026-11-05): `releases/bench-v0.10.json` is frozen as merged and graded (the
+  v0.10 pilot; a test pins its sha256). A maximise run's kickoff and the gold_max scenarios no longer say the run
+  always plays all its minutes, so a maximise score can move: bench-v0.11 pins its own suite digest. Its own release
+  file (`releases/bench-v0.11.json`) pins the night follow-up's mod tree, tool definitions and served prompts, and
+  its start save keys are `saves/bench-v0.11/` (the same save files as bench-v0.10). What changed for the agent is
+  in bridge/CHANGELOG.md (2026-11-04 night and 2026-11-05 entries).
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.
