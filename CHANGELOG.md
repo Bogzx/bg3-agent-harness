@@ -186,14 +186,14 @@ game unless it says so.
   bg3le with 0001-0013: sha256 e84d6044c057f3d8e3c4d8ce2259bac944fe873a18f6d5603d891a98e0be0f95, pinned by
   `releases/bench-v0.11.json` (was b7ecfd06, untagged and ungraded); `releases/bench-v0.10.json` is unchanged.
 - Operator messages (the playthrough app's operator chat): with `BG3AI_OPERATOR_DIR` set, the bg3 server adds each
-  pending message from `operator.jsonl` there to the next tool result it finishes, once, as `OPERATOR MESSAGE (from
-  the person running this playthrough, sent HH:MM:SS): <text>`, and appends `{id, t, session, tool}` to
-  `operator.delivered.jsonl`; the call's metrics record names the ids (`operator`). A batch carries them in its own
-  end, not in a step. Without the variable nothing is opened or added. No tool, description or rules text changes,
+  pending message from `operator.jsonl` there to the next tool result the client gets, once, as `OPERATOR MESSAGE
+  (from the person running this playthrough, sent HH:MM:SS): <text>`, and appends `{id, t, session, tool}` to
+  `operator.delivered.jsonl`; a metrics record `{"type": "operator", "t", "tool", "ids"}` names the ids. Only the
+  MCP layer takes them: a tool another tool calls and a batch step never do, so a batch carries them in its own end. Without the variable nothing is opened or added. No tool, description or rules text changes,
   so the served tool definitions and their digests stay the same. A bench run never has it: `LiveRunHost` drops
   every `BG3AI_OPERATOR_*` from the env a run gets, whatever the shell that started the bench exports.
   The harness version stays: the block appears only with the playthrough's option on. A session's `latency.json`
-  has `operator_messages`: how many message ids its metrics records carried (0 without the option).
+  has `operator_messages`: how many message ids its `operator` metrics records carried (0 without the option).
 
 ### Benchmark (`packages/bench`)
 
@@ -408,8 +408,9 @@ game unless it says so.
   default) lets `POST /api/v1/playthroughs/<pt>/messages` (`{"text": ...}`, the same write rules as start/stop) queue
   a message for the agent: 201 `{id, t, status}`, 409 when the option is off or the dir is a bench run's, 400 for an
   empty or over-1000-character text, 429 for more than one per 5 s or 10 still queued. The runner gives the bg3
-  server `BG3AI_OPERATOR_DIR` (`runtime/sessions/<pt>`) only for such a playthrough; at an agent restart a message
-  the dead client's stream log never showed is queued again (a `redeliver` row). The Watch snapshot carries
+  server `BG3AI_OPERATOR_DIR` (`runtime/sessions/<pt>`) only for such a playthrough; at every agent start (a new
+  session or a restart) a delivered message its session's stream log never showed is queued again (a `redeliver`
+  row). The Watch snapshot carries
   `operator: {enabled, messages}`, the SSE stream an `operator` event per new row (with `playthrough`), Replay
   `operator` events at the sent and delivered times, and each session's `supervisor.json` row, `/sessions` row and
   Timeline session `operator: {enabled, sent, delivered}` (null when the option was off).
