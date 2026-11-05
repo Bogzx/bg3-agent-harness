@@ -133,6 +133,12 @@ class InResults(Base):
         self.assertNotIn("OPERATOR MESSAGE", again)
         self.assertEqual(len(self.told()), 1)
 
+    def test_end_session_leaves_it_for_the_next_session(self):
+        # REVIEW-CHAT-FIX NOTE 3: the session ends before the model can act on a message in end_session's result
+        self.assertNotIn("OPERATOR MESSAGE", self.finish("end_session"))
+        self.assertEqual((self.delivered(), self.told()), ([], []))
+        self.assertIn(op.line(T, "help Shadowheart first"), self.finish("session_start"))
+
     def test_a_nested_call_never_takes_it(self):
         # REVIEW-CHAT-INT #1: swap_party's _walk_up_to drops its wait_for's result; when that wait took the message,
         # the model never saw it and it was marked delivered
