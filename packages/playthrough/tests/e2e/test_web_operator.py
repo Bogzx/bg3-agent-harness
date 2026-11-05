@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from bg3play import config
 from bg3play.hub import Hub
 from bg3play.server import DEFAULT_WEB, App, serve
 from playwright.sync_api import Page, expect
@@ -27,7 +28,7 @@ def toml(site: Site) -> Path:
 @pytest.fixture
 def allowed(site: Site) -> Iterator[Path]:
     """The fixture playthrough with operator messages on; yields its session dir (inbox and delivered files)."""
-    toml(site).write_text("[operator]\nmessages = true\n")
+    config.save(toml(site).parent, config.validate({"v": 1, "name": PT, "operator": {"messages": True}}))
     d = site["store"].session_dir(PT)
     yield d
     toml(site).unlink()
