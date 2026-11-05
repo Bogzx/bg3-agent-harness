@@ -208,6 +208,10 @@ def legacy_claude_cmd(r, prompt: str, claude_session: str, resume: bool, tag: st
            "--verbose", "--strict-mcp-config", "--mcp-config", str(renv.PLAY_DIR / ".mcp.json"),
            "--exclude-dynamic-system-prompt-sections", "--setting-sources", "project,local",
            "--disable-slash-commands", "--tools", "ToolSearch"]
+    # #101: + play/.claude/settings.json as --settings (an untrusted play/'s project allow is ignored)
+    play = json.loads((renv.PLAY_DIR / ".claude" / "settings.json").read_text())
+    play.pop("$schema")
+    cmd += ["--settings", json.dumps(play)]
     if effort:
         cmd += ["--effort", effort]
     if r.opt.fallback_model:

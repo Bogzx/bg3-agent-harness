@@ -225,9 +225,12 @@ class ClaudeClient:
                 "play/.mcp.json: only mcp__bg3__*; play/.claude/settings.json denies the rest again")
 
     def __init__(self, mcp_config: Path | str = MCP_CONFIG, binary: str = "claude", settings: dict | None = None):
-        # mcp_config: a file or an inline JSON string (the container sandbox's http server). settings: an extra
-        # --settings JSON (the memory keeper's MCP pass, the sandbox: allow mcp__bg3__* outside play/)
-        self.mcp_config, self.binary, self.settings = mcp_config, binary, settings
+        # mcp_config: a file or an inline JSON string (the container sandbox's http server). settings: the --settings
+        # JSON, by default play/.claude/settings.json itself: Claude Code ignores a project's permissions.allow until
+        # its folder is trusted, so a play/ nobody opened interactively denied every mcp__bg3__* call (#101).
+        # The memory keeper's MCP pass passes its own.
+        self.mcp_config, self.binary = mcp_config, binary
+        self.settings = play_settings() if settings is None else settings
 
     def write_config(self, req: Request) -> list[Path]:
         return []   # play/.mcp.json is the config (it sets BG3AI_SERVE_RULES=0: claude reads play/CLAUDE.md itself)
@@ -603,8 +606,9 @@ SANDBOX_CWD = Path("/home/agent")
 
 
 def play_settings(path: Path = PLAY_DIR / ".claude" / "settings.json") -> dict:
-    """play/.claude/settings.json (allow mcp__bg3__*, deny every built-in tool) as a --settings JSON, for a claude
-    that runs where play/ isn't its project (the container sandbox)."""
+    """play/.claude/settings.json (allow mcp__bg3__*, deny every built-in tool) as a --settings JSON: every play
+    claude gets it this way, in play/ (untrusted, its project allow doesn't apply) or where play/ isn't its project
+    (the container sandbox)."""
     raw = json.loads(path.read_text())
     raw.pop("$schema", None)
     return raw
@@ -616,8 +620,7 @@ def make_http(name: str, url: str, server_timeout: int = 110_000, claude_setting
     rules of play come from the server (BG3AI_SERVE_RULES=1 on the host side): the container has no play/CLAUDE.md."""
     server = http_server(url, server_timeout)
     if name == "claude":
-        return ClaudeClient(mcp_config=json.dumps({"mcpServers": {"bg3": server}}),
-                            settings=play_settings() if claude_settings is None else claude_settings, **kw)
+        return ClaudeClient(mcp_config=json.dumps({"mcpServers": {"bg3": server}}), settings=claude_settings, **kw)
     return make(name, server=server, cwd=SANDBOX_CWD, **kw)
 
 
