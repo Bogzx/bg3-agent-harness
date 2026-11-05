@@ -21,7 +21,8 @@
       .story(pt)
       .then((s) => (d = s))
       .catch((e: Error) => (error = e.message));
-    api.sessions(pt).then((r) => (guided = guidedLine(guidedSessions(r.sessions))), (e: Error) => (error = e.message));
+    // the guided line is optional: without the session list the story still shows
+    api.sessions(pt).then((r) => (guided = guidedLine(guidedSessions(r.sessions))), () => {});
   });
 
   const members = $derived(d ? [...d.status.party, ...d.others.map((o) => ({ ...o, camp: true }))] : []);

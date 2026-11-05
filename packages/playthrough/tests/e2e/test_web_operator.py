@@ -98,6 +98,18 @@ def test_a_token_server_wants_the_token(page: Page, site: Site, allowed: Path, e
         srv.server_close()
 
 
+def test_story_without_the_session_list_still_shows_the_story(page: Page, site: Site, errors: list[str]):
+    # the guided line is optional: a failed /sessions must not replace the chapters with an error
+    page.route(f"**/api/v1/playthroughs/{PT}/sessions", lambda r: r.fulfill(status=500, json={"error": "boom"}))
+    with page.expect_response(f"**/api/v1/playthroughs/{PT}/sessions"):
+        page.goto(f"{site['url']}/#/story/{PT}")
+    expect(page.get_by_role("button", name="Chapters")).to_be_visible()
+    expect(page.locator(".panel h2").first).to_contain_text("Chapter")
+    expect(page.get_by_text("boom")).to_have_count(0)
+    expect(page.locator(".error")).to_have_count(0)
+    errors.clear()  # the 500's own console line
+
+
 def test_the_launcher_allows_messages_for_the_session(page: Page, site: Site):
     runner = site["runner"]
     page.goto(f"{site['url']}/#/launch")
