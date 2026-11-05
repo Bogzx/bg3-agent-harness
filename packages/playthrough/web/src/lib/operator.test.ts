@@ -85,8 +85,8 @@ describe("operator messages", () => {
     expect(canSend("127.0.0.1", null)).toBe(true);
     expect(canSend("127.1.2.3", null)).toBe(true);
     expect(canSend("[::1]", null)).toBe(true);
-    expect(canSend("dev2.tailnet", null)).toBe(false);
-    expect(canSend("dev2.tailnet", "tok")).toBe(true);
+    expect(canSend("box.example.net", null)).toBe(false);
+    expect(canSend("box.example.net", "tok")).toBe(true);
     expect(canSend("127.example.com", null)).toBe(false);
     expect(sendError(403, "bad or missing token")).toBe("needs the operator token");
     expect(sendError(429, "wait 5 s between messages")).toBe("wait 5 s between messages");
