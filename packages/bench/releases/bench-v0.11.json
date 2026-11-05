@@ -10,7 +10,7 @@
  "pins": {
   "game_build": "25605617",
   "bg3le_sha256": "b7ecfd06da11f0c34f599cf360b850a258b542a17f9f2eb50010bae799ab8b3b",
-  "mod_sha1": "9ec50440701277739ede24e68d92e3963756e333",
+  "mod_sha1": "0424ba5f367fe8c978adb6ea1c2fa53da8e02e6d",
   "code_sha1": "3318e4d118a58a6a27a40440eea97d58f0d77bbe"
  },
  "scenarios": {
