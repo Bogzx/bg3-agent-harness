@@ -543,8 +543,8 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> 
         )
     else:
         lines.append(
-            f"The run has no pass: it plays all {cap} minutes of its time cap, then it is scored. A party wipe (the "
-            "Game Over screen) ends it sooner."
+            f"The run has no pass: it is scored when it ends, after at most {cap} minutes of play (the time cap). A "
+            "party wipe (the Game Over screen) ends it sooner."
         )
     if start["kind"] == "save":
         lines.append(
@@ -652,6 +652,7 @@ def run_failures(
     cap: str | None = None,
     session_minutes: float | None = None,
     start: tuple[float, str | None] = (0.0, None),
+    maximise: bool = False,
 ) -> list[Json]:
     """Every failure of a bench run, tagged harness/agent/unknown as the legacy series tags them (runs.classify_run
     over the run's runner_events.jsonl, its play streams and the agent's reloads; its one session as the history),
@@ -660,7 +661,10 @@ def run_failures(
     outcome to classify ("stopped" for an operator stop: listed apart, not a failure). A `timeout` whose agent ended
     its turn with more than EARLY_EXIT_MINUTES of the session_minutes left (no stop resume left) says so, not that the
     time ran out (fixlive D4: "the run's time ran out" at 7.9 of 240 min). `start`: (run_start, start save): a launch
-    recovered before it is the run's note, not a failure (runs.recovered_launch)."""
+    recovered before it is the run's note, not a failure (runs.recovered_launch). `maximise`: the run has no goal or
+    milestone, so its ending says what happened (its stop check ended it at a turn's end with no acting call since
+    the agent's last (re)start, or the cap) instead of "before the goal / the milestone" (v010 pilot: Sonnet
+    act3_gold_max read "ended its turn with 29.1 min of the run left, before the goal")."""
     res = outcome.result
     logged: list[Json] = runs.read_jsonl(state_dir / "runner_events.jsonl")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     events = [e for e in logged if e.get("t", 0) >= t0 - 1 and not runs.recovered_launch(e, *start)]  # pyright: ignore[reportUnknownMemberType]
@@ -673,8 +677,17 @@ def run_failures(
     ending_why = why or res.reason if name == "gave_up" else ""  # a time-out or a cap says its own why
     if name == "timeout" and session_minutes is not None:
         left = rpolicy.early_exit_minutes(res.reason, outcome.started, res.ended, session_minutes)
-        if left is not None:
+        if left is not None and maximise:
+            ending_why = (
+                f"{SID}: the run ended at its turn's end with no acting call since its last (re)start, {left} min of "
+                "the cap left"
+            )
+        elif left is not None:
             ending_why = f"{SID}: the agent ended its turn with {left} min of the run left, before the goal"
+        elif maximise:
+            ending_why = "the run's time cap was reached"
+    if name == "over_budget" and maximise:
+        ending_why = f"the run's {cap or 'cost'} cap was used up"
     return runs.classify_run(state_dir, t0, res.ended, [session], events, actions, name, ending_why, cap, ending)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
 
@@ -957,7 +970,15 @@ class LiveRunHost:
         why, cap = foreign or getattr(res, "detail", ""), (r.cap_hit or {}).get("cap")
         start = (t_zero, r.opt.start_save)
         failures = run_failures(
-            r.state.dir, t0, outcome, "stopped" if stopped else name, why, cap, r.opt.session_minutes, start
+            r.state.dir,
+            t0,
+            outcome,
+            "stopped" if stopped else name,
+            why,
+            cap,
+            r.opt.session_minutes,
+            start,
+            maximised(sc) is not None,
         )
         relaunched: list[Json] = runs.recovered_launches(r.state.dir / "runner_events.jsonl", t0, *start)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         counts = {cls: sum(int(f.get("n") or 1) for f in failures if f["class"] == cls) for cls in runs.CLASSES}

@@ -932,9 +932,10 @@ MAX_SC: dict[str, Any] = {k: v for k, v in SAVE_SC.items() if k != "goal"} | {
 }
 
 
-def test_the_kickoff_of_a_maximise_scenario_says_it_plays_its_whole_cap_and_how_it_is_scored():
+def test_the_kickoff_of_a_maximise_scenario_says_its_time_cap_and_how_it_is_scored():
     text = H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000")
-    assert "The run has no pass: it plays all 45 minutes of its time cap, then it is scored." in text
+    assert "The run has no pass: it is scored when it ends, after at most 45 minutes of play (the time cap)." in text
+    assert "plays all" not in text  # a run that stops acting ends sooner (pilot: Sonnet act3_gold_max at 16 of 45 min)
     assert "A party wipe (the Game Over screen) ends it sooner." in text  # graders.measure stops there
     assert "the party's gold when the run ends minus its gold at the start save" in text
     assert "as soon as the task is decided" not in text and "exact goal" not in text
@@ -964,6 +965,8 @@ def test_a_maximise_run_that_acts_is_resumed_past_the_goal_runs_count_until_its_
     assert len(r.plays) == 15 and out.stop_resumes == 14 > STOP_RESUMES  # 15 x 3 min = the 45 min cap
     rec = rig.h.record(JOB, MAX_SC, run_dir("m-gold"), out)
     assert (rec["first_stop_s"], rec["wall_min"]) == (180.0, 45.0)
+    # no "before the milestone": a maximise run has none
+    assert [(f["kind"], f["detail"]) for f in rec["failures"]] == [("timeout", "the run's time cap was reached")]
 
 
 def test_a_maximise_run_ends_after_a_stretch_with_no_acting_call(rig: Rig):
@@ -979,6 +982,15 @@ def test_a_maximise_run_ends_after_a_stretch_with_no_acting_call(rig: Rig):
     assert [t for t, _, _ in r.plays] == ["", "-c1", "-c2", "-c3"] and out.result.reason == "exited"
     rec = rig.h.record(JOB, MAX_SC, run_dir("m-gold"), out)
     assert (rec["first_stop_s"], rec["wall_min"], rec["outcome"]) == (120.0, 8.0, "timeout")
+    # what happened, not "before the goal" (a maximise run has none; v010 pilot Sonnet act3_gold_max)
+    assert [(f["kind"], f["class"], f["detail"]) for f in rec["failures"]] == [
+        (
+            "timeout",
+            "agent",
+            "S001: the run ended at its turn's end with no acting call since its last (re)start, 37.0 min of the "
+            "cap left",
+        )
+    ]
 
 
 def test_a_goal_run_keeps_its_stop_resume_count_however_much_it_acts(rig: Rig):
