@@ -264,7 +264,8 @@ the app. [runner/README.md](runner/README.md) has the runner's options.
 
 - Baldur's Gate 3 bought on Steam and installed through it: the native Linux build, not the Windows build under
   Proton. Built and tested on Steam buildid 25605617 (Patch 8 Hotfix 10); other builds may need bg3le's addresses
-  re-resolved ([docs/GAME-UPDATES.md](docs/GAME-UPDATES.md)).
+  re-resolved ([docs/GAME-UPDATES.md](docs/GAME-UPDATES.md)). `runner/launch_game.sh` refuses another build
+  unless `BG3AI_ALLOW_OTHER_BUILD=1`.
 - bg3le, the Script Extender port, built from the pinned submodule with the patches in `patches/bg3le/`
   (`tools/build_bg3le.sh`, Docker, about 10 GB RAM once), and the SDL input shim built against that build
   (`native/bg3sdl/build.sh`).
