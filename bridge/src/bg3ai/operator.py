@@ -89,7 +89,8 @@ def _sig(path: Path) -> tuple[int, int] | None:
 
 
 class Outbox:
-    """The bg3 server's side: pending messages into a result, once."""
+    """The bg3 server's side: pending messages into a result, once. `_lock` is per process: two bg3 servers on one
+    dir (an orphaned one still finishing a walk after its client crashed) could each take the same message."""
 
     def __init__(self, directory: Path | None):
         self.dir = directory
