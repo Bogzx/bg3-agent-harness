@@ -287,6 +287,7 @@ class Fixtures(Base):
                 self.assertIs(totals.pop("cost_unknown"), False)  # every process here reported its cost
                 self.assertIsNone(totals.pop("served"))  # claude reports no served levels or providers
                 totals.pop("running")
+                self.assertEqual(totals.pop("open_streams"), 0)  # every process here ended with its result
                 self.assertEqual(totals, legacy_claude_totals(src, 0), f"{how} {src.name}")
         self.assertEqual(n, 8)
 
