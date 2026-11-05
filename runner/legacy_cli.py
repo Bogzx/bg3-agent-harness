@@ -613,8 +613,9 @@ def cmd_bench(argv: list[str]) -> int:
     from bg3bench import matrix_cli  # _harness puts packages/bench/src on sys.path
     from bg3harness.runner.run_host import LiveRunHost, bench_recording, stop_file, stop_on_signals
 
-    host = LiveRunHost(lpt.Runner, recording=bench_recording(os.environ))
-    if not argv or argv[0] not in BENCH_LIVE:
+    live = bool(argv) and argv[0] in BENCH_LIVE  # only these record: plan and status need no encoder set
+    host = LiveRunHost(lpt.Runner, recording=bench_recording(os.environ) if live else None)
+    if not live:
         return matrix_cli.main(argv, repo=renv.REPO, host=host, out=sys.stdout)
     lock = acquire_lock()  # noqa: F841 - held (runtime/runner.lock) until the process exits
     stop_file().unlink(missing_ok=True)  # a STOP left from before would stop the first run

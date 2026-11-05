@@ -240,6 +240,48 @@ def _signed(v: int) -> str:
     return f"+{v}" if v >= 0 else str(v)
 
 
+def _merge_dialogue_tags(ui: dict) -> dict:
+    """The answer rows' "[PALADIN] [DECEPTION] " tags, which the client sees only as unreadable runs (one per tag), from
+    state.dialogue_tags (the game's NodeSelection; the label rule is in Server/StateDialog.lua). Merged by the game's
+    answer index (an option's idx = AnswerIdx = the NodeSelection index; REVIEW-10 change 1), only when the two reads
+    agree: as many answers as the list has (shown + scrolled away), and per answer as many labels as tag runs on its
+    row. Anything else (an option without idx/runs, a stale or changed list, the op's refusal): no labels and one log
+    line. An option whose tags the client already read keeps them. The merge keys never reach the agent."""
+    d = ui.get("dialogue") if isinstance(ui, dict) else None
+    if not d or not d.get("options"):
+        return ui
+    opts = [dict(o) for o in d["options"] if isinstance(o, dict)]  # copies: _complete_answers caches its options
+    ui = dict(ui, dialogue=dict(d, options=opts))
+    keys = [(o.pop("idx", None), o.pop("runs", None)) for o in opts]
+    if not any(r for _, r in keys):
+        return ui  # no row shows a tag run: nothing to label (and no RPC)
+    total = len(opts) + int(d.get("more_above") or 0) + int(d.get("more_below") or 0)
+    res = core.game.try_rpc("state.dialogue_tags") or {}
+    srv = {a.get("idx"): a for a in res.get("answers") or [] if isinstance(a, dict)}
+    why = res.get("why") or ("" if res.get("answers") is not None else "no answer from state.dialogue_tags")
+    if not why and len(srv) != total:
+        why = f"{len(srv)} answers in the game's selection, {total} in the list"
+    for (idx, runs), o in zip(keys, opts, strict=True):
+        if why:
+            break
+        if idx is None or runs is None:  # the row's AnswerIdx or tag runs didn't read: nothing to check against
+            why = f"answer {o.get('i')}: idx {idx}, tag runs {runs} (unread on the row)"
+            break
+        a = srv.get(idx)
+        n = len(a.get("tags") or []) + (1 if a.get("roll") else 0) if a else None
+        if n != runs:
+            why = f"answer {o.get('i')}: idx {idx}, {runs} tag runs on the row, {n} labels in the game's selection"
+    if why:
+        core._log("dialogue_tags", {}, f"no labels: {why}", 0)
+        return ui
+    for (idx, _), o in zip(keys, opts, strict=True):
+        a = srv[idx]
+        labels = [str(t).upper() for t in a.get("tags") or []] + ([str(a["roll"]).upper()] if a.get("roll") else [])
+        if labels and not o.get("tags"):
+            o["tags"] = labels
+    return ui
+
+
 def _annotate_checks(ui: dict) -> dict:
     """Add 'check' to each tagged dialogue option: 'Persuasion: Claude +5 (party best: Shadowheart +6)'."""
     d = ui.get("dialogue") if isinstance(ui, dict) else None
@@ -334,12 +376,21 @@ def _render_ui(ui: dict, brief: bool = False) -> list[str]:
         ui = _complete_answers(ui)
     except Exception:  # best effort: the visible window still renders
         pass
+    ui = _label_dialogue(ui)
     _note_listed(ui)
+    return render.render_ui(ui, core.H, brief=brief)
+
+
+def _label_dialogue(ui: Any) -> Any:
+    """The answer rows' tags (state.dialogue_tags) and check notes, for every tool that renders the dialogue: look's
+    full status and its change lines rendered the raw read (w11 L4: talk_to showed '5. [PALADIN] She is a person...',
+    look right after the same row without the label)."""
+    ui = _merge_dialogue_tags(ui)
     try:
         ui = _annotate_checks(ui)
     except Exception:  # best effort: a missing sheet never hides the dialogue itself
         pass
-    return render.render_ui(ui, core.H, brief=brief)
+    return ui
 
 
 def _keep_read(ui: Any) -> None:
@@ -376,17 +427,34 @@ class _BatchState(threading.local):
 _batch = _BatchState()
 
 
-# Pace bookkeeping for the agent's own calls (MCP thread): when it last issued an async action, how many calls
-# came after it, and how often the NEXT hint was shown. Teaches pipelining in context (impl-setup part 5).
-_pace = {"issued_at": 0.0, "calls_since": 0, "next_shown": 0, "nudge": False}
+# Pace bookkeeping for the agent's own calls (MCP thread): when it last issued an async action and how many calls
+# came after it (the PACE fact, impl-setup part 5).
+_pace = {"issued_at": 0.0, "calls_since": 0}
 PACE_GAP_S = 1.5
-NEXT_WALK = ("NEXT: queue_actions what to do on arrival, then look/plan/notes while it runs; "
-             "wait_for only when you are out of work")
 
 
 # Consecutive wait_for(<event kinds>) answers "nothing is running", with only these reads in between.
 _noop_waits = {"n": 0}
 _READ_TOOLS = tool_classes.READ_TOOLS
+
+
+# Tools whose metrics record splits _finish into stages (_Stages): talk_to's 1.5 s median bridge-side time had no
+# owner in the records (latency survey 2026-11-04 §5.4).
+_STAGED = {"talk_to": "talk"}  # tool -> the record's field
+
+
+class _Stages:
+    """Per-stage ms of one _finish, for the metrics record: `act` is the call's start to _finish (the job, its text and
+    CHANGES), then each mark() since the previous one."""
+
+    def __init__(self, t0: float):
+        self.last = time.monotonic()
+        self.ms = {"act_ms": round((self.last - t0) * 1000, 1)}
+
+    def mark(self, name: str) -> None:
+        now = time.monotonic()
+        self.ms[name + "_ms"] = round((now - self.last) * 1000, 1)
+        self.last = now
 
 
 def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, issued: bool = False,
@@ -403,16 +471,23 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
     elif tool not in _READ_TOOLS:
         _noop_waits["n"] = 0
     out = [body.rstrip()]
+    stage = _Stages(t0) if tool in _STAGED else None
     if events:
         job = str(args.get("target") or "").strip().lower() if tool == "wait_for" else ""
         ev = core._events_text(body, job if re.fullmatch(r"j\d+", job) else None,
                           max_wait=core.DIALOGUE_DRAIN_MAX_S if tool in core._DIALOGUE_TOOLS else None)
+        if stage:
+            stage.mark("events")
         if ev:
             out.append(ev)
-        auto = _auto_dialogue(tool, body, ev)
+        auto = _auto_dialogue(tool, body, ev, t0)
+        if stage:
+            stage.mark("auto_dialogue")
         if auto:
             out.append(auto)
             ev = core._events_text()
+            if stage:
+                stage.mark("events2")
             if ev:
                 out.append(ev)
         core._fight_seen(tool, ev)
@@ -437,9 +512,8 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
         queueing._running_memo["on"] = False
     if tool == "wait_for" and _pace["calls_since"] == 0 and _pace["issued_at"] \
             and t0 - _pace["issued_at"] < PACE_GAP_S and rules.coaching():
-        out.append("PACE: you waited right after issuing. Next time first do independent work (queue the arrival "
-                   "steps, look, plan, notes): the character acts while you think.")
-        _pace["nudge"] = True
+        out.append(f"PACE: this wait_for came {render.num(round(t0 - _pace['issued_at'], 1))}s after the last issued "
+                   "action, with no other call in between.")
     if tool not in ("get_status", "look", "level_up"):
         if overview._LEVEL_NUDGE.stale():  # XP arrives mid-play: one state.status read a minute finds the level up
             overview._LEVEL_NUDGE.seen_at = time.time()  # also when the read fails (loading): no retry on every call
@@ -452,6 +526,9 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
     if c:
         out.append(c)
     text = core.H.scrub("\n".join(x for x in out if x))
+    if stage:
+        stage.mark("rest")
+        extra = {**(extra or {}), _STAGED[tool]: stage.ms}
     core._log(tool, args, text, (time.monotonic() - t0) * 1000, extra)
     if issued:
         _pace["issued_at"], _pace["calls_since"] = time.monotonic(), 0
@@ -465,10 +542,11 @@ _NO_AUTO_DIALOGUE = {"dialogue_advance", "choose_dialogue", "get_dialogue", "rol
                      "zoom", "session_clock", "end_combat_report"}
 
 
-def _auto_dialogue(tool: str, body: str, ev: str) -> str:
+def _auto_dialogue(tool: str, body: str, ev: str, t0: float | None = None) -> str:
     """When this call opened a conversation (talk_to done, an interact that starts one, or a dialogue_started
     event), click through its opening filler and show the first real choice now: saves the get_dialogue +
-    dialogue_advance turns the agent spent on every conversation (S002/S003). Filler only, never an answer."""
+    dialogue_advance turns the agent spent on every conversation (S002/S003). Filler only, never an answer.
+    t0: the call's start; the autopilot stops at t0 + CALL_DEADLINE_S (macro_tools)."""
     if not macro_tools.AUTO_DIALOGUE or tool in _NO_AUTO_DIALOGUE or "DIALOGUE " in body:
         return ""
     head = body.lstrip().split("\n", 1)[0]
@@ -481,16 +559,16 @@ def _auto_dialogue(tool: str, body: str, ev: str) -> str:
     else:
         return ""
     try:
-        n, lines, stop = macro_tools._dialogue_autopilot(open_s=open_s,
-                                             line_s=macro_tools.AUTO_DIALOGUE_READ_LINE_S if tool in _READ_TOOLS else None)
+        n, lines, stop = macro_tools._dialogue_autopilot(
+            open_s=open_s, line_s=macro_tools.AUTO_DIALOGUE_READ_LINE_S if tool in _READ_TOOLS else None,
+            deadline=None if t0 is None else t0 + macro_tools.CALL_DEADLINE_S)
     except GameError:
         return ""
     if n == 0 and stop == "conversation ended":
         if tool == "talk_to" and head.startswith("talk_to: done") and "dialogue_line" not in ev:
             # S028 15:50 (Wulbren, Lia at the dock): "talk_to: done — dialogue" and nothing else; the agent read
             # get_dialogue (screen=game) to find out. Say it: the game started a talk that never showed a window.
-            return ("(no conversation window opened: they only had a passing remark, nothing to answer; "
-                    "talk to them again later or follow the journal)")
+            return ("(no conversation window opened: they only had a passing remark, nothing to answer)")
         return ""  # no dialogue on screen (ambient banter, a plain door): nothing to add
     return "\n".join(([f"auto-advanced {n} opening filler line(s):"] if n else []) + lines
                      + ([f"STOPPED: {stop}"] if stop else []))
@@ -550,16 +628,6 @@ def _with_statuses(rows: list[dict]) -> list[dict]:
     return [{**o, "statuses": st_of.get(o.get("uuid")) or []} for o in rows]
 
 
-def _next_walk_hint() -> str:
-    """The NEXT line after a walk that is still running: the first 3 times, then only after a PACE nudge.
-    Coaching like PACE: (rules.coaching): rules-only gets none."""
-    if not rules.coaching() or (_pace["next_shown"] >= 3 and not _pace["nudge"]):
-        return ""
-    _pace["next_shown"] += 1
-    _pace["nudge"] = False
-    return NEXT_WALK
-
-
 def _par(*thunks) -> list:
     """game.parallel when the game has it (one tick for independent RPCs), else one after another."""
     p = getattr(core.game, "parallel", None)
@@ -580,12 +648,38 @@ def _read1(op: str, args: dict | None = None, context: str = "server") -> Any:
     return r1(op, args, context) if r1 else core.game.rpc(op, args, context)
 
 
+# The start of the outermost tool call on this thread (a tool that calls another, as route(go=true) calls travel_to):
+# what the inner one's time limits count from (call_t0; review-v010-final #3).
+_call = threading.local()
+
+
+def call_t0() -> float:
+    """When the tool call running on this thread started (the outermost one), or now outside any."""
+    t0 = getattr(_call, "t0", None)
+    return time.monotonic() if t0 is None else t0
+
+
 def _guard(fn):
     """Wrap a tool so game errors become readable text instead of exceptions."""
     import functools
 
     @functools.wraps(fn)
     def wrapper(*a, **kw):
+        outer = getattr(_call, "t0", None) is not None
+        if not outer:
+            _call.t0 = time.monotonic()
+        # The guard's entry time and its save wait, for this call's metrics record (core._log): the time before a
+        # tool's own t0 was in no record (latency survey 2026-11-04: 1.03 h before the records' t0)
+        prev = getattr(core._logged, "guard", None)
+        core._logged.guard = {"guard_t0": round(time.time(), 3), "_m": time.monotonic()}
+        try:
+            return run(*a, **kw)
+        finally:
+            core._logged.guard = prev
+            if not outer:
+                _call.t0 = None
+
+    def run(*a, **kw):
         t0 = time.monotonic()
         try:
             core.LIFE.ensure()  # manual mode: the first call opens the memory session (was the SessionStart hook)
@@ -601,11 +695,21 @@ def _guard(fn):
         getattr(core.game, "begin_tool", lambda: None)()
         gated = fn.__name__ not in _SAVE_UNGATED
         if gated:
-            saving.SAVER.enter()  # a background save has the menus up for ~1 s: don't interleave with it
+            waited_s = saving.SAVER.enter()  # a background save has the menus up for ~1 s: don't interleave with it
+            g = getattr(core._logged, "guard", None)
+            if g is not None:
+                g["save_wait_ms"] = round(waited_s * 1000, 1)
         who_prev = getattr(plumbing._who_tl, "note", "")
         plumbing._who_tl.note = ""
+        logged = getattr(core._logged, "n", 0)
+        core._logged.extra = None
         try:
             out = fn(*a, **kw)
+            if getattr(core._logged, "n", 0) == logged:
+                # a return that skipped _finish (flee's FAILED, the REFUSED early outs) still gets its metrics and
+                # actions.jsonl record: launch-v1's two ~49 s flee failures left none
+                core._log(fn.__name__, kw, out if isinstance(out, str) else type(out).__name__,
+                          (time.monotonic() - t0) * 1000)
             if plumbing._who_tl.note and isinstance(out, str):  # _who picked the member acting now (ACT-P2); last, so
                 out = out + "\n" + plumbing._who_tl.note           # a result's own first word (FAILED, done) stays first
             if waited and isinstance(out, str):  # last too: the new game's line is no outcome of this call

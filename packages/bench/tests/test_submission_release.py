@@ -25,7 +25,10 @@ PILOT_RULES = FIXTURE.parent / "pilot-rules"
 PINS = {"game_build": "20981537", "bg3le_sha256": "a" * 64, "mod_sha1": "b" * 40}
 VERSIONS = {"harness": "1.2.3", "bench": "0.8.0"}
 # Released suites' files, frozen: what their published results were checked against. A new suite gets a new file.
-FROZEN = {"bench-v0.8.json": "292177f0a813b2f1c59a4e301f96d8fcb1ecf688e32ad875828d0bd602203e83"}
+FROZEN = {
+    "bench-v0.8.json": "292177f0a813b2f1c59a4e301f96d8fcb1ecf688e32ad875828d0bd602203e83",
+    "bench-v0.9.json": "04762bdbb27d7cb991386cf63c8644f20fe9d6653cffd2423c7fa44ac91b5d06",
+}
 
 
 def fixture_files() -> dict[str, bytes]:
@@ -87,6 +90,9 @@ def test_served_matches_what_the_pilot_run_recorded(tmp_path, monkeypatch):
     frozen = json.loads((release.RELEASES / "bench-v0.8.json").read_text(encoding="utf-8"))["conditions"]["rules"]
     assert frozen["tools"]["allowlist_sha256"] == man["tools"]["allowlist_sha256"]
     assert frozen["prompts"]["pi"] == cond["prompts"]["pi"]
+    tools = json.loads(fixture_files()["bg3-tools.json"])
+    assert cond["tools"]["defs_sha256"] == release.defs_digest(tools, cond["tools"]["names"])
+    assert "defs_sha256" not in frozen["tools"]  # bench-v0.8 pinned names only
 
 
 def test_session_env_turns_off_memory_and_the_conditions_tools():
@@ -158,6 +164,36 @@ def test_clients_served_different_tools_are_refused():
         release.serve("rules", ["pi", "claude"], Path("/nonexistent"), environ={}, dump=dump)
 
 
+def test_clients_served_different_tool_definitions_are_refused():
+    files = fixture_files()
+    tools = json.loads(files["bg3-tools.json"])
+    edited = [{**t, "description": "another build"} if i == 0 else t for i, t in enumerate(tools)]
+    calls = iter([tools, edited])
+
+    def dump(system: Path, tools_path: Path, instructions: Path, repo: Path) -> None:
+        fake_dump(files, next(calls))(system, tools_path, instructions, repo)
+
+    with pytest.raises(release.ReleaseError, match="different tool definitions"):
+        release.serve("rules", ["pi", "claude"], Path("/nonexistent"), environ={}, dump=dump)
+
+
+def test_defs_digest_hashes_the_whole_definition_of_each_named_tool_order_free():
+    a = {"name": "a", "description": "walk", "inputSchema": {"type": "object", "properties": {"x": {"type": "number"}}}}
+    b = {"name": "b", "description": "look", "inputSchema": {"type": "object"}, "_meta": {"anthropic/alwaysLoad": True}}
+    off = {"name": "off", "description": "not served"}
+    h = release.defs_digest([a, b, off], ["a", "b"])
+    assert h == release.defs_digest([b, a], ["b", "a"])  # tool order, names order
+    assert h == release.defs_digest([dict(reversed(a.items())), b], ["a", "b"])  # key order
+    assert h == release.defs_digest([a, b, {**off, "description": "edited"}], ["a", "b"])  # a tool not served
+    for changed in (
+        {**a, "description": "walk there"},
+        {**a, "inputSchema": {"type": "object", "properties": {"x": {"type": "number", "default": 1}}}},
+        {**a, "_meta": {"anthropic/alwaysLoad": True}},  # Claude Code: in context from the first turn, else deferred
+    ):
+        assert release.defs_digest([changed, b], ["a", "b"]) != h
+    assert release.defs_digest([a], ["a", "b"]) != h  # a named tool missing
+
+
 def test_cli_refuses_another_suite(tmp_path, capsys):
     assert release.main(["--suite", "bench-v0.1", "--out", str(tmp_path / "r.json")]) == 1
     assert "not the installed suite" in capsys.readouterr().err
@@ -194,6 +230,8 @@ def test_a_profile_variant_serves_fewer_tools_and_another_prompt(served):
     assert release.errors(doc) == []
     var = doc["conditions"]["rules"]["variants"][key]
     assert var["tools"]["count"] == len(noshot.names) and var["prompts"] == {"pi": noshot.prompts["pi"]}
+    assert var["tools"]["defs_sha256"] == release.defs_digest(json.loads(files["bg3-tools.json"]), noshot.names)
+    assert var["tools"]["defs_sha256"] != doc["conditions"]["rules"]["tools"]["defs_sha256"]
     cond = doc["conditions"]["rules"]
     assert release.condition_entry(cond, var["tools"]["allowlist_sha256"]) == var
     base = release.condition_entry(cond, cond["tools"]["allowlist_sha256"])
@@ -304,6 +342,8 @@ def test_the_shipped_release_is_the_one_this_code_builds():
     repo = suite.PACKAGE_ROOT.parents[1]
     mod = codewatch.mod_tree_hashes(repo / "mod")
     assert shipped["pins"]["mod_sha1"] == harness_pins.tree_digest(mod), "the mod changed: rebuild the release"
+    code = harness_pins.code_digest(repo)
+    assert shipped["pins"]["code_sha1"] == code, "the code changed (bridge, runner, harness, play, pi): rebuild it"
     cids = sorted(shipped["conditions"])
     served = {cid: release.serve(cid, release.CLIENTS, repo) for cid in cids}
     variants = {

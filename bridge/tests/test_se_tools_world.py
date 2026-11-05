@@ -28,8 +28,8 @@ class InsertFake:
     BOOK = "cccccccc-0000-0000-0000-0000000000b5"
     ME = "cccccccc-0000-0000-0000-0000000000a1"
 
-    def __init__(self, open_=False, state="Success"):
-        self.open, self.state, self.jobs = open_, state, []
+    def __init__(self, open_=False, state="Success", fail_reason="Invalid"):
+        self.open, self.state, self.jobs, self.fail_reason = open_, state, [], fail_reason
 
     def rpc(self, op, args=None, context="server"):
         if op == "state.inventory":
@@ -54,7 +54,7 @@ class InsertFake:
                 return JobResult(status="done", result={"panel": "Riddle of the Night", "state": "Empty", "slots": [False],
                                                          "items": [{"uuid": self.BOOK, "name": "Teachings of Loss: The Nightsinger"}]})
             return JobResult(status="done", result={"item": "Teachings of Loss: The Nightsinger", "state": self.state,
-                                                     "fail_reason": "Invalid" if self.state == "Fail" else None})
+                                                     "fail_reason": self.fail_reason if self.state == "Fail" else None})
         return JobResult(status="done", result={})
 
     def drain_events(self, ctx):
@@ -101,6 +101,12 @@ class InsertItem(unittest.TestCase):
         self.use(InsertFake(open_=True, state="Fail"))
         out = self.call(item=self.book)
         self.assertIn("FAILED — the panel refused Teachings of Loss: The Nightsinger (Invalid)", out)
+
+    def test_interrupted_insert_says_the_fact_only(self):
+        self.use(InsertFake(open_=True, state="Fail", fail_reason="Interrupted"))
+        out = self.call(item=self.book)
+        self.assertTrue(out.rstrip().endswith("the game interrupted the insert (a real drag and click get the same "
+                                              "answer now)"), out)  # D630: no "don't retry by hand; play on elsewhere"
 
     def test_insert_by_another_member_takes_control_first(self):
         # S037 20:15-20:17: who=Shadowheart while Claude was controlled: the interact "used" the pedestal, no panel
@@ -202,7 +208,8 @@ class InsertItem(unittest.TestCase):
         self.assertLess(time.monotonic() - t, 2.0)   # no 4 s poll for a panel once a conversation is up
         self.assertIn("opened a conversation instead", out)
         self.assertIn("1. Examine the altar.", out)
-        self.assertIn(f"insert_item(into={core.H.get(self.AltarFake.ALTAR)})", out)
+        self.assertIn(f"at the same spot ({core.H.get(self.AltarFake.ALTAR)} ", out)
+        self.assertTrue(out.rstrip().endswith(")"), out)  # no trailing ': <id>' after the list (REVIEW-15 4.1)
         self.assertEqual([a.get("target") for o, a, _ in fake.jobs if o == "act.interact"], [self.AltarFake.PED])
 
     def test_insert_that_closes_the_panel_says_closed(self):
@@ -491,14 +498,46 @@ class ScreenshotMap(Base):
         made = []
         core._screen = None
         with unittest.mock.patch.dict("os.environ", {"BG3AI_SHOTS_DIR": "/game/runtime/shots"}), \
+                unittest.mock.patch("bg3ai.screen.layer_output_dir", return_value=None), \
                 unittest.mock.patch("bg3ai.screen.ScreenCapture", side_effect=lambda d: made.append(d)):
             try:
                 self.fn()
             except Exception:  # noqa: BLE001  (the fake capture object is None)
                 pass
         self.assertEqual(made, [Path("/game/runtime/shots")])
-        with unittest.mock.patch.dict("os.environ", {"BG3AI_SHOTS_DIR": ""}):
+        with unittest.mock.patch.dict("os.environ", {"BG3AI_SHOTS_DIR": ""}), \
+                unittest.mock.patch("bg3ai.screen.layer_output_dir", return_value=None):
             self.assertEqual(observe._shots_dir(), core.RUNTIME / "shots")
+
+    def test_captures_where_the_running_game_writes(self):
+        # v010 window 9: the wrapper ran w8-fixes' call.py (its runtime/shots) against a game launched from w9-fixes;
+        # the layer wrote every PNG into w9-fixes/runtime/shots within 0.5 s and the screenshot timed out after 5 s.
+        # The folder is the game's: its VK_LAYER_MESA_SCREENSHOT_CONFIG output_dir, over BG3AI_SHOTS_DIR and runtime.
+        import tempfile
+
+        from bg3ai import screen
+
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = Path(tmp)
+            cfg = "comms;control=bg3ai-shot;output_dir=/w9-fixes/runtime/shots;log_type=error"
+            for pid, env in (
+                ("100", f"HOME=/h\0VK_LAYER_MESA_SCREENSHOT_CONFIG={cfg}\0X=1"),  # the game
+                ("101", f"VK_LAYER_MESA_SCREENSHOT_CONFIG={cfg}"),  # its launcher wrapper: the same value
+                ("102", "VK_LAYER_MESA_SCREENSHOT_CONFIG=comms;control=other;output_dir=/elsewhere"),  # not ours
+                ("self", f"VK_LAYER_MESA_SCREENSHOT_CONFIG={cfg}"),  # not a pid
+            ):
+                (proc / pid).mkdir()
+                (proc / pid / "environ").write_bytes(env.encode())
+            self.assertEqual(screen.layer_output_dir(proc=proc), Path("/w9-fixes/runtime/shots"))
+            real = screen.layer_output_dir
+            with unittest.mock.patch.dict("os.environ", {"BG3AI_SHOTS_DIR": "/w8-fixes/runtime/shots"}), \
+                    unittest.mock.patch("bg3ai.screen.layer_output_dir", lambda: real(proc=proc)):
+                self.assertEqual(observe._shots_dir(), Path("/w9-fixes/runtime/shots"))
+            # two games writing to different folders: no guess, the configured folder as before
+            (proc / "103").mkdir()
+            (proc / "103" / "environ").write_bytes(cfg.replace("w9-fixes", "w7-fixes").join(
+                ["VK_LAYER_MESA_SCREENSHOT_CONFIG=", ""]).encode())
+            self.assertIsNone(screen.layer_output_dir(proc=proc))
 
 
 class DoorOpenState(unittest.TestCase):

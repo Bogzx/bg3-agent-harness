@@ -43,13 +43,24 @@ local function activeChar(ctx)
     return V.selected(ctx.party) or ctx.party[1]
 end
 
+-- A creature's footprint (Bound.AIBounds Stand, the bounds the engine's AiPath uses; Move when Stand doesn't read; a
+-- medium creature's 0.5 m otherwise): the same read as Guard's G.radius, which loads after this file.
+local function footprint(e)
+    local ok, r = pcall(function()
+        local b = e.Bound.Bound.AIBounds
+        return (b.Stand and b.Stand.Radius) or (b.Move and b.Move.Radius)
+    end)
+    if ok and type(r) == "number" and r > 0 and r < 5 then return r end
+    return 0.5
+end
+
 RPC.register("nav.path", function(args)
     local ctx = V.context()
     local char = args.char or activeChar(ctx)
     if not ctx.is_party[char] then error("not a party member", 0) end
-    local target = args.pos
+    local target, te = args.pos, nil
     if not target and args.target then
-        local te = V.entity(args.target)
+        te = V.entity(args.target)
         if not te then error("unknown target", 0) end
         local tp = V.pos(te)
         local visible = U.comp(te, "ServerCharacter") and V.characterVisible(ctx, args.target, te, tp)
@@ -69,11 +80,46 @@ RPC.register("nav.path", function(args)
         return { unknown_goal = true, straight_m = round(U.dist(cp, target), 1), dir = N.direction(cp, target),
             dy = round(target[2] - cp[2], 1) }
     end
-    local r0 = N.path(char, target)
+    -- A target id takes the entity path (as move_to and the guard do): no end tolerance, the approach ring when the
+    -- centre can't be walked to. A path to a creature ends at its edge, and a large one's edge is > 2 m from its
+    -- centre (REVIEW-17 F1: the point path's end tolerance said NOT REACHED for a foe in reach).
+    local r0 = N.path(char, args.pos and target or args.target)
     if not r0 then error("no path", 0) end
+    -- A target id: a path's end (the walker's spot with 0 nodes) > its footprint + 2 m away is short (REVIEW-17c)
+    local tol = te and footprint(te) + N.PATH_END_TOL_M
+    local function off(res)
+        local p = res and res.reachable and res.points
+        if p and #p >= 1 and (res.nodes or 0) <= N.ROUTE_MAX_NODES then return U.dist(p[#p], target) end
+    end
+    -- A centre path that ends short: the free spots around the target decide (w15 b2). ms: the centre's + the ring's
+    local ms, unchecked
+    if te and (off(r0) or 0) > tol then
+        local spot, ringMs = N.freeSpotPath(char, target, tol - N.PATH_END_TOL_M + 1.0, cp,
+            function(res) return (off(res) or math.huge) <= tol end)
+        ms = (r0.ms or 0) + ringMs
+        if spot and not spot.unfinished then r0 = spot end -- past the deadline the centre's end stands (REVIEW-18n)
+        unchecked = spot and spot.unfinished or nil
+    end
     local r = {}
     for k, v in pairs(r0) do if k ~= "points" and k ~= "portals" then r[k] = v end end
+    r.ms, r.free_spots_unchecked = ms or r.ms, unchecked
+    -- A found path with no nodes ends on the walker's own spot (readResult flags a short end only from a node): to a
+    -- point farther than the walker's end tolerance it reaches nothing, as a path that ends short does (w12 L1a).
+    -- Not for a target id: standing next to a large creature is a 0-node path to its centre > 2 m away.
+    if args.pos and r.reachable and r.nodes == 0 and not r.partial and cp and U.dist(cp, target) > N.PATH_END_TOL_M then
+        r.partial, r.end_pos, r.end_off = true, U.vec(cp, 1), round(U.dist(cp, target), 1)
+    end
+    if te then -- the verdict is the footprint's (a spot's own point path may end > 2 m from that spot)
+        local last = (off(r0) or 0) > tol and r0.points[#r0.points]
+        r.partial, r.end_pos, r.end_off = nil, nil, nil
+        if last then r.partial, r.end_pos, r.end_off = true, U.vec(last, 1), round(U.dist(last, target), 1) end
+    end
     if r0.points then r.hazard = N.seenHazard(N.routeHazard(r0.points)) end
+    local Gd = BG3AI.Guard -- loaded after Navigation in the game; the nav-only tests run without it
+    if r0.points and r.reachable and Gd then -- the game's path preview: where the walk provokes an opportunity attack
+        local pv = Gd.path_provokes(char, r0.points)
+        if pv and #pv > 0 then r.provokes = pv end
+    end
     local mv = movementLeft(char)
     if mv and r.reachable then r.within_movement = r.length_m <= mv + 0.05; r.movement_left = round(mv, 1) end
     if not r.reachable then r.opened = N.geoNote(cp) end
@@ -413,12 +459,21 @@ function N.project(points, p)
         local dx, dz = bx - ax, bz - az
         local l2 = dx * dx + dz * dz
         local t = 0
-        if l2 > 1e-6 then t = math.max(0, math.min(1, ((p[1] - ax) * dx + (p[3] - az) * dz) / l2)) end
+        if l2 > 1e-6 then
+            t = math.max(0, math.min(1, ((p[1] - ax) * dx + (p[3] - az) * dz) / l2))
+        elseif math.abs(b[2] - a[2]) > 1e-6 then
+            -- a drop/climb link straight down/up (same x,z): the point on it at p's height (launch-v1 crash_site_grove:
+            -- a 5 m fall down the route's drop was "off the route" by its full height, so a "teleport")
+            t = math.max(0, math.min(1, (p[2] - a[2]) / (b[2] - a[2])))
+        end
         local qx, qz = ax + dx * t, az + dz * t
         local off = math.sqrt((p[1] - qx) ^ 2 + (p[3] - qz) ^ 2)
         local qy = a[2] + (b[2] - a[2]) * t
         local seg = U.dist(a, b)
-        if off < bestOff then bestArc, bestOff, bestDy = walked + seg * t, off, p[2] - qy end
+        -- equally near in x,z (the top and the foot of a vertical link): the one at p's height
+        if off < bestOff - 1e-6 or (off <= bestOff + 1e-6 and math.abs(p[2] - qy) < math.abs(bestDy)) then
+            bestArc, bestOff, bestDy = walked + seg * t, off, p[2] - qy
+        end
         walked = walked + seg
     end
     return bestArc, bestOff, bestDy
@@ -465,6 +520,17 @@ end
 -- harmful surface; the farthest safe sample wins. If every sample is unsafe
 -- the result is {reachable=false, hazard={surface,pos,at_m}}.
 N.DETOUR = 1.5
+-- A direction walk has no goal point of its own: it goes to where the engine's path to the chosen sample ends (within
+-- PATH_END_TOL_M of the sample, else the path is partial and the sample isn't chosen). launch-v1: 113
+-- walk_toward(direction) walks were sent to the sample itself, at the edge of the walkable ground, stopped 2-5.4 m
+-- short of it and failed "could not get closer to the destination" (haiku crash_site_grove r1-r5: 42).
+-- The sample stays when the route is cut (more than ROUTE_MAX_NODES nodes) or its end is on unknown ground.
+local function pathEnd(ctx, r, sample)
+    local pts = r.points
+    local p = pts and #pts >= 2 and r.nodes and r.nodes <= N.ROUTE_MAX_NODES and pts[#pts]
+    if p and N.known(ctx, p) then return U.vec(p, 1) end
+    return sample
+end
 N.DETOUR_LOOSE = 3.0 -- loose: a winding walk still counts (walk_toward)
 N.LOOSE_TRIES = 5
 -- deadline (MonotonicTime ms, optional, NAV-5): no new search past it; what was found so far is the answer
@@ -534,7 +600,8 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose, deadline
                 avoided = avoided + 1
                 if not firstHazard or c.dd > firstHazard.dd then firstHazard = hz; firstHazard.dd = c.dd end
             else
-                ok = { pos = c.pos, path_m = r.length_m, straight_m = round(dd, 1), needs_jump = r.needs_jump }
+                ok = { pos = toward and c.pos or pathEnd(ctx, r, c.pos), path_m = r.length_m, straight_m = round(dd, 1),
+                    needs_jump = r.needs_jump }
             end
         end
         memo[i] = ok
@@ -572,7 +639,8 @@ function N.reachToward(charUuid, dir, toward, maxM, step, avoid, loose, deadline
                 if r and r.reachable and not r.partial and not r.needs_jump and not r.drop
                     and r.length_m <= math.max(N.DETOUR_LOOSE * dd, dd + 6.0)
                     and not (avoid and (N.surfaceNear(c.pos) or N.routeHazard(r.points))) then
-                    best = { pos = c.pos, path_m = r.length_m, straight_m = round(dd, 1) }
+                    best = { pos = toward and c.pos or pathEnd(ctx, r, c.pos), path_m = r.length_m,
+                        straight_m = round(dd, 1) }
                     winding = true
                     break
                 end

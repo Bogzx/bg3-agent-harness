@@ -18,6 +18,7 @@ os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
 from bg3ai import companions  # noqa: E402
 from bg3ai.game import JobResult  # noqa: E402
 from bg3ai.tools import batch, core, inventory, overview, plumbing, travel, travel_macro, world_tools  # noqa: E402
+from test_turn_macros import P1, P2, Base  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 TABLE = companions.load_ties((REPO / "play/knowledge/companions.md").read_text())
@@ -81,15 +82,97 @@ class Talk(unittest.TestCase):
         self.assertIn("wants to talk(!)", line)
 
 
+class NightTalk(Base):
+    """get_status at night camp names the talk the camp story still wants (DB_Camp_RequiredTalks) before the agent
+    presses sleep. launch-v1 haiku act3_gold_max r2 19:29-19:42: no TALK line for Shadowheart (HasExclamationDialog
+    unset), 17 long_rest and 4 camp leave refusals until it happened to talk to her."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.sh = P2
+        self.flow = {"steps": [], "story": {"DB_Camp_NightMode": 1}, "required_talks": [{"uuid": P2, "name": "Shadowheart"}]}
+        self.g.ui = {"screen": "game", "region": "Campsite"}
+        orig = self.g.rpc
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            if op == "camp.rest_flow":
+                return self.flow
+            if op == "state.status":
+                return {"active": P1, "level": "CampNight", "party": [{"uuid": P1, "name": "Claude"},
+                                                                      {"uuid": P2, "name": "Shadowheart"}]}
+            return orig(op, args, context)
+
+        self.g.rpc = rpc
+        overview._TALK.text = ""
+        self.addCleanup(setattr, overview._TALK, "text", "")
+
+    def test_get_status_at_night_camp_names_the_required_talk(self) -> None:
+        out = overview.get_status()
+        h = core.H.get(self.sh)
+        self.assertIn(f"TALK: night at camp: the '!' over {h} Shadowheart\n", out + "\n")
+        # facts on screen only (arena-bridge review 2026-11-03 #2): no companion-scene suffix, no how-to
+        self.assertNotIn("may not wait", out)
+        self.assertNotIn("talk_to(<id>) now", out)
+        self.assertNotIn("can't end yet", out)
+        self.assertNotIn("TALK:", overview.get_status())  # unchanged: said once
+        self.flow["required_talks"] = []  # the talk was had: the line goes
+        self.assertNotIn("night at camp", overview.get_status(full=True))
+
+    def test_a_required_talk_not_in_view_is_not_on_the_talk_line(self) -> None:
+        # Withers (launch-v1 r5): a row whose character is neither in the party nor in sight: no '!' on screen
+        self.flow["required_talks"] = [{}, {}]
+        self.assertNotIn("TALK:", overview.get_status(full=True))
+
+    def test_a_companion_scene_keeps_its_own_line_next_to_the_night_one(self) -> None:
+        bits = ["e9 Gale wants to talk (the '!' over them)"]
+        line = companions.TalkTracker().line({}, str, extra=("night at camp: the '!' over e5 Shadowheart",))
+        self.assertEqual(line, "TALK: night at camp: the '!' over e5 Shadowheart")  # no companion scene: no suffix
+        t = companions.TalkTracker()
+        orig = companions.talk_bits
+        companions.talk_bits = lambda st, label: bits
+        self.addCleanup(setattr, companions, "talk_bits", orig)
+        line = t.line({}, str, extra=("night at camp: the '!' over e5 Shadowheart",))
+        self.assertEqual(line, "TALK: e9 Gale wants to talk (the '!' over them) (a companion's own "
+                         "scene; it may not wait) | night at camp: the '!' over e5 Shadowheart")
+
+    def test_nothing_by_day_or_away_from_camp(self) -> None:
+        self.flow["story"] = {"DB_Camp_NightMode": 0}  # the story checks required talks only when the night ends
+        self.assertNotIn("night at camp", overview.get_status(full=True))
+        self.flow["story"] = {"DB_Camp_NightMode": 1}
+        self.g.ui = {"screen": "game", "region": "Blighted Village"}
+        self.assertNotIn("night at camp", overview.get_status(full=True))
+        self.assertNotIn("camp.rest_flow", [op for op, _ in self.g.calls])  # no extra read away from camp
+
+
 class Hint(unittest.TestCase):
     def test_halsin_tied_to_scl(self):
         bits = companions.hint(PARTY, CAMP, "Shadow-Cursed Lands", ["Lift the Shadow Curse"], TABLE)
         self.assertTrue(bits[0].startswith("Halsin (camp, Druid 5) is tied to Shadow-Cursed Lands"), bits)
-        # Shadowheart is tied to the SCL too (Gauntlet of Shar) and Claude is the avatar: not suggested out.
-        self.assertNotIn('out="Shadowheart"', bits[0])
-        self.assertNotIn('out="Claude"', bits[0])
-        self.assertIn('into="Halsin"', bits[0])
-        self.assertIn("camp level-ups: Wyll L3→4 → level_up(who=\"Wyll\")", bits[-1])
+        # w12 L2: '... arcane AoE → swap_party' was advice; the tie is said as a fact, with no call to make
+        self.assertNotIn("→", bits[0])
+        self.assertNotIn("swap_party", bits[0])
+        self.assertTrue(bits[0].endswith(": " + TABLE["halsin"]["why"]), bits)
+        # night 2026-11-04: the level-ups are said as a fact, with no call to make
+        self.assertEqual(bits[-1], "camp level-ups: Wyll L3→4")
+
+    def test_dead_member_is_named_with_no_revive_advice(self):
+        # night 2026-11-04: 'dead: Wyll (Scroll of Revivify, or Withers at camp)' told the agent how to revive
+        party = [*PARTY[:3], row(WYLL, "Wyll", "Warlock", dead=True)]
+        bits = companions.hint(party, [row(HALSIN, "Halsin", "Druid")], "Wilderness", [], TABLE)
+        self.assertEqual(bits, ["dead: " + WYLL + "; camp can stand in: Halsin"])
+
+    def test_tie_reads_as_one_fact(self):
+        # w13 L2: '... Elminster and the Netherese orb scenes need him; arcane AoE' ended in the role half of the old
+        # "Why bring them" cell, which used to lead into '→ swap_party(...)'. The role is a Note, not printed.
+        bits = companions.hint(PARTY[:1], [row(GALE, "Gale", "Wizard", 6)], "Lower City", [], TABLE)
+        self.assertEqual(bits[:1], ["Gale (camp, Wizard 6) is tied to Lower City: Elminster and the Netherese orb scenes "
+                                "need him"])
+        bits = companions.hint(PARTY[:1], [row(SH, "Shadowheart", "Cleric")], "Gauntlet of Shar", [], TABLE)
+        self.assertEqual(bits[:1], ["Shadowheart (camp, Cleric 5) is tied to Gauntlet of Shar: the Gauntlet of Shar and "
+                                "the Nightsong are her story"])
+        # a row with no "Tied by" text says the tie alone
+        bits = companions.hint(PARTY[:1], [row(WYLL, "Minsc", "Ranger")], "Lower City", [], TABLE)
+        self.assertEqual(bits[:1], ["Minsc (camp, Ranger 5) is tied to Lower City"])
 
     def test_nothing_in_the_wilderness_but_level_ups(self):
         bits = companions.hint(PARTY, [row(HALSIN, "Halsin", "Druid")], "Wilderness", [], TABLE)
@@ -166,6 +249,7 @@ class FakeGame:
         self.swapped = False
         self.far = False
         self.block: dict = {}  # ui.travel_block's answer
+        self.can_rest: dict | None = None  # camp.can_rest's answer (None: the op gave nothing)
         self.talking = at_camp  # at_camp tests: a dialogue already up is the companion's (test sets it so)
         self.jobs: list[tuple[str, dict]] = []
 
@@ -183,6 +267,8 @@ class FakeGame:
             return {"party": self.party(), "camp": [dict(c) for c in CAMP]}
         if op == "ui.travel_block":
             return dict(self.block)
+        if op == "camp.can_rest":
+            return self.can_rest
         if op == "ui.state":
             if self.dialogue and self.talking:
                 return {"screen": "dialogue", "dialogue": self.dialogue[0], "region": "Campsite" if self.at_camp else "x"}
@@ -543,6 +629,15 @@ class SwapParty(unittest.TestCase):
         self.assertIn("FAILED at go to camp — cannot travel right now", out)
         self.assertIn("(Location): this area does not let the party go to camp", out)
         self.assertNotIn("act.go_to_camp", [j[0] for j in fake.jobs])
+        self.assertNotIn("short", out)  # camp.can_rest unread: no claim about short rest
+
+    def test_camp_block_states_short_rest_as_read(self):
+        fake = FakeGame([])
+        fake.block = {"hud": True, "error": "Location"}
+        fake.can_rest = {"short_read": True, "short_global_disabled": 0, "short_blocked": []}
+        self.use(fake)
+        out = travel.swap_party(into="Halsin", out="Gale")
+        self.assertIn("fast travel is blocked too; short_rest is open here.", out)
 
     def test_camp_job_failure_appends_the_reason(self):
         fake = FakeGame([])

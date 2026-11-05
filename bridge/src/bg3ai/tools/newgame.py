@@ -141,9 +141,9 @@ def create_character(plan: dict[str, Any] | str) -> str:
     if r.status == "failed" and "character creation is not open" in str(r.error or ""):
         done = _avatar_name(0, want)
         return reporting._finish("create_character", {"plan": p}, (
-            f"REFUSED: character creation isn't open: the character is already created ('{done}'; see get_status). "
-            "Don't call create_character again" if done else
-            "REFUSED: character creation isn't open (from the main menu: new_game first)"), t0)
+            f"REFUSED: character creation isn't open: the character is already created ('{done}'; see get_status)"
+            if done else
+            "REFUSED: character creation isn't open (new_game opens it from the main menu)"), t0)
     if r.status != "done":
         return reporting._finish("create_character", {"plan": p}, plumbing._job_text("create_character", r)
                        + "\ncharacter creation NOT finished" + (
@@ -180,7 +180,7 @@ def create_character(plan: dict[str, Any] | str) -> str:
         saving._set_save_owner(who)
     body = (f"character created and finished: '{who}' (name checked in game)" if got else
             f"character created and finished: '{who}' (the name was set on the naming page, but the world hadn't "
-            "loaded yet to check it: check get_status once it has; don't call create_character again)")
+            "loaded yet to check it; get_status shows the name once it has)")
     if got is not None:
         t_look = time.monotonic()
         body += _cc_first_look()
@@ -206,10 +206,10 @@ def _cc_first_look() -> str:
     try:
         fl = overview.look(full=True)
     except Exception as e:
-        fl = f"(first look failed: {type(e).__name__}: {e}; call look)"
+        fl = f"(first look failed: {type(e).__name__}: {e})"  # night 2026-11-04: no '; call look'
     finally:
         reporting._batch["active"], reporting._batch["last"] = prev
-    out.append("FIRST LOOK (this is get_status + look: don't read again before moving):\n" + fl)
+    out.append("FIRST LOOK (this is get_status + look):\n" + fl)
     # after the look: a save that starts at once holds the menus ~2 s, and the nested look would wait for them
     sess = os.environ.get("BG3AI_SESSION") or ""
     if re.fullmatch(r"S\d{3,}", sess):
@@ -217,12 +217,8 @@ def _cc_first_look() -> str:
             saving._enable_save_gates()
             out.append("first save (no save_game needed): " + saving.SAVER.save(f"{sess}-start"))
         except Exception as e:
-            out.append(f"first save not started ({type(e).__name__}: {e}): save_game(label=\"{sess}-start\")")
-    first = "the first move" if "DIALOGUE" not in fl.split("\n", 1)[0].upper() else \
-        "dialogue_advance (the opening conversation is up), then the first move"
-    out.append(f"NEXT: issue {first} now; write PLAYTHROUGH.md's Character line and the [decision] note "
-               "while it runs (fix CHARACTER.md's header only if the status above spells name/race/class "
-               "differently)")
+            # night 2026-11-04: the save that wasn't made, not the save_game call to make it
+            out.append(f"first save not started ({type(e).__name__}: {e}): no '{sess}-start' save was made")
     return "\n" + "\n".join(out)
 
 

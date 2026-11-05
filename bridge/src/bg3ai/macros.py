@@ -181,12 +181,14 @@ class TravelProgress:
         return None
 
 
-def hazard_way_out(h: dict | None) -> str:
-    """The advice after 'go around it': a chasm or lava never burns out, so offer a jump or a ladder instead."""
+def hazard_fact(h: dict | None) -> str:
+    """'it does not burn out' for a chasm, lava or the void; '' for any other surface (REVIEW-13 item 3: Web, Grease,
+    ice, Spike Growth, Black Tentacles, vines, acid and brine don't burn out either, so no duration claim) (D630: the
+    fact, no 'go around it / wait for it')."""
     s = str((h or {}).get("surface") or "").lower() if isinstance(h, dict) else ""
     if "chasm" in s or "lava" in s or "void" in s:
-        return "jump_to across it (if it is narrow) or take a ladder/door (get_frontier)"
-    return "wait for it to burn out"
+        return "it does not burn out"
+    return ""
 
 
 def hazard_text(h: dict | None) -> str:
@@ -294,6 +296,6 @@ def crossing_ok(ex: dict, hp: Any, max_hp: Any, policy: str = "auto") -> tuple[b
     worst = crossing_worst(ex)
     if isinstance(hp, (int, float)) and isinstance(max_hp, (int, float)) and max_hp > 0 and worst > 0:
         if hp - worst < max(3.0, max_hp * CROSS_HP_RESERVE_PCT / 100.0):
-            return False, (f"HP {hp:g}/{max_hp:g} is too low for the worst case (~{worst:g} dmg): heal first "
-                           "(potion, restoration pod, short rest) or travel_to(avoid_hazards='cross')")
+            return False, (f"HP {hp:g}/{max_hp:g} is too low for the worst case (~{worst:g} dmg); "
+                           "travel_to(avoid_hazards='cross') crosses anyway")
     return True, ""

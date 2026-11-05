@@ -1,4 +1,4 @@
--- State, part 2 of 3 (State.lua loads the parts in order; split for the 1000-line cap):
+-- State, part 2 of 4 (State.lua loads the parts in order; split for the 1000-line cap):
 -- inventory, combat, journal, map, nearby and the targeting preview.
 local U = BG3AI.Util
 local V = BG3AI.Visibility
@@ -21,6 +21,15 @@ local spellInfo, relation, standRadius = I.spellInfo, I.relation, I.standRadius
 -- What the item tooltip shows, from its stats entry: camp-supply value (food), category, armour class and
 -- type, weapon damage, the proficiency it needs. The bridge's economy.py uses these for supplies, junk
 -- selling and gear upgrades (S026: bags full of junk, Sentinel Shield unequipped, food unknown).
+-- An enemy row showing the concentration icon: that spell's tooltip on its first sight this fight (Events.note_spell).
+local function noteConcentration(ctx, u, e)
+    local E = BG3AI.Events
+    if ctx.is_party[u] or not (E and E.note_spell) then return end
+    local c = comp(e, "Concentration")
+    local ok, sid = pcall(function() return c.SpellId.Prototype end)
+    if c and ok and sid and sid ~= "" then E.note_spell(u, sid) end
+end
+
 local function statField(st, k)
     local ok, v = pcall(function() return st[k] end)
     if not ok or v == nil or v == "" then return nil end
@@ -498,6 +507,7 @@ function S.combat(ctx)
                             end
                         end
                         o.concentration = concentration(me)
+                        if o.concentration then noteConcentration(ctx, u, me) end
                         out.order[#out.order + 1] = o
                     end
                 end
@@ -727,6 +737,11 @@ function S.nearby(ctx, args)
     local center = ctx.observers[1] and ctx.observers[1].pos
     local active = selectedCharacter(ctx.party)
     for _, o in ipairs(ctx.observers) do if o.uuid == active and o.pos then center = o.pos end end
+    -- args.center (a party member): the scan centres on them, not on the selected character (travel_to's legs read
+    -- what came into the party's view where the walker is: the bridge's PASSED line). The same visibility rule.
+    if args.center then
+        for _, o in ipairs(ctx.observers) do if o.uuid == args.center and o.pos then center = o.pos end end
+    end
     if not center then return { characters = {}, items = {} } end
     local out = { characters = {}, items = {} }
     local shown = {}
@@ -740,6 +755,9 @@ function S.nearby(ctx, args)
                     local o = { uuid = u, name = V.name(u), relation = relation(ctx, u), pos = pos1(p), dist = round(d, 1),
                         statuses = V.statuses(e) }
                     if #o.statuses == 0 then o.statuses = nil end
+                    -- the concentration icon over a visible creature (bridge CHANGES: "concentrating on Cloudkill")
+                    o.concentration = concentration(e)
+                    if o.concentration then noteConcentration(ctx, u, e) end
                     local dead = truthy(osi(Osi.IsDead, u))
                     if dead then o.dead = true end
                     local h = health(e)

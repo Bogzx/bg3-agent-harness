@@ -4,8 +4,8 @@ against and what the website serves as `<suite>/suite.json` next to the start sa
 
 It holds the harness and bg3bench versions and the game pins a run must cite, every non-holdout scenario's digest,
 start save, .lsv sha1 and start-state fingerprint (saves.json; a new game's: consistency.new_game_fingerprint), the
-published save zips, and per condition the bg3 tools a play process is served and the sha256 of the prompt each
-client is served. The tools and prompts are worked out the way the runner works them out for a run
+published save zips, and per condition the bg3 tools a play process is served (their names, and the sha256 of their
+served definitions: defs_digest) and the sha256 of the prompt each client is served. The tools and prompts are worked out the way the runner works them out for a run
 (bg3harness.client_setup.run_files: the bg3 server dumped offline in the condition's env, its tool list minus the
 condition's tools off, the manifest's prompt fields), so a run of the suite through an unmodified harness hashes to
 them.
@@ -17,7 +17,9 @@ them.
 it. That file ships with the repo, so a fresh checkout validates against the released suite; the bench's tests fail
 when this tree builds another one (a scenario, saves.json, a version, the mod, the tools or a prompt changed).
 --pins-from reads the game pins from the reference runs' manifest.json files, which must all cite the same pins;
-the flags override them. The build refuses a suite that isn't the installed one, suite files not pinned for it
+the flags override them. code_sha1 is this repo's code at HEAD (bg3harness.pins.code_digest over CODE_TREE: the
+bg3 tools, runner, harness, the agent's text, the pi client, uv.lock): a run must cite it (P02), so a release is
+rebuilt whenever that code changes. The build refuses a suite that isn't the installed one, suite files not pinned for it
 (bg3bench.suite.check), saves.json disagreeing with the scenario files, reference runs with different pins, and
 missing pins.
 """
@@ -25,6 +27,7 @@ missing pins.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -36,6 +39,7 @@ from typing import Any
 
 import jsonschema
 from bg3harness import client_setup
+from bg3harness import pins as harness_pins
 from bg3harness.run_manifest import tools_digest
 
 from bg3bench import conditions, pins, results, saves, scenario, suite
@@ -50,6 +54,9 @@ RELEASES = suite.PACKAGE_ROOT / "releases"  # <suite>.json: committed when the s
 CLIENTS = ("pi", "claude")
 NO_MEMORY = "memory"  # the bridge's memory tool group: off in every bench run (bg3harness.runner.run_host)
 PIN_KEYS = ("game_build", "bg3le_sha256", "mod_sha1")
+# The code a run plays with besides the mod (bg3harness.pins.code_digest of the repo the release is built from).
+# Optional: bench-v0.8 and v0.9's releases predate it, and P02 checks it only when the release has it.
+CODE_PIN = "code_sha1"
 # The tool groups a client profile can turn off on top of the condition's (bg3harness.profiles.tools_off: screenshots
 # for a pi model without image input), and the clients whose profiles do. Each is a variant of every condition.
 VARIANTS = (("screenshots",),)
@@ -59,7 +66,7 @@ ABOUT = (
     "pins: what a run's manifest must cite. scenarios: every non-holdout scenario's digest, start save folder, .lsv "
     "sha1 and start-state fingerprint (null: none recorded yet). saves: the start save zips, their storage key, size "
     "and sha256 (null until published). conditions: per condition id the bg3 tools a play process is served (names, "
-    "count, allowlist_sha256) and per client the sha256 of the prompt it is served; its variants: the same under a client "
+    "count, allowlist_sha256, and defs_sha256: the sha256 of their served definitions) and per client the sha256 of the prompt it is served; its variants: the same under a client "
     "profile's tool groups off (keyed by those groups), which a run naming those tools is checked against."
 )
 
@@ -74,6 +81,18 @@ class Served:
 
     names: list[str]
     prompts: dict[str, Json]  # client -> {"sha256", "condition"}
+    defs: str | None = None  # defs_digest of the served tools' definitions
+
+
+def defs_digest(tools: Iterable[Json], names: Iterable[str]) -> str:
+    """sha256 of the served tools' definitions: every tools/list entry (bg3-tools.json) named in `names`, whole, sorted
+    by name, as canonical JSON. Whole because each client shows a different part: pi's bg3.ts registers name,
+    description and inputSchema; Claude Code also reads _meta (anthropic/alwaysLoad: the schema is in context from the
+    first turn, else deferred behind ToolSearch). A changed description, parameter, default or hint changes it."""
+    want = set(names)
+    defs = sorted((t for t in tools if isinstance(t, dict) and t.get("name") in want), key=lambda t: str(t["name"]))
+    text = json.dumps(defs, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def default_path(tag: str | None = None) -> Path:
@@ -112,6 +131,7 @@ def serve(
     env = session_env(cid, environ, groups_off)
     prompts: dict[str, Json] = {}
     names: list[str] | None = None
+    defs: str | None = None
     with tempfile.TemporaryDirectory(prefix="bg3bench-release-") as tmp:
         for client in clients:
             d = Path(tmp) / client
@@ -124,11 +144,14 @@ def serve(
             got = client_setup.served_tools(client_setup.tool_names(d / "bg3-tools.json"), env)
             if names is not None and got != names:
                 raise ReleaseError(f"{cid}: clients are served different tools")
-            names = got
+            got_defs = defs_digest(json.loads((d / "bg3-tools.json").read_text(encoding="utf-8")), got)
+            if defs is not None and got_defs != defs:
+                raise ReleaseError(f"{cid}: clients are served different tool definitions")
+            names, defs = got, got_defs
             prompts[client] = {"sha256": man["prompt"]["sha256"], "condition": man["condition"]}
     if names is None:
         raise ReleaseError("no client")
-    return Served(names, prompts)
+    return Served(names, prompts, defs)
 
 
 def build(
@@ -167,7 +190,7 @@ def build(
         "about": ABOUT,
         "suite": tag,
         "versions": {"harness": versions["harness"], "bench": versions["bench"]},
-        "pins": {k: game_pins[k] for k in PIN_KEYS},
+        "pins": {k: game_pins[k] for k in (*PIN_KEYS, CODE_PIN) if k in game_pins},
         "scenarios": out_sc,
         "saves": [
             {
@@ -197,7 +220,8 @@ def build(
 
 
 def _entry(sv: Served) -> Json:
-    return {"tools": {**tools_digest(sv.names), "names": sorted(sv.names)}, "prompts": dict(sorted(sv.prompts.items()))}
+    tools = {**tools_digest(sv.names), "names": sorted(sv.names)} | ({"defs_sha256": sv.defs} if sv.defs else {})
+    return {"tools": tools, "prompts": dict(sorted(sv.prompts.items()))}
 
 
 def variant_key(groups_off: Sequence[str]) -> str:
@@ -252,6 +276,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ReleaseError("; ".join(bad))
         game_pins = common_pins([json.loads(p.read_text()) for p in a.pins_from])
         game_pins |= {k: getattr(a, k) for k in PIN_KEYS if getattr(a, k)}
+        if not (code := harness_pins.code_digest(a.repo)):
+            raise ReleaseError(f"no code digest: {a.repo} is not a git checkout")
+        game_pins[CODE_PIN] = code
         cids = a.condition or ["rules"]
         clients = a.client or list(CLIENTS)
         served = {cid: serve(cid, clients, a.repo) for cid in cids}

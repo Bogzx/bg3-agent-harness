@@ -143,7 +143,9 @@ if BG3AI.RPC then
         local st = M.state
         return { context = CONTEXT, lua_mb = math.floor(M.heap_mb() * 10 + 0.5) / 10,
             peak_mb = math.floor(st.peak * 10 + 0.5) / 10, high = st.high or nil, trips = st.trips,
-            cap_mb = M.CAP_MB, noesis = M.noesis() }
+            cap_mb = M.CAP_MB, noesis = M.noesis(),
+            -- server: entities whose melee reach used the assumed Move radius (GuardCast.lua G.reach_radius)
+            hit_fallbacks = BG3AI.Guard and BG3AI.Guard.hit_fallback_n or nil }
     end)
 end
 

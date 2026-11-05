@@ -181,10 +181,10 @@ class Base(unittest.TestCase):
 
 
 class AsyncActions(Base):
-    def test_move_to_returns_at_once_with_eta(self):
+    def test_move_to_wait_false_returns_at_once_with_eta(self):
         self.g.dur["act.move_to"] = 5
         t0 = time.monotonic()
-        out = world_tools.move_to(target=self.door)
+        out = world_tools.move_to(target=self.door, wait=False)
         self.assertLess(time.monotonic() - t0, 0.5)
         self.assertTrue(out.startswith("move_to: started j1, ETA 2.4s (8m)"), out)
         self.assertTrue(self.g.ops("act.move_to")[0][1]["notify"])
@@ -220,14 +220,14 @@ class AsyncActions(Base):
         self.assertEqual(plumbing._async, {})
 
     def test_wait_for_job(self):
-        world_tools.move_to(target=self.door)
+        world_tools.move_to(target=self.door, wait=False)
         out = batch.wait_for("j1", timeout_s=2)
         self.assertIn("move_to: done", out)
         self.assertNotIn("job_finished", out)  # the result already says it: no duplicate EVENTS line
 
     def test_wait_for_times_out_and_lists_running(self):
         self.g.dur["act.move_to"] = 5
-        world_tools.move_to(target=self.door)
+        world_tools.move_to(target=self.door, wait=False)
         out = batch.wait_for("j1", timeout_s=0.2)
         self.assertIn("still waiting for j1", out)
         self.assertIn("RUNNING j1 move_to", out)
@@ -274,8 +274,9 @@ class AsyncActions(Base):
             out = batch.wait_for("dialogue_started", timeout_s=5)
             self.assertLess(time.monotonic() - t0, 1.5)
             self.assertIn("nothing is running that would cause dialogue_started", out)
+            self.assertNotIn("act instead", out)  # D630: a fact; what to do next is the agent's
             self.g.dur["act.move_to"] = 0.6  # a walk is running: it could start one, so keep waiting
-            world_tools.move_to(target=self.door)
+            world_tools.move_to(target=self.door, wait=False)
             out = batch.wait_for("dialogue_started", timeout_s=0.5)
             self.assertIn("still waiting for dialogue_started", out)
         finally:
@@ -287,7 +288,7 @@ class AsyncActions(Base):
 
     def test_get_events_never_blocks_and_shows_running(self):
         self.g.dur["act.move_to"] = 5
-        world_tools.move_to(target=self.door)
+        world_tools.move_to(target=self.door, wait=False)
         t0 = time.monotonic()
         out = observe.get_events()
         self.assertLess(time.monotonic() - t0, 0.3)
@@ -359,19 +360,19 @@ class DoActions(Base):
                       % (self.door, self.door, self.door), out)
 
     def test_new_hostile_interrupts_the_running_step(self):
-        self.g.dur["act.move_to"] = 3
+        self.g.dur["act.interact"] = 3  # (not a walk step first: a walk ends a batch out of combat)
 
         def hostile_appears(op, args):
-            if op == "act.move_to":
+            if op == "act.interact":
                 threading.Timer(0.1, lambda: self.g.watch.update(
                     seen=[{"uuid": GOB, "name": "Goblin", "hostile": True}])).start()
         self.g.on_start = hostile_appears
         t0 = time.monotonic()
-        out = batch.do_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"}]'
+        out = batch.do_actions('[{"tool":"interact","target":"%s"},{"tool":"pick_up","item":"%s"}]'
                                 % (self.door, self.door))
         self.assertLess(time.monotonic() - t0, 2.0)
-        self.assertIn("move_to: INTERRUPTED — cancelled", out)
-        self.assertIn(f"STOPPED: hostile in view: {self.gob} Goblin; not run: interact {self.door}", out)
+        self.assertIn("interact: INTERRUPTED — cancelled", out)
+        self.assertIn(f"STOPPED: hostile in view: {self.gob} Goblin; not run: pick_up {self.door}", out)
         self.assertEqual(len(self.g.ops("job.cancel")), 1)
 
     def test_ignore_turns_an_interrupt_off(self):
@@ -444,19 +445,19 @@ class Queue(Base):
         self.assertEqual(self.g.ops("act.interact")[0][1]["char"], P2)
 
     def test_dialogue_start_flushes_queue_with_reason_and_left(self):
-        self.g.dur["act.move_to"] = 2
+        self.g.dur["act.interact"] = 2
 
         def talk(op, args):
-            if op == "act.move_to":
+            if op == "act.interact":
                 threading.Timer(0.1, lambda: self.g.push("dialogue_started", {})).start()
         self.g.on_start = talk
-        batch.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"},'
-                             '{"tool":"pick_up","item":"%s"}]' % (self.door, self.door, self.door))
+        batch.queue_actions('[{"tool":"interact","target":"%s"},{"tool":"pick_up","item":"%s"},'
+                             '{"tool":"loot","take":"all"}]' % (self.door, self.door))
         self.wait_queue_idle()
         note = [a for op, a in self.g.ops("act.note")][-1]
         self.assertEqual(note["kind"], "queue_interrupted")
         self.assertEqual(note["data"]["why"], "a conversation started")
-        self.assertEqual(note["data"]["left"], [f"interact {self.door}", f"pick_up {self.door}"])
+        self.assertEqual(note["data"]["left"], [f"pick_up {self.door}", "loot"])
 
     def test_party_banter_does_not_interrupt(self):
         # An automated dialogue (companion banter while walking) is not a conversation the player must answer.
@@ -481,12 +482,12 @@ class Queue(Base):
         self.assertEqual(self.g.ops("act.note")[-1][1]["kind"], "queue_done")
 
     def test_cancel_queue(self):
-        self.g.dur["act.move_to"] = 5
-        batch.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"}]'
+        self.g.dur["act.interact"] = 5
+        batch.queue_actions('[{"tool":"interact","target":"%s"},{"tool":"pick_up","item":"%s"}]'
                              % (self.door, self.door))
         time.sleep(0.1)
         out = batch.cancel_queue()
-        self.assertIn("stopped move_to", out)
+        self.assertIn("stopped interact", out)
         self.assertIn("dropped 1", out)
         self.wait_queue_idle()
         self.assertEqual(self.g.ops("act.note")[-1][1]["data"]["why"], "cancelled")
@@ -513,12 +514,12 @@ class Queue(Base):
         self.wait_queue_idle()
 
     def test_running_text_shows_queue(self):
-        self.g.dur["act.move_to"] = 2
-        batch.queue_actions('[{"tool":"move_to","target":"%s"},{"tool":"interact","target":"%s"}]'
+        self.g.dur["act.interact"] = 2
+        batch.queue_actions('[{"tool":"interact","target":"%s"},{"tool":"pick_up","item":"%s"}]'
                              % (self.door, self.door))
         time.sleep(0.1)
         out = observe.get_events()
-        self.assertIn(f"queue {core.H.get(P1)} Claude: move_to {self.door} then interact {self.door}", out)
+        self.assertIn(f"queue {core.H.get(P1)} Claude: interact {self.door} then pick_up {self.door}", out)
 
 
 class Parsing(unittest.TestCase):
@@ -580,7 +581,7 @@ class WaitForNoop(Base):
         self.assertIn("already in combat", out)
 
     def test_finished_job_returns_at_once(self):
-        world_tools.move_to(target=self.door)
+        world_tools.move_to(target=self.door, wait=False)
         time.sleep(0.05)
         out, dt = self.timed("j1")
         self.assertLess(dt, 0.4)
@@ -602,12 +603,13 @@ class WaitForNoop(Base):
 
     def test_waits_while_a_job_runs_then_a_short_grace(self):
         self.g.dur["act.move_to"] = 0.4
-        world_tools.move_to(target=self.door)
+        world_tools.move_to(target=self.door, wait=False)
         out, dt = self.timed("dialogue_started", timeout_s=5)
         self.assertGreater(dt, 0.4 + batch.EVENT_GRACE_S - 0.15)
         self.assertLess(dt, 0.4 + batch.EVENT_GRACE_S + 0.6)
         self.assertIn("nothing is running that would cause dialogue_started", out)
         self.assertIsNone(self.last_noop())  # it really waited for the walk
+        self.assertNotIn("act instead", out)  # D630
 
     def test_world_events_keep_the_idle_fallback(self):
         old, queueing.IDLE_EVENT_WAIT_S = queueing.IDLE_EVENT_WAIT_S, 0.4

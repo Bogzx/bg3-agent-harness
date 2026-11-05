@@ -10,8 +10,9 @@ test("cast: melee keyword wins over the stats' Range 0 (live: Target_MainHandAtt
     osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = "HAMMER"
     osiv[key("GetStatString", "HAMMER")] = "WPN_Warhammer"
     stats.WPN_Warhammer = { WeaponRange = 150 }
-    world[GOB].comps.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.49 } } } } -- an imp
-    for _, d in ipairs({ 1.8, 2.2, 2.45 }) do -- the live refusals were at 1.8 m and 2.2 m
+    -- an imp; reach by the Move bounds (window 9): 1.5 + 0.25 + 0.3 = 2.05 m centres
+    world[GOB].comps.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.49 }, Move = { Radius = 0.3 } } } }
+    for _, d in ipairs({ 1.8, 2.0 }) do -- the live refusals (1.8 m, 2.2 m) read Range 0; 2.2 m is now beyond 2.0
         world[GOB].pos = { d, 0, 0 }
         local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
         eq(j.status, "running", d .. " m: " .. tostring(j.error))
@@ -720,7 +721,8 @@ test("walk: the approach going up a ladder and back down it stops at the reversa
     world[P1].pos = { 3, 0, 0.2 } A.dispatch("UseFinished", { P1, LADDER2, 1 })
     eq(j.status, "interrupted", "stopped at the reversal")
     assert(j.error:find("the walk took ladder " .. LADDER2 .. " up and then back down", 1, true), j.error)
-    assert(j.error:find("(interact " .. LADDER2 .. ")", 1, true), j.error)
+    assert(not j.error:find("climb it yourself", 1, true), j.error)
+    assert(j.error:find("interact on " .. LADDER2 .. " climbs it", 1, true), j.error)
     eq(#called("PurgeOsirisQueue"), 1, "purged once (the watchdog does not fire after it)")
     restore()
 end)

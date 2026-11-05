@@ -11,7 +11,7 @@ from . import core, queueing
 
 def _downed_text(u: str) -> str:
     return (f"{queueing._label(u)} is downed: nothing to play, its turn passes by itself (the game rolls its death "
-            "saving throw). Get it up from an ally's turn: Healing Word, Help (adjacent) or a potion.")
+            "saving throw). Healing Word, Help (adjacent) or a potion from an ally gets it up.")
 
 
 # S087: a stunned member's open turn the game itself passes; if it is still open this long with nothing else moving,

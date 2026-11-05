@@ -119,7 +119,9 @@ in [ARCHITECTURE.md](ARCHITECTURE.md), "The mod"). Ops are registered wherever t
 `level_up_available{uuid}`, `item_added{owner,name,count}`, `gold_changed`, `level_changed{level}`,
 `teleported`, `rest`, `approval{npc,delta}` (as the toast shows), `used{char,item}`, `opened{item}`,
 `spotted{uuid}` (a hidden thing revealed to the party), `cast{caster,spell,target?}` for visible
-casters, and `moved_done{uuid,move_id}`.
+casters, `spell_info` (a string: an enemy spell's tooltip text from its stats, the first time a fight shows it cast
+in view or on a row's concentration), `walk_fell{uuid,from,to,m}` (our walk dropped m metres: no teleport), and
+`moved_done{uuid,move_id}`.
 
 ### Navigation (`Server/Navigation.lua` + `NavigationReach.lua`, `NavigationTerrain.lua`, `NavigationRoute.lua`, `NavigationOps.lua`, `NavigationDoors.lua`; owner: **vis**)
 | op | ctx | args | result (sketch) |

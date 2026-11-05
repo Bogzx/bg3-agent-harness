@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 import re
 import threading
@@ -12,13 +11,13 @@ from typing import Any
 
 from .. import actq, areablock, busywait, companions, longnav, macros, navhints, party, render
 from ..game import GameError, JobResult, NotReady
-from . import core, overview, plumbing, reporting, world_tools
+from . import camp_night, core, overview, plumbing, reporting, world_tools
 
 
 @core.mcp.tool()
 @reporting._guard
 def talk_to(npc: str, who: str | None = None, wait: bool = True) -> str:
-    """Walk up to a visible character (follows them if they move) and start a conversation. The result already shows the dialogue at its first real choice (opening filler clicked through); answer with choose_dialogue. Someone out of sight whom the party saw on this level, or past 40 m: walks there first and talks on arrival (queued)."""
+    """Walk up to a visible character (follows them if they move) and start a conversation. The result already shows the dialogue at its first real choice (opening filler clicked through); answer with choose_dialogue. Someone out of sight whom the party saw on this level, or past 40 m: walks there first (travel_to) and talks on arrival, the conversation in the same result; a walk there that stops short doesn't talk (says not run), one still going after ~90 s talks on arrival (queued)."""
     char = plumbing._who(who)
     out = plumbing._act("talk_to", "act.talk", {"char": char, "npc": plumbing._uuid(npc)}, wait_s=30, wait=wait)
     # S026: 7 refusals out of sight (Mattis, e511, e720); S028: 2 "too far away (47-50m, max 40m)" at camp.
@@ -37,9 +36,8 @@ STALE_TRIP_M = longnav.FT_MIN_M
 def _at_camp_line(uuid: str) -> str:
     """A camp member out of sight: where the game says they are (the camp), not a last sighting."""
     here = overview._at_camp(core.game.try_rpc("ui.state", context="client"))
-    return (f"{queueing._label(uuid)} is at camp now (the camp roster), not where the party last saw them: "
-            + ("walk around the camp to find them (look / get_nearby), then talk_to again" if here else
-               "camp() takes the party there; then find them in the camp (look / get_nearby)"))
+    return (f"{queueing._label(uuid)} is at camp now (the camp roster), not where the party last saw them"
+            + ("; the party is at camp" if here else ""))
 
 
 def _camp_pos(uuid: str) -> list | None:
@@ -57,17 +55,16 @@ def _stale_trip_line(target: str, seen: tuple[list, int | None], here: list, d: 
     wp = longnav.pick_waypoint(here, seen[0], wps)
     trip = (f"a fast travel to {wp['name']} + a {render.num(round(wp['to_goal_m']))}m walk" if wp
             else f"a {render.num(round(d))}m walk")
-    x, y, z = (render.num(round(v, 1)) for v in seen[0])
     return (f"NOT TRAVELLED: {target} is out of sight; the party last saw them{ago} {render.pos(seen[0])}, "
-            f"{render.num(round(d))}m away ({trip}). They may have moved since. To go anyway: "
-            f"travel_to x={x}, y={y}, z={z}, then talk_to {target}")
+            f"{render.num(round(d))}m away ({trip}). They may have moved since.")
 
 
 def _walk_first(tool: str, out: str, char: str, who: str | None, target: str, step) -> str | None:
     """A refusal that a walk fixes, as a player clicks it and the character walks there: the target is past the
     act range (S023 interact 75 m, S028 talk_to 47/50 m and interact 40 m at camp) or out of sight but seen on this
-    level (S026 talk_to 7x). Starts travel_to there and queues `step` for the arrival; None when it doesn't apply
-    (inside do_actions, in combat, another refusal, never seen)."""
+    level (S026 talk_to 7x). Walks there (travel_to) and on arrival runs `step` (talk_to or interact) in the same call;
+    a trip still going at its walk budget gets it queued for the arrival, a trip that stopped short doesn't run it.
+    None when it doesn't apply (inside do_actions, in combat, another refusal, never seen)."""
     if reporting._batch["active"]:
         return None
     far = _TOO_FAR_RX.search(out)
@@ -102,8 +99,28 @@ def _walk_first(tool: str, out: str, char: str, who: str | None, target: str, st
     trip = travel_macro.travel_to(who=who, trespass=True, **dest)  # to the one they mean, as a click on them (their guard too)
     if "FAILED" in trip or "REFUSED" in trip:
         return out + "\n" + trip
-    queued = batch._enqueue(char, [step], ignore=None)
-    return f"{line}; then {tool} {target} on arrival ({queued})\n{trip}"
+    if queueing._queues().busy(char):  # still walking at the walk budget: the step waits in the queue for the arrival
+        queued = batch._enqueue(char, [step], ignore=None)
+        return f"{line}; then {tool} {target} on arrival ({queued})\n{trip}"
+    # The trip blocked to its end (bench-v0.10). review-v010-final #1: the step was queued after it whatever the end, so
+    # an interact/talk_to ran after a trip that stopped short (a hostile in view, damage, a prompt): only on arrival
+    # now, here, its result in this call, as a queue entry after the trip did.
+    q = queueing._queues().queues.get(char)
+    rep = q.last_report if q is not None else None
+    if rep is None or rep.stopped:
+        return f"{line}\n{trip}\n{tool} {target}: not run (the walk there stopped before arriving)"
+    return f"{line}; arrived, then {tool} {target}\n{trip}\n{_step_now(step, char)}"
+
+
+def _step_now(step, char: str) -> str:
+    """_walk_first's step (talk_to or interact) after the arrival, in the same call (its time limits from its start)."""
+    t0 = reporting.call_t0()
+    if step.tool == "talk_to":
+        return plumbing._act("talk_to", "act.talk", {"char": char, "npc": plumbing._uuid(step.args["npc"])}, wait_s=30,
+                             t0=t0)
+    return plumbing._act("interact", "act.interact",
+                         {"char": char, "target": plumbing._interact_uuid(step.args["target"])},
+                         wait_s=world_tools.INTERACT_WAIT_S, t0=t0)
 
 
 @core.mcp.tool()
@@ -223,6 +240,9 @@ def _end_night_first() -> str:
     if b.get("dialogue"):
         return ("FAILED: a conversation is open, nothing was pressed; at night in camp, leaving first ends the night "
                 "(the party sleeps: a long rest)")
+    talks = camp_night.night_talks_left()
+    if talks:
+        return f"FAILED: nothing was pressed: {talks}. Until the night ends, travel from camp is blocked"
     out = world_tools._box_act("long_rest", "ui.long_rest", {"sleep_only": True}, wait_s=60)
     res = reporting._batch.get("result")
     if isinstance(res, dict) and res.get("night_ended"):
@@ -290,7 +310,7 @@ def _leave_camp_first() -> str | None:
 def fast_travel(waypoint: str) -> str:
     """Travel to an unlocked waypoint (name or id from get_map). Not possible in combat. From camp it leaves camp
     first (everyone comes along), then travels. Only the selected member's group travels: members apart and unchained
-    stay where they are (the result says LEFT BEHIND and the one call that travels each of them)."""
+    stay where they are (the result says LEFT BEHIND, who and where)."""
     left = _leave_camp_first()
     if left.startswith("FAILED"):
         reporting._batch["last"] = "failed"
@@ -324,8 +344,7 @@ def fast_travel(waypoint: str) -> str:
         return reporting._finish("fast_travel", {"waypoint": waypoint}, (left + "\n" if left else "") + (
             f"fast_travel: FAILED — the game's party ready check for the trip failed ({inventory._ready_label(watch.failed)}); stopped "
             f"waiting at once (S032: 66 s each). A broken ready check comes with a long-lived game process (the "
-            f"runner relaunches the game between sessions); until then walk (travel_to) or try a waypoint in this "
-            f"region"), time.monotonic())
+            f"runner relaunches the game between sessions)"), time.monotonic())
     if out.rstrip().endswith("travelling"):
         # The box needed a mouse click (region change): the mod's job had stopped there, so nothing watched the
         # trip. Live 11:4x: "travelling" came back mid-load and the next reads saw the loading screen.
@@ -339,7 +358,9 @@ def fast_travel(waypoint: str) -> str:
         _trip_arrived()
         res = reporting._batch.get("result")
         overview.trip_arrived(sub, f"the trip to {(res.get('arrived') if isinstance(res, dict) else None) or waypoint}")
-        out += _left_behind_after_trip(waypoint)
+        out += _left_behind_after_trip()
+        if not reporting._batch["active"]:
+            out += batch.walk_end_tail()  # the arrival: CHANGES + the minimap block, as at a walk's end
     return (left + "\n" + out) if left else out
 
 
@@ -359,8 +380,8 @@ def _lead_pos(st: Any) -> list | None:
 
 
 def _area_refusal(tool: str, st: Any = None) -> str:
-    """A Location refusal: remember it for the level and say the way out (and, from the second tool on, that the
-    others are refused too). S065 12:00:01-12:00:55: camp, fast_travel and travel_to(waypoint) refused one at a time,
+    """A Location refusal: remember it for the level and say where travel last worked (and, from the second tool on,
+    that the others are refused too). S065 12:00:01-12:00:55: camp, fast_travel and travel_to(waypoint) refused one at a time,
     and camp's refusal suggested fast_travel."""
     st = st if isinstance(st, dict) and st else core.game.try_rpc("state.status") or {}
     level, pos = st.get("level"), _lead_pos(st)
@@ -368,7 +389,8 @@ def _area_refusal(tool: str, st: Any = None) -> str:
     if AREA.current(level) is None and not AREA.ok.get(str(level)):
         wps = (core.game.try_rpc("nav.waypoints") or {}).get("waypoints")
     b = AREA.blocked(level, pos, "Location", tool, wps)
-    return AREA.note(b, tool) + " Way out: " + AREA.way_out(level, pos) + ", then " + tool + " again."
+    out = AREA.way_out(level, pos)
+    return AREA.note(b, tool) + " " + out[0].upper() + out[1:] + "."
 
 
 def _wp_norm(s: Any) -> str:
@@ -390,20 +412,10 @@ def _waypoint_here(waypoint: str, wps: Any) -> dict | None:
     return rows[0] if rows[0]["dist"] <= party.WAYPOINT_HERE_M else None
 
 
-def _travel_each(rows: list[dict], waypoint: str) -> str:
-    """The do_actions line that fast travels each left-behind member: what a player does (select, click the waypoint)."""
-    steps = []
-    for r in rows:
-        steps += [{"tool": "set_party", "action": "select", "who": overview._name_of(r["uuid"])},
-                  {"tool": "travel_to", "waypoint": waypoint}]
-    return "do_actions " + json.dumps(steps, ensure_ascii=False)
-
-
 def _fast_travel_split(st: dict, waypoint: str) -> str:
     """Before pressing anything: '' to travel, else the answer. Unchained near members are chained first (they would
     stay behind). A trip to the waypoint the active member already stands at moves nobody (S064: a 66 s timeout):
-    answered at once, and when others are apart that is the S064 case (bring them here), so it names who is where and
-    the one call that travels each of them. Any other trip goes; _left_behind_after_trip says who stayed."""
+    answered at once, and when others are apart that is the S064 case, so it names who is where. Any other trip goes; _left_behind_after_trip says who stayed."""
     lead = party.leader_row(st)
     if not lead or lead.get("summon"):
         return ""
@@ -420,21 +432,18 @@ def _fast_travel_split(st: dict, waypoint: str) -> str:
     if not behind:
         return f"fast_travel: nothing to travel — {at}."
     return (f"fast_travel: FAILED — not travelled: {at}, and the game's fast travel takes only the selected member's "
-            f"group, so it would move nobody. Apart from {me}: {party.behind_text(behind, queueing._label)}. To bring them "
-            f"here, travel each one: {_travel_each(behind, waypoint)} (S064: ~3 s each), or regroup() if they can "
-            "walk here.")
+            f"group, so it would move nobody. Apart from {me}: {party.behind_text(behind, queueing._label)}.")
 
 
-def _left_behind_after_trip(waypoint: str) -> str:
-    """After a fast travel: members still apart from the active member (the trip took only its group), with the fix."""
+def _left_behind_after_trip() -> str:
+    """After a fast travel: members still apart from the active member (the trip took only its group), and where."""
     st = core.game.try_rpc("state.status") or {}
     AREA.cleared(st.get("level"), _lead_pos(st))  # travel worked: a block remembered on this level is gone
     rows = [r for r in party.apart(st, stay=overview._stay) if not r["stay"]
             and (r["other_level"] or (r["dist"] is not None and r["dist"] > party.APART_M * 3))]
     if not rows:
         return ""
-    return (f"\nLEFT BEHIND by the trip: {party.behind_text(rows, queueing._label)}: travel each one "
-            f"({_travel_each(rows, waypoint)}) or regroup()")
+    return f"\nLEFT BEHIND by the trip: {party.behind_text(rows, queueing._label)}"
 
 
 class _ReadyCheckWatch:
@@ -514,13 +523,12 @@ def _travel_block_text(b: dict) -> str:
     if not b:
         return ""
     if b.get("dialogue"):
-        return " A conversation is open: finish it first (choose_dialogue)."
+        return " A conversation is open (choose_dialogue answers it): the game doesn't travel during one."
     if b.get("night_camp"):
         return " It is night at camp: a long rest's night hasn't ended (long_rest goes to sleep and ends it)."
     if b.get("error"):
         return (f" The game blocks travel here ({b['error']}): the camp and map travel buttons are greyed out."
-                f" On screen: {b.get('screen') or '?'}. Talk to whoever waits nearby, finish the camp scene, or walk"
-                f" (travel_to) and try again.")
+                f" On screen: {b.get('screen') or '?'}.")
     return ""
 
 
@@ -606,7 +614,7 @@ CAMP_GATHER_S = 4.0  # camp(): how long the other members get to arrive after th
 
 
 def _camp_left_behind() -> str:
-    """After camp() arrived: members the camp travel didn't take, with the fix. S065 12:01:47: 'camp: done — at_camp'
+    """After camp() arrived: members the camp travel didn't take, and where. S065 12:01:47: 'camp: done — at_camp'
     without Wyll (3863 m away), long_rest failed 4 s later, regroup STOPPED; set_party select Wyll + camp brought him."""
     deadline = time.monotonic() + CAMP_GATHER_S
     while True:
@@ -616,25 +624,40 @@ def _camp_left_behind() -> str:
         time.sleep(0.5)
     if not rows:
         return ""
-    names = [overview._name_of(r["uuid"]) for r in rows]
-    fix = "; ".join(f"set_party select {n}, then camp()" for n in names)
     return (f"\nLEFT BEHIND: {party.behind_text(rows, queueing._label)} didn't come to camp (standing where camp travel is "
-            f"blocked, or too far). long_rest fails until everyone is here: {fix} (S065 12:02: that brought Wyll); if "
-            "camp() is refused for them, walk them out of the story area first.")
+            "blocked, or too far). long_rest fails until everyone is here.")
 
 
-_CAMP_BLOCKS = {  # the HUD's TravelError (camp button greyed) → why, and the way out
-    "Combat": "a fight is on: finish it first, then camp()",
-    "Dialog": "a conversation is open: finish it first (choose_dialogue)",
-    "Condition": "a party member's condition blocks it (asleep after a rest, downed, ...): wait a few seconds, "
-                 "heal/raise the downed member, then camp() again",
-    "DangerZone": "this is a danger zone (enemies or a hostile area around): walk away from it, then camp() again",
-    "InDanger": "the party is in danger (hostiles close or aware of you): walk away, then camp() again",
+_CAMP_BLOCKS = {  # the HUD's TravelError (camp button greyed) → why (D630: the game's reason, no way out to follow)
+    "Combat": "a fight is on",
+    "Dialog": "a conversation is open",
+    "Condition": "a party member's condition blocks it (asleep after a rest, downed, ...)",
+    "DangerZone": "this is a danger zone (enemies or a hostile area around)",
+    "InDanger": "the party is in danger (hostiles close or aware of you)",
 }
 
 
+def _short_rest_fact() -> str:
+    """Short rest's state as the HUD's Short Rest button shows it, from camp.can_rest's short-rest side
+    (CanDoRest.ShortRestErrorFlags, GlobalShortRestDisabled); '' when it didn't read (REVIEW-13 item 12: the old
+    'short_rest, potions and healing spells still work here' was false where rest is disabled)."""
+    can = core.game.try_rpc("camp.can_rest")
+    if not isinstance(can, dict) or can.get("short_read") is not True:
+        return ""
+    g = can.get("short_global_disabled")
+    if not isinstance(g, int) or g < 0:
+        return ""
+    if g > 0:
+        return "; short rest is disabled here too"
+    rows = [r for r in can.get("short_blocked") or [] if isinstance(r, dict)]
+    if rows:
+        return "; short rest is blocked too (" + "; ".join(
+            f"{r.get('name') or '?'}: {', '.join(str(f) for f in r.get('flags') or [])}" for r in rows) + ")"
+    return "; short_rest is open here"
+
+
 def _camp_block_text(b: dict) -> str:
-    """camp() go failed: the game's own reason (what the greyed camp button says) and the way out. S030 16:46:
+    """camp() go failed: the game's own reason (what the greyed camp button says). S030 16:46:
     'cannot travel right now' inside the Gauntlet of Shar with no reason, and the agent gave up on resting."""
     if b.get("dialogue"):
         return " " + _CAMP_BLOCKS["Dialog"] + "."
@@ -645,15 +668,12 @@ def _camp_block_text(b: dict) -> str:
         # S065 12:00:01: the old text suggested fast_travel, refused (Location) too 37 s later: the HUD greys the
         # camp and map-travel buttons together.
         return (" The game blocks camp travel here (Location): this area does not let the party go to camp (a "
-                "dungeon or story area) and fast travel is blocked too. Here short_rest, potions and healing spells "
-                "are what's left.")
+                "dungeon or story area) and fast travel is blocked too" + _short_rest_fact() + ".")
     if b.get("night_camp"):
         return " It is night at camp: a long rest's night hasn't ended (long_rest goes to sleep and ends it)."
     head = f" The game blocks camp travel here ({err})" if err else \
         " The game gave no reason (the camp button isn't greyed)"
-    return (head + ": this area does not let the party go to camp (a dungeon or story area). Ways out: walk back "
-            "out the way you came (to where camp() last worked) or fast_travel to a waypoint, then camp(); here "
-            "short_rest, potions and healing spells are what's left.")
+    return head + ": this area does not let the party go to camp (a dungeon or story area)" + _short_rest_fact() + "."
 
 
 SWAP_DIALOGUE_S = 25.0  # swap_party: the longest it drives the companion's dialogue
@@ -680,7 +700,8 @@ def _walk_up_to(char: str, uuid: str, name: str, pos: list | None = None) -> str
             # (1.6 s). Stop short of him on the way in: the talk job walks the last metres itself.
             k = (d - WALK_UP_SHORT_M) / d
             dest = [here[0] + (dest[0] - here[0]) * k, dest[1], here[2] + (dest[2] - here[2]) * k]
-        out = travel_macro.travel_to(x=dest[0], y=dest[1], z=dest[2], who=core.H.get(char))   # who: a handle; runs async
+        # wait=False: the trip runs as a queue entry and the wait_for below waits for it (one wait, within its 60 s)
+        out = travel_macro.travel_to(x=dest[0], y=dest[1], z=dest[2], who=core.H.get(char), wait=False)
         if "started" in out:
             batch.wait_for(target="idle", timeout_s=60, lead_s=0)
         first = out.splitlines()[0] if out else ""
@@ -774,8 +795,7 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
         # reason. Same area pre-check as camp(): a greyed camp button (Location) answers at once, with the way out.
         b = _travel_block()
         if b.get("error") == "Location":
-            return done("swap_party: FAILED at go to camp — cannot travel right now —" + _camp_block_text(b)
-                        + " Swap once camp() works again.")
+            return done("swap_party: FAILED at go to camp — cannot travel right now —" + _camp_block_text(b))
         r = core.game.run_job("act.go_to_camp", {}, wait_s=60)
         if r.status != "done" and "already at camp" not in str(r.error or ""):
             # (live 11:14: with the level-up page up the UI didn't say "camp" while the story's DB did: not a failure)
@@ -788,8 +808,7 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
         time.sleep(1.0)
         ui = core.game.try_rpc("ui.state", context="client") or {}
         if ui.get("screen") == "dialogue":
-            return done("\n".join(steps + ["STOPPED: a camp scene started on arrival: answer it (choose_dialogue), "
-                                            f"then swap_party(into=\"{inc.get('name')}\", out=\"{out}\") again"]
+            return done("\n".join(steps + ["STOPPED: a camp scene started on arrival"]
                                    + reporting._render_ui(ui)))
         # state.camp gives a companion's camp spot only while the party is at camp (vis V22): read it on arrival
         info = core.game.try_rpc("state.camp") or {}
@@ -813,7 +832,7 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
             return done("\n".join(steps + [
                 f"swap_party: NOT YET — {inc.get('name')} hasn't come back to its camp spot since the long rest "
                 f"(still where the rest's scene left it, {waited:.0f} s waited: {plumbing._job_text('talk_to', r)}). Not a "
-                f"refusal: swap_party(into=\"{inc.get('name')}\", out=\"{out}\") again in a minute"]))
+                f"refusal"]))
         steps.append(f"waited {waited:.0f} s for {inc.get('name')} to return to its camp spot after the long rest")
         inc = moved
         steps.append(_walk_up_to(talker, inc["uuid"], str(inc.get("name")), inc.get("pos")))
@@ -876,7 +895,7 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
                         f"The game decides when (story/quest state, e.g. after a camp scene or a quest step). Left the "
                         f"conversation; the PARTY hint skips {name} in this region."]))
             if i is None:
-                stop = "no join/swap answer recognised: pick it with choose_dialogue (then camp(action='leave'), regroup)"
+                stop = "no join/swap answer recognised"
                 break
             if what != "continue":
                 txt = next((str(o.get("text")) for o in opts if int(o.get("i") or 0) == i), "")
@@ -928,7 +947,7 @@ def swap_party(into: str, out: str = "", leave_camp: bool = True) -> str:
     left = outr is None or outr["uuid"] not in now
     if not joined:
         return done("\n".join(steps + [f"swap_party: FAILED — {inc.get('name')} did not join (party: "
-                                        + ", ".join(queueing._label(u) for u in now) + "). Talk to it: talk_to(\"" + str(inc.get("name")) + "\")"]))
+                                        + ", ".join(queueing._label(u) for u in now) + ")"]))
     steps.append(f"{queueing._label(inc['uuid'])} joined" + (f", {outr.get('name')} waits at camp" if outr is not None and left else ""))
     if outr is not None and not left:
         steps.append(f"WARNING: {outr.get('name')} is still in the party")

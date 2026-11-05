@@ -146,6 +146,12 @@ RPC.register("ui.long_rest", function(args)
     if visibleWidget("Dialogue") and not visibleWidget("MakeCamp") then
         error("a conversation is open: finish it first (choose_dialogue / dialogue_advance), then long_rest", 0)
     end
+    -- The game menu (Resume / Save Game / ...) covers the HUD, so a player can't press the rest button under it.
+    -- launch-v1 haiku act3_gold_max r1 10:03:24-10:04:47: a raw click opened it at night camp, two sleep presses
+    -- under it failed "the night at camp didn't end" 30 s each, and the first press after Resume rested.
+    if visibleWidget("GameMenu") then
+        error("the game menu is open: close it first (press_key ESCAPE), then long_rest", 0)
+    end
     -- The HUD's Long Rest item is greyed out when CurrentPlayer.EndTheDayState is Disabled/Unavailable
     -- (HotBar.xaml LongRestItem), but CampTravel.CanExecute stays true and the press does nothing: S028 15:53
     -- three long_rest calls "pressed CampTravel 2x, the rest screen didn't open", then screenshots and HUD

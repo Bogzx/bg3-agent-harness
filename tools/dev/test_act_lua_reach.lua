@@ -148,3 +148,28 @@ test("move_to range: a plate detour's first leg stops in reach too, no second le
     BG3AI.Visibility, BG3AI.Nav.route, BG3AI.Nav.routeFrom = savedV, savedR, savedF
     if not ok then error(err, 0) end
 end)
+
+test("melee reach, window 9 live: the engine cast at 1.8 and 2.0 m, refused 2.05 m: Move radii (1.998 m)", function()
+    -- Karlach's greataxe (WeaponRange 150) on an Apostate Destroyer, both Move 0.249, Hit 0.200, Stand 0.499 (M1).
+    -- The Hit radii's 1.9 m refused the 2.0 m swing the engine allowed.
+    combat_setup(30)
+    osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = "AXE"
+    osiv[key("GetStatString", "AXE")] = "WPN_Greataxe"
+    stats.WPN_Greataxe = { WeaponRange = 150 }
+    spell("Target_MainHandAttack", { TargetRadius = "MeleeMainWeaponRange", Range = 0, SpellType = "Target",
+        UseCosts = "ActionPoint:1", Level = 0 })
+    local bound = { Bound = { AIBounds = { Move = { Radius = 0.249 }, Hit = { Radius = 0.2 },
+        Stand = { Radius = 0.499 } } } }
+    world[P1].comps.Bound, world[GOB].comps.Bound = bound, bound
+    osiv[key("IsCharacter", GOB)] = 1
+    near(G.melee_reach(P1, GOB, 1.5), 1.998, "reach")
+    for _, d in ipairs({ 1.8, 1.99 }) do
+        world[GOB].pos = { d, 0, 0 }
+        local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+        eq(j.status, "running", d .. " m swing " .. tostring(j.error))
+        A.dispatch("CastSpellFailed", { P1, "Target_MainHandAttack" }) -- ends the job; only the guard's verdict counts
+    end
+    world[GOB].pos = { 2.05, 0, 0 }
+    local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "failed", "2.05 m"); assert(j.error:find("out of range (2.0 m, range 1.5 m)", 1, true), j.error)
+end)

@@ -8,9 +8,9 @@ import threading
 import time
 from typing import Any
 
-from .. import companions, delta, economy, leveling, party, render, spellprep
+from .. import companions, delta, economy, leveling, minimap, party, render, spellprep
 from ..game import GameError, NotReady
-from . import core, plumbing, reporting
+from . import camp_night, core, plumbing, reporting
 
 # ---------------------------------------------------------------------------
 # observe
@@ -127,7 +127,7 @@ def get_status(full: bool = False) -> str:
             body += "\n" + "\n".join(reporting._render_ui(ui))
         return reporting._finish("get_status", {}, body, t0, events=False)
     plumbing._remember_names(st)
-    ui, stale = _sub_since_trip(ui)
+    ui, stale = _sub_since_trip(reporting._label_dialogue(ui))
     sub = (ui or {}).get("region")
     if sub and sub != _last_subregion["name"]:
         # The minimap's subregion name only exists client-side; hand it to the server's breadcrumbs, off the
@@ -160,7 +160,7 @@ def get_status(full: bool = False) -> str:
     lv = _level_up_line(st)
     if lv:
         body += "\n" + lv
-    tk = _talk_line(st, force=full or first or _too_big(lines))
+    tk = _talk_line(st, force=full or first or _too_big(lines), ui=ui)
     if tk:
         body += "\n" + tk
     al = _alerts_line(st, inv, force=full or first or _too_big(lines))
@@ -239,23 +239,24 @@ def _area_alert(st: Any) -> str:
 @reporting._guard
 def look(full: bool = False) -> str:
     """The cheap way to keep your bearings: what CHANGED since your last look, in a few lines. Party moves (12m NW), HP, conditions gained/lost, characters and objects that appeared, left view or changed (hostile, dead, opened, unlocked), items gained/lost, gold, mode, new objectives and quest entries, and any new prompt (dialogue, roll, popup).
+    Every look ends with the minimap block, changed or not: OBJECTIVES (distance, direction, height), WAYS, and the 3 nearest unvisited LEADS.
     full=true (or the first call, or a new area): the full status plus everything visible nearby."""
     t0 = time.monotonic()
-    got = delta.fetch(core.game, delta.LOOK_PARTS, events=True)  # one game tick, events included
+    # one game tick, events included; the frontier is the minimap block's (leads, WAYS)
+    got = delta.fetch(core.game, delta.LOOK_PARTS + ("frontier",), events=True)
     st = got.get("status")
     if st is None:
         return get_status(full=True)
     for v in got.values():
         plumbing._remember_names(v)
+    if got.get("ui") is not None:
+        got["ui"] = reporting._label_dialogue(got["ui"])
     if got.get("markers") is not None:
         _set_objectives(got["markers"])
     first = not core.DELTA.has("party", "ents")
     lines = core.DELTA.observe(delta.snapshot_of(core.H, got))
     if full or first or _too_big(lines):
-        body = render.render_status(st, got.get("ui"), core.H)
-        obj = render.render_objectives(got.get("markers") or [], here_only=True, limit=3)
-        if obj:
-            body += "\n" + "\n".join(obj)
+        body = render.render_status(st, got.get("ui"), core.H)  # the objectives are in the minimap block below
         if got.get("nearby") is not None:
             body += "\n" + render.render_nearby(got["nearby"], core.H)
         hz = _hazard_lines(got.get("hazards"), always=True)
@@ -270,7 +271,7 @@ def look(full: bool = False) -> str:
     lv = _level_up_line(st)
     if lv:
         body += "\n" + lv
-    tk = _talk_line(st, force=full or first or _too_big(lines))
+    tk = _talk_line(st, force=full or first or _too_big(lines), ui=got.get("ui"))
     if tk:
         body += "\n" + tk
     al = _alerts_line(st, got.get("inventory"), force=full or first or _too_big(lines))
@@ -279,6 +280,9 @@ def look(full: bool = False) -> str:
     ph = _party_hint_line(st, got.get("markers"), force=full or first or _too_big(lines))
     if ph:
         body += "\n" + ph
+    mm = minimap.block(got, core.H)  # always, as the HUD shows it (not only on change)
+    if mm:
+        body += "\n" + mm
     return reporting._finish("look", {"full": full}, body, t0)
 
 
@@ -299,10 +303,16 @@ def _level_up_line(st: dict | None) -> str:
 _TALK = companions.TalkTracker()
 
 
-def _talk_line(st: Any, force: bool = False) -> str:
-    """get_status/look: 'TALK: e5 Wyll wants to talk …' (the "!" over a companion) when it changes. Never raises."""
+def _talk_line(st: Any, force: bool = False, ui: Any = None) -> str:
+    """get_status/look: 'TALK: e5 Wyll wants to talk …' (the "!" over a companion) when it changes. At night camp
+    (ui's minimap) also the camp '!' over the characters in view whose talk the story still wants before the night
+    can end (camp_night.night_talk_marks): launch-v1 haiku r2 had no TALK line for Shadowheart (HasExclamationDialog
+    unset: the camp's '!' is the story's own marker) and learned it only from 17 long_rest refusals. Never raises."""
     try:
-        return _TALK.line(st, queueing._label, force=force)
+        night = ""
+        if _at_camp(ui) and isinstance(st, dict) and not st.get("in_combat") and not st.get("in_dialogue"):
+            night = camp_night.night_talk_marks()
+        return _TALK.line(st, queueing._label, force=force, extra=(night,) if night else ())
     except Exception:
         return ""
 
@@ -313,7 +323,7 @@ COMPANIONS_MD = core.PLAY_DIR / "knowledge" / "companions.md"
 
 
 def _party_hint_line(st: Any, markers: Any, force: bool = False) -> str:
-    """'PARTY: Halsin (camp, Druid 5) is tied to Shadow-Cursed Lands … → swap_party(…) | …' (companions.hint):
+    """'PARTY: Halsin (camp, Druid 5) is tied to Shadow-Cursed Lands: … | …' (companions.hint):
     out of combat/dialogue, printed when it changes or with a full view. The skill read (state.camp) runs
     only when the party or camp roster changed. Never raises: an observation must not fail on it."""
     try:
@@ -423,8 +433,7 @@ def stay(who: str, on: bool = True) -> str:
             reporting._batch["last"] = "failed"
             return reporting._finish("stay", {"who": who}, (
                 f"stay: FAILED — {queueing._label(u)} is still chained to the group ({why}): it follows the next "
-                "walk. To leave it here, unchain the one who goes instead (set_party unchain who=<them>) and walk "
-                "them alone"), t0)
+                "walk"), t0)
         _stay.add(u)
         return reporting._finish("stay", {"who": who}, f"{queueing._label(u)} stays put (stay(who, on=false) or regroup brings it back)", t0)
     _stay.discard(u)
@@ -488,7 +497,8 @@ def get_party(camp: bool = False) -> str:
     for c, sheet in zip(party, sheets):
         lines.append(render.character_line(c, core.H, st.get("active")))
         if sheet:
-            skip = {"uuid", "name", "classes", "hp", "max_hp", "temp_hp", "level", "statuses", "pos"}
+            skip = {"uuid", "name", "classes", "hp", "max_hp", "temp_hp", "level", "statuses", "pos",
+                    "concentration"}  # on the member's line above
             lines.append("   " + render.compact({k: v for k, v in sheet.items() if k not in skip}, core.H))
         if c["uuid"] in casters:
             lines.append("   prepared " + spellprep.caster_text(casters[c["uuid"]], named=False))

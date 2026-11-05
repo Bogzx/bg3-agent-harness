@@ -177,10 +177,26 @@ class CreateCharacter(Base):
             out = newgame.create_character(json.dumps({"class": "Wizard", "name": "Ilse"}))
         self.assertEqual(saved, ["S001-start"])
         self.assertLess(out.index("FIRST LOOK"), out.index("first save (no save_game needed)"))
+        self.assertIn("FIRST LOOK (this is get_status + look):\n", out)  # D630: no "don't read again"
         self.assertIn("PARTY e", out)                          # look(full=True)'s status block
-        self.assertIn("NEXT: issue the first move now", out)
+        self.assertNotIn("NEXT", out)  # D630: no 'NEXT: issue the first move now; write PLAYTHROUGH.md ...'
         # nested: the look's own metric record is marked nested (not a separate agent read)
         self.assertFalse(reporting._batch["active"])
+
+    def test_first_look_and_save_failures_say_what_failed_with_no_call(self):
+        # night 2026-11-04: '; call look' and ': save_game(label="S001-start")' pointed at the next call
+        self.use(FakePage())
+
+        def boom(*a, **k):
+            raise RuntimeError("down")
+
+        with mock.patch.dict(os.environ, {"BG3AI_SESSION": "S001"}), mock.patch.object(saving.SAVER, "save", boom), \
+                mock.patch.object(newgame.overview, "look", boom):
+            out = newgame.create_character(json.dumps({"class": "Wizard", "name": "Ilse"}))
+        self.assertIn("FIRST LOOK (this is get_status + look):\n(first look failed: RuntimeError: down)\n", out)
+        self.assertIn("first save not started (RuntimeError: down): no 'S001-start' save was made", out)
+        self.assertNotIn("call look", out)
+        self.assertNotIn("save_game(", out)
 
     def test_first_look_waits_out_the_cc_scene(self):
         # naut3 (3/3 runs): right after "Venture forth" the CC scene reads as screen=game with the dummy named; the
@@ -194,20 +210,21 @@ class CreateCharacter(Base):
         self.assertIn("(name checked in game)", out)
         self.assertIn("WHERE Nautiloid", out)
         self.assertNotIn("Character creation", out)
-        self.assertIn("NEXT: issue the first move now", out)
+        self.assertNotIn("NEXT", out)  # D630: no 'NEXT: issue the first move now; write PLAYTHROUGH.md ...'
 
     def test_first_look_in_the_opening_dialogue_says_advance_first(self):
         g, _ = self.use(FakePage())
         g.world_screen, g.in_dialogue = "dialogue", True
         out = newgame.create_character(json.dumps({"class": "Wizard", "name": "Ilse"}))
         self.assertIn("(name checked in game)", out)
-        self.assertIn("NEXT: issue dialogue_advance (the opening conversation is up), then the first move now", out)
+        self.assertIn("DIALOGUE", out)  # the first look shows the opening conversation; no NEXT line (D630)
+        self.assertNotIn("NEXT", out)
 
     def test_loading_screen_is_not_the_world(self):
         g, _ = self.use(FakePage())
         g.world_screen = "loading"
         out = newgame.create_character(json.dumps({"class": "Wizard", "name": "Ilse"}))
-        self.assertIn("hadn't loaded yet", out)
+        self.assertIn("hadn't loaded yet to check it; get_status shows the name once it has)", out)  # D630: no "don't call"
         self.assertNotIn("FIRST LOOK", out)
 
     def test_first_look_switch_off(self):
@@ -290,12 +307,13 @@ class CreateCharacter(Base):
         newgame.create_character(json.dumps({"name": "Ilse"}))
         out = newgame.create_character(json.dumps({"name": "Ilse"}))
         self.assertIn("REFUSED: character creation isn't open: the character is already created ('Ilse'", out)
+        self.assertNotIn("Don't call", out)  # D630
 
     def test_no_cc_and_no_world_points_to_new_game(self):
         g, _ = self.use(FakePage(), world_name=None)
         g.cc_open = False
         out = newgame.create_character(json.dumps({"name": "Ilse"}))
-        self.assertIn("new_game first", out)
+        self.assertIn("REFUSED: character creation isn't open (new_game opens it from the main menu)", out)
 
     def test_origin_without_name_takes_the_world_name(self):
         g, inp = self.use(FakePage(can_edit=False), world_name="Lae'zel")

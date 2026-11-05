@@ -61,10 +61,43 @@ function G.radius(uuid)
     return 0.5
 end
 
--- Melee reach is edge to edge: the furthest centre distance at which a weapon
--- (or Shove) with `range` m reaches `target` (the check_cast test below).
+-- The bound melee reach is measured by: AIBounds.Move (window 9: every creature in the Balthazar fight read Move
+-- 0.249, Hit 0.200, Stand 0.499); a medium creature's 0.25 m when it doesn't read. A fallback is never silent: one
+-- bg3le warning per entity, and the count goes into the bridge's mem metrics record (sys.mem hit_fallbacks ->
+-- hit_radius_fallbacks: names from the Hit model, kept so the metric stays one series).
+G.REACH_RADIUS_M = 0.25
+G.hit_fallback = G.hit_fallback or {} -- guid -> true: warned once
+G.hit_fallback_n = G.hit_fallback_n or 0
+function G.reach_radius(uuid)
+    local e = G.entity(uuid)
+    local ok, r = pcall(function() return e.Bound.Bound.AIBounds.Move.Radius end)
+    if ok and type(r) == "number" and r > 0 and r < 5 then return r end
+    local k = G.guid(uuid) or tostring(uuid)
+    if not G.hit_fallback[k] then
+        G.hit_fallback[k] = true
+        G.hit_fallback_n = G.hit_fallback_n + 1
+        local okn, name = pcall(function() return U.loca(G.q("GetDisplayName", uuid)) end)
+        Ext.Utils.PrintWarning(string.format("[BG3AI] melee reach: no AIBounds.Move radius for %s (%s): %.2f m assumed"
+            .. " (a medium creature's)", tostring(okn and name or "?"), k, G.REACH_RADIUS_M))
+    end
+    return G.REACH_RADIUS_M
+end
+
+-- Melee reach is edge to edge by the Move bounds: the furthest centre distance at which a weapon (or Shove) with
+-- `range` m reaches `target`. The one measure for the guard's range check (check_cast), move_to's stop and its
+-- already-there test (ActionsMove), the cast's walk into range (ActionsCast) and the refusal text (Actions).
+-- Window 8 (both check flags dropped, the engine measures): Karlach's 1.5 m greataxe on an Apostate Destroyer was
+-- refused (InvalidTarget) from 2.1 m centres 10/10 and cast from 1.4 m; the Stand radii gave 2.5 m (1.5 + 0.5 +
+-- 0.5). Window 9 measured the edge: from 2.0 m (2.005 read) the engine cast, from 2.05 m it refused InvalidTarget;
+-- the Move radii give 1.5 + 0.249 + 0.249 = 1.998 m (the Hit radii's 1.9 m refused 2.0 m: 0.1 m too strict).
 function G.melee_reach(char, target, range)
-    return range + G.radius(char) + G.radius(target)
+    return range + G.reach_radius(char) + G.reach_radius(target)
+end
+
+-- The range of the character's own melee weapon (Main Hand Attack's), the default for a plain move_to.
+function G.weapon_melee_range(char)
+    local r = G.spell_range(Ext.Stats.Get("Target_MainHandAttack"), char)
+    return r or G.DEFAULT_MELEE_M
 end
 
 -- Jump distance (Projectile_Jump has no numeric range, so the guard caps it).
@@ -154,7 +187,7 @@ function G.jump_floor_ok(pos)
     end
     if #hs == 0 then
         G.refuse(string.format("no ground at all under (%.1f,%.1f,%.1f) (the void): a jump there froze the game"
-            .. " twice; pick a landing on a floor you can see (get_layout / route)", pos[1], pos[2], pos[3]))
+            .. " twice", pos[1], pos[2], pos[3]))
     elseif not near then
         G.refuse(string.format("the landing (%.1f,%.1f,%.1f) is in the air: no floor within %.0f m of that height;"
             .. " give the floor's own y (get_layout / route)", pos[1], pos[2], pos[3], G.JUMP_FLOOR_SLACK_M))
@@ -309,6 +342,103 @@ function G.in_blast(char, pt, r, skip)
     return out
 end
 
+-- Window 9 MR2 (live.md): in combat the game's path preview marks the point where a path leaves an enemy's reach
+-- ring ("Provokes Attack of Opportunity" in its tooltip) and shows nothing for an enemy whose reaction is spent. The
+-- same facts for a path (its points): each enemy the mover's side can see, in combat, standing, with its reaction
+-- left, whose melee reach (its main hand's, edge to edge) the path leaves: {{uuid, name, at, along_m}} by along_m,
+-- nil out of combat. An enemy is the other team in a match, else one the game calls the mover's enemy. Only what the
+-- engine would attack: none while the mover has a status with IgnoreLeaveAttackRange() (Disengage's boost); no enemy
+-- with an INCAPACITATED status (stunned, asleep, paralysed …) or one blocking its reaction
+-- (ActionResourceBlock(ReactionActionPoint)), that the game doesn't call the mover's enemy (Osi.IsEnemy) or that can't
+-- see the mover (Osi.CanSee); no leaving on a jump or climb link (portals: the points a link ends at).
+G.AOO_NEAR_M = 5.0 -- only characters this near a path point can have it in reach
+local function foe_of(char, u)
+    local Ar = BG3AI.Arena
+    if Ar and Ar.active and Ar.active() and Ar.side_of then
+        local x, y = Ar.side_of(char), Ar.side_of(u)
+        if x and y then return x ~= y end
+    end
+    return not G.is_party(u) and b(G.q("IsEnemy", char, u))
+end
+
+local function reaction_left(u)
+    local r = G.resources(u).ReactionActionPoint
+    return r ~= nil and (r[0] or 0) > 0
+end
+
+-- Every active status's stats entry (technical ones too: a boost can sit on a hidden status).
+local function status_stats(u)
+    local out = {}
+    local e = G.entity(u)
+    local sc = e and U.comp(e, "StatusContainer")
+    if not sc then return out end
+    pcall(function()
+        for _, id in pairs(sc.Statuses) do
+            local ok, st = pcall(Ext.Stats.Get, tostring(id))
+            if ok and st then out[#out + 1] = st end
+        end
+    end)
+    return out
+end
+
+local function has_boost(u, boost)
+    for _, st in ipairs(status_stats(u)) do
+        local ok, bs = pcall(function() return tostring(st.Boosts or "") end)
+        if ok and bs:find(boost, 1, true) then return true end
+    end
+    return false
+end
+
+local function cant_react(u)
+    for _, st in ipairs(status_stats(u)) do
+        local ok, typ = pcall(function() return tostring(st.StatusType or "") end)
+        if ok and typ == "INCAPACITATED" then return true end
+    end
+    return has_boost(u, "ActionResourceBlock(ReactionActionPoint)")
+end
+
+-- A jump or climb link on the path provokes like the walk around it: the game's Interrupt_AttackOfOpportunity fires
+-- OnLeaveAttackRange and is skipped only for a move whose spell has SpellFlags IgnoreAoO (Shared.pak
+-- Public/Shared/Stats/Generated/Data/Interrupt.txt:451-464); Projectile_Jump's flags have none (Spell_Projectile.txt
+-- :1469-1499; only Projectile_Jump_Cloaker and Projectile_Fly_TempestuousMagic carry it), and a link is no spell.
+function G.path_provokes(char, points)
+    local V = BG3AI.Visibility
+    if not (char and G.in_combat(char)) or type(points) ~= "table" or #points < 2 then return nil end
+    local me, ctx, out = G.guid(char), V.context(), {}
+    if has_boost(me, "IgnoreLeaveAttackRange()") then return out end -- Disengaged: no one's reach provokes
+    local attack = Ext.Stats.Get("Target_MainHandAttack")
+    for _, row in ipairs(V.charactersNear(points, G.AOO_NEAR_M)) do
+        local u = G.guid(V.entityUuid(row[1]) or "")
+        if u and u ~= me and not G.is_dead(u) and not G.is_downed(u) and G.in_combat(u) and foe_of(me, u)
+            and V.characterVisible(ctx, u, row[1], row[2]) and reaction_left(u) and not cant_react(u)
+            and b(G.q("IsEnemy", u, me)) and b(G.q("CanSee", u, me)) then
+            local ep = G.pos(u)
+            local reach = G.melee_reach(u, me, G.spell_range(attack, u) or G.DEFAULT_MELEE_M)
+            local along, inside = 0, U.dist(points[1], ep) <= reach
+            for i = 2, #points do
+                local p, q = points[i - 1], points[i]
+                local seg, qin = U.dist(p, q), U.dist(q, ep) <= reach
+                if inside and not qin then -- the crossing, halved
+                    local lo, hi = 0, 1
+                    for _ = 1, 12 do
+                        local m = (lo + hi) / 2
+                        local pt = { p[1] + (q[1] - p[1]) * m, p[2] + (q[2] - p[2]) * m, p[3] + (q[3] - p[3]) * m }
+                        if U.dist(pt, ep) <= reach then lo = m else hi = m end
+                    end
+                    local t = (lo + hi) / 2
+                    local at = { p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t, p[3] + (q[3] - p[3]) * t }
+                    out[#out + 1] = { uuid = u, name = V.name(u), along_m = U.round(along + seg * t, 1),
+                        at = U.vec(at, 1) }
+                    break
+                end
+                inside, along = qin, along + seg
+            end
+        end
+    end
+    table.sort(out, function(x, y) return x.along_m < y.along_m end)
+    return out
+end
+
 local function fmt_pos(p) return string.format("(%.1f,%.1f,%.1f)", p[1], p[2], p[3]) end
 
 function G.blast_risk(char, st, flags, spell, target, pos)
@@ -344,7 +474,7 @@ function G.blast_risk(char, st, flags, spell, target, pos)
     else
         ring = ring .. (hostile > 0 and (hostile .. " hostile only") or "nobody")
     end
-    G.refuse(head .. "; " .. ring .. ": aim elsewhere or move first, or force=true to cast anyway")
+    G.refuse(head .. "; " .. ring .. " (force=true casts anyway)")
 end
 
 -- Extra Attack (live stats, 2026-10-10): after a weapon attack the ExtraAttack passive applies EXTRA_ATTACK,
@@ -379,7 +509,7 @@ G.ACTING_STATUSES = { HASTE_LETHARGY = true }
 -- by 08:30:34 with no end order; S088 06:19:53): orders sent before that worked (S072 two attacks, S089 Dash). S091
 -- showed `DISABLED e5 Claude: Lethargic (1 turn)` beside `Move 9/9m` and the agent planned to walk off the Orb of
 -- Negation's platform.
-G.LETHARGY_EFFECT = "cannot move; its turn passes once the rest of its turn group has ended (act with it first)"
+G.LETHARGY_EFFECT = "cannot move; its turn passes once the rest of its turn group has ended"
 -- A FEAR status (FEARED from Orin's Death Growl: StatusType FEAR, SG_Fleeing, saved with FearStatusSavingCheck() at the
 -- turn start). S065 11:51/11:53: end_turn said "now e4's turn"; the game moved Claude 2 m / 5 m away by itself and his
 -- move_to was refused "not this character's turn" (round 2: his turn ended 6 s in; round 3: still his on the turn
@@ -447,8 +577,20 @@ function G.disabling_info(id)
         for g in pairs(groups) do hit = hit or G.DISABLING_GROUPS[g] end
         if hit and typ ~= "DOWNED" then  -- downed members have their own line (turn.downed; SG_Incapacitated too)
             local effect
-            if typ == "KNOCKED_DOWN" or groups.SG_Prone then
-                effect = "stands up at its turn start for half its movement"
+            -- Knocked down (Shared Status_KNOCKED_DOWN.txt PRONE, :1-20): StatusType KNOCKED_DOWN (:3) lies the
+            -- character down (StillAnimationType KO, :9); none of its Boosts (:12) is what holds it, the status
+            -- type is; it stands up only when the status is removed: at its turn start (RemoveEvents OnTurn, :15)
+            -- when it has half its movement (RemoveConditions HasActionResource('Movement', 50, 0, true), :13),
+            -- which the removal takes in
+            -- turn-based play (OnRemoveFunctors UseActionResource(Movement, 50%), :17). KNOCKED_DOWN (:49-60) has no
+            -- RemoveEvents: it stays down until the status ends.
+            local prone = (typ == "KNOCKED_DOWN" or groups.SG_Prone) or nil
+            local half
+            if prone then
+                local onTurn = flagset(field("RemoveEvents")).OnTurn
+                half = tostring(field("RemoveConditions") or ""):find("HasActionResource('Movement', 50", 1, true)
+                effect = onTurn and half and "stands up at its turn start for half its movement"
+                    or onTurn and "may stand up at its turn start" or "stays down until the status ends"
             elseif typ == "INCAPACITATED" and not G.ACTING_STATUSES[id] then
                 effect = "cannot act"
             elseif G.ACTING_STATUSES[id] then
@@ -467,7 +609,8 @@ function G.disabling_info(id)
             if tostring(field("RemoveConditions") or ""):find("Saving", 1, true) then
                 fix[#fix + 1] = "it saves again each turn"
             end
-            c = { effect = effect, fix = #fix > 0 and table.concat(fix, "; ") or nil }
+            c = { effect = effect, fix = #fix > 0 and table.concat(fix, "; ") or nil, prone = prone,
+                prone_half = prone and half and true or nil }
         end
     end
     G._disabling[id] = c
@@ -484,20 +627,33 @@ function G.disabling(char)
         local ok, info = pcall(G.disabling_info, s.id)
         if ok and info then
             out = out or {}
-            out[#out + 1] = { name = s.name, turns = s.turns, effect = info.effect, fix = info.fix }
+            out[#out + 1] = { name = s.name, turns = s.turns, effect = info.effect, fix = info.fix, prone = info.prone,
+                prone_half = info.prone_half }
         end
     end
     return out
 end
 
--- What keeps char from walking: the name of a disabling status that says "cannot act" or "cannot move …", or nil.
+-- char's knocked-down status during its own combat turn ({name, effect, ...} as G.disabling's), or nil: a player can't
+-- walk or act with it until it stands up at a turn start (disabling_info). Outside its own turn nothing changes.
+function G.prone_now(char)
+    if not (G.in_combat(char) and G.is_my_turn(char)) then return nil end
+    for _, d in ipairs(G.disabling(char) or {}) do
+        if d.prone then return d end
+    end
+    return nil
+end
+
+-- What keeps char from walking: the name of a disabling status that says "cannot act" or "cannot move …", or of the
+-- knocked-down status in its own turn (G.prone_now), or nil.
 -- The movement figure (State.lua moveView) and the combat walk guard (Actions.lua combat_budget) use it.
 function G.move_blocked(char)
     for _, d in ipairs(G.disabling(char) or {}) do
         local eff = d.effect or ""
         if eff == "cannot act" or eff:find("^cannot move") then return d.name end
     end
-    return nil
+    local p = G.prone_now(char)
+    return p and p.name or nil
 end
 
 -- The fix the game offers for char's status `name` ("" when none), for refusals.
@@ -508,13 +664,39 @@ function G.disabling_fix(char, name)
     return ""
 end
 
+-- The variant ids in `spell`'s stats ContainerSpells that are a spell's stats entry (ModifierList SpellData), and
+-- the count of entries that are not: nil when it lists none. fights-v09 Balthazar S001 15:59:38: Target_LayOnHands'
+-- list once read "BLD_GEN_Crane_Elevator_B.BLD_GEN_Crane_Elevator_B_Mesh.0", a world mesh name, between two good
+-- casts of its Cure variant; every other logged read gave its three variants. The value is a slot of the stats string
+-- pool, a global string-table entry (bg3se StatsObject.inl GetFixedStringRef), so the wrong text came from that entry.
+-- No check on the variants' SpellContainerID: Lay On Hands' variants name no container (they are rows of their own in
+-- the action list).
+local function container_spells(spell)
+    local st = Ext.Stats.Get(spell)
+    local raw = tostring(st and st.ContainerSpells or "")
+    if raw == "" then return nil end
+    local ids, bad = {}, 0
+    for id in raw:gmatch("[^;]+") do
+        local v = Ext.Stats.Get(id)
+        local ok, kind = pcall(function() return v and v.ModifierList end)
+        if ok and kind == "SpellData" then ids[#ids + 1] = id else bad = bad + 1 end
+    end
+    if #ids == 0 and bad == 0 then return nil end
+    return ids, bad
+end
+
 function G.check_cast(char, spell, target, pos, upcast, force)
     if type(spell) ~= "string" or spell == "" then G.refuse("no action given") end
     local st = Ext.Stats.Get(spell)
     if not st then G.refuse("unknown action") end
-    local variants = tostring(st.ContainerSpells or "")
-    if variants ~= "" then
-        G.refuse("choose a variant: " .. variants:gsub(";", ", "))
+    local variants, bad = container_spells(spell)
+    if bad and bad > 0 then variants, bad = container_spells(spell) end -- one more read before giving up
+    if variants and #variants == 0 then
+        G.refuse("choose a variant (this action's variant list did not read as spell names)")
+    elseif variants then
+        G.refuse("choose a variant: " .. table.concat(variants, ", ") .. (bad > 0
+            and " (" .. bad .. " more " .. (bad == 1 and "entry" or "entries") .. " of its variant list did not read"
+                .. " as spell names)" or ""))
     end
     if G.linked_box(st) then
         local ids, from = G.box_variants(char, spell)
@@ -524,7 +706,7 @@ function G.check_cast(char, spell, target, pos, upcast, force)
         shown = shown and shown.name or spell
         if #free > 0 then
             -- by shown name, the usable ones first (combat_turn's quick pick takes the first)
-            G.refuse(shown .. " casts nothing by itself: use_ability which=<one of " .. G.variant_list(char, ids) .. ">"
+            G.refuse(shown .. " casts nothing by itself: its variants (which=) are " .. G.variant_list(char, ids)
                 .. (spell_flags(st).CallAlliesSpell and ", x,y,z = the ground where they appear" or "")
                 .. (from and " (from the " .. from .. ")" or ""))
         elseif #ids > 0 then
@@ -534,6 +716,7 @@ function G.check_cast(char, spell, target, pos, upcast, force)
         end
     end
     G.known_spell(char, spell)
+    G.check_rules(char, spell, st, target) -- REVIEW-5 F1/F3: the stats' own requirements (GuardRules.lua)
 
     local level = tonumber(st.Level) or 0
     if upcast then
@@ -550,8 +733,16 @@ function G.check_cast(char, spell, target, pos, upcast, force)
     end
     local blk = G.in_combat(char) and G.blocking_status(char)
     if blk and blk.type == "INCAPACITATED" then
-        G.refuse("cannot act while " .. tostring(blk.name) .. " (it takes the whole turn): end its turn"
+        G.refuse("cannot act while " .. tostring(blk.name) .. " (it takes the whole turn)"
             .. G.disabling_fix(char, blk.name))
+    end
+    local down = G.prone_now(char)
+    -- Still down in its own turn: a status that stands up at the turn start for half the movement didn't, so its
+    -- rule is not restated; the reason it stayed down is (REVIEW-13 #4). Other prone statuses: their own effect.
+    if down then
+        G.refuse("cannot act while " .. tostring(down.name) .. " ("
+            .. (down.prone_half and "it did not stand up this turn: standing needs half its movement"
+                or ("it " .. down.effect)) .. ")")
     end
 
     -- Resources.
@@ -591,7 +782,7 @@ function G.check_cast(char, spell, target, pos, upcast, force)
         -- (1.5 m warhammer + 0.5 + 0.49 for Claude vs an imp = 2.49 m).
         local reach = range and (melee and G.melee_reach(char, target, range) or range + 0.5)
         if reach and not G.same(char, target) and d > reach then
-            G.refuse(string.format("target is out of range (%.1f m, range %.1f m): move closer first", d, range))
+            G.refuse(string.format("target is out of range (%.1f m, range %.1f m)", d, range))
         end
         if st_type ~= "Shout" and not G.same(char, target) and not G.los_ok(char, target, d) then
             G.refuse("no line of sight to target")
@@ -621,7 +812,7 @@ function G.check_cast(char, spell, target, pos, upcast, force)
         -- Projectile_Jump has TargetRadius 4.5 (live), below a strong
         -- character's jump; jump_max above is its cap instead.
         if range and p and spell ~= G.JUMP_SPELL and U.dist(p, pos) > range + 0.5 then
-            G.refuse(string.format("target point is out of range (%.1f m, range %.1f m): move closer first",
+            G.refuse(string.format("target point is out of range (%.1f m, range %.1f m)",
                 U.dist(p, pos), range))
         end
         if not force and spell ~= G.JUMP_SPELL then G.blast_risk(char, st, flags, spell, nil, pos) end

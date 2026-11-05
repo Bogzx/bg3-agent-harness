@@ -33,6 +33,16 @@ test("onRoute: a jump link up a ledge stays on the route", function()
     eq(N.onRoute(LEDGE, { -3.8, 0, 0 }, { -8.5, 2.5, 0 }), true, "ledge")
 end)
 
+-- launch-v1 crash_site_grove, walk_toward "4m (path 6m)": the engine's route steps off a ledge; the walker fell 5.0 m
+-- at the same x,z in one tick and the walk failed "engine teleported the character"
+test("onRoute: a drop link straight down stays on the route", function()
+    local DROP = { { 290.3, 23.9, 352.7 }, { 290.3, 23.9, 349.7 }, { 290.3, 18.9, 349.7 }, { 290.3, 18.9, 347.7 } }
+    eq(N.onRoute(DROP, { 290.3, 23.9, 349.7 }, { 290.3, 18.9, 349.7 }), true, "the drop")
+    eq(N.onRoute(DROP, { 290.3, 23.9, 350.5 }, { 290.3, 18.9, 348.2 }), true, "the drop with the steps either side")
+    -- the same fall where the route has no drop is still a teleport
+    eq(N.onRoute(STRAIGHT, { -5, 0, 0 }, { -5, -5, 0 }), false, "no drop on the route")
+end)
+
 test("onRoute: no route -> false", function()
     eq(N.onRoute(nil, { 0, 0, 0 }, { 5, 0, 0 }), false, "nil")
 end)
@@ -605,6 +615,146 @@ test("nav.path reply drops the route points and adds the hazard", function()
     fire = function(x) return x < -5 end
     local r = RPC.ops["nav.path"]({ pos = { -10, 0, 0 } })
     eq(r.points, nil, "points"); eq(r.hazard.surface, "Fire", "hazard")
+end)
+
+-- w12 L1a: path_preview read "reachable: walk 0.1m" for a landing 3.5 m away (the path ended by the walker: partial,
+-- now rendered); a found path with NO nodes ends on the walker's own spot and readResult flags nothing for it
+test("nav.path: a found path with no nodes to a point farther than the end tolerance ends short of it", function()
+    nodesFor = function() return {} end
+    local r = RPC.ops["nav.path"]({ pos = { -3.5, 0, 0 } })
+    eq(r.reachable, true, "the engine's answer"); eq(r.nodes, 0, "no nodes")
+    eq(r.partial, true, "ends short"); near(r.end_off, 3.5, "short by"); eq(r.end_pos[1], 0, "at the walker")
+    local close = RPC.ops["nav.path"]({ pos = { -1.5, 0, 0 } })
+    eq(close.partial, nil, "within the end tolerance: the walker is there")
+end)
+
+test("nav.path: a path whose last node is by the walker stays partial (readResult)", function()
+    nodesFor = function() return { { -0.1, 0, 0 } } end
+    local r = RPC.ops["nav.path"]({ pos = { -3.5, 0, 0 } })
+    eq(r.partial, true, "ends short"); near(r.end_off, 3.4, "short by"); near(r.length_m, 0.1, "walk")
+end)
+
+-- REVIEW-17 F1: path_preview(target=<creature>) took the point path (end tolerance 2 m) and the 0-node rule, so a
+-- large foe (an Apostate Destroyer) read NOT REACHED from next to it, and the path to its edge read partial
+test("nav.path to a creature id: a path to a large foe's edge, or none from next to it, reaches it", function()
+    local FOE = "ffffffff-0000-0000-0000-000000000009"
+    local V = BG3AI.Visibility
+    local entity, visible = V.entity, V.characterVisible
+    V.entity = function(u)
+        local e = entity(u)
+        if e and u == FOE then
+            e.ServerCharacter = {}
+            e.Bound = { Bound = { AIBounds = { Stand = { Radius = 1.2 } } } } -- a large creature
+        end
+        return e
+    end
+    V.characterVisible = function() return true end
+    local ok, err = pcall(function()
+        world[FOE] = { -2.5, 0, 0 }
+        nodesFor = function() return {} end -- next to it: the engine's path has no nodes
+        local r = RPC.ops["nav.path"]({ target = FOE })
+        eq(r.reachable, true, "reachable"); eq(r.partial, nil, "next to it: not short")
+        world[FOE] = { -8, 0, 0 }
+        N.frame = N.frame + 1
+        nodesFor = function() return { { -3, 0, 0 }, { -5.5, 0, 0 } } end -- ends at its edge, 2.5 m from its centre
+        r = RPC.ops["nav.path"]({ target = FOE })
+        eq(r.reachable, true, "reachable"); eq(r.partial, nil, "the edge: not short"); near(r.length_m, 5.5, "walk")
+        -- the same spot as a coordinate is still judged by the walker's end tolerance
+        r = RPC.ops["nav.path"]({ pos = { -8, 0, 0 } })
+        eq(r.partial, true, "a point 2.5 m past the path's end")
+        -- REVIEW-17c: on a ledge, the path ends 5 m short of its centre (past its 1.2 m footprint + 2 m): short
+        world[FOE] = { -10, 0, 0 }
+        N.frame = N.frame + 1
+        nodesFor = function() return { { -3, 0, 0 }, { -5, 0, 0 } } end
+        r = RPC.ops["nav.path"]({ target = FOE })
+        eq(r.partial, true, "ends short of the foe"); near(r.end_off, 5, "short by"); eq(r.end_pos[1], -5, "end")
+        -- no nodes, 4 m from it (past 3.2 m): short, from the walker's spot
+        world[FOE] = { -4, 0, 0 }
+        N.frame = N.frame + 1
+        nodesFor = function() return {} end
+        r = RPC.ops["nav.path"]({ target = FOE })
+        eq(r.partial, true, "no path toward it"); eq(r.end_pos[1], 0, "at the walker")
+    end)
+    V.entity, V.characterVisible, world[FOE] = entity, visible, nil
+    if not ok then error(err, 0) end
+end)
+
+-- w15 b2 (Balthazar fight): path_preview(target=Destroyer) from 5.4 m on the same floor read NOT REACHED: the engine's
+-- path to its occupied centre ended 2.95 m from it (Stand 0.499: footprint + 2 m = 2.5 m), and from that very end the
+-- next preview walked 1.7 m closer. A spot around it that the walker reaches decides.
+test("nav.path to a creature id: a centre path that stops short of a foe it reaches is not short (w15 b2)", function()
+    local FOE = "ffffffff-0000-0000-0000-00000000000b"
+    local V = BG3AI.Visibility
+    local entity, visible = V.entity, V.characterVisible
+    V.entity = function(u)
+        local e = entity(u)
+        if e and u == FOE then
+            e.ServerCharacter = {}
+            e.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.499 }, Move = { Radius = 0.249 } } } }
+        end
+        return e
+    end
+    V.characterVisible = function() return true end
+    local ok, err = pcall(function()
+        world[P1] = { -604.96, 0, -1431.71 }
+        world[FOE] = { -599.75, 0, -1430.25 }
+        local centre = 0
+        nodesFor = function(_, t)  -- the centre: the engine stops at (-602.7, -1430.2); a free spot: reached
+            if t[1] ~= -599.75 or t[3] ~= -1430.25 then return { t } end
+            centre = centre + 1
+            return { { -603.6, 0, -1430.9 }, { -602.7, 0, -1430.2 } }
+        end
+        local r = RPC.ops["nav.path"]({ target = FOE })
+        eq(centre > 0, true, "the centre path was asked first")
+        eq(r.reachable, true, "reachable"); eq(r.partial, nil, "not NOT REACHED")
+        eq(r.approach_pos ~= nil, true, "it ends at a spot next to it")
+        eq(U.dist(r.approach_pos, world[FOE]) <= 0.499 + 2.0, true, "within its footprint + 2 m")
+        -- the same foe with no free spot reached around it (every path stops where the centre one does): short
+        N.frame = N.frame + 1
+        nodesFor = function() return { { -603.6, 0, -1430.9 }, { -602.7, 0, -1430.2 } } end
+        r = RPC.ops["nav.path"]({ target = FOE })
+        eq(r.partial, true, "no spot reached: NOT REACHED"); near(r.end_off, 2.95, "short by", 0.05)
+        eq(r.approach_pos, nil, "no spot")
+    end)
+    V.entity, V.characterVisible, world[FOE] = entity, visible, nil
+    if not ok then error(err, 0) end
+end)
+
+-- REVIEW-18k: the free-spot ring runs up to 8 engine searches on the server thread with no deadline. Past
+-- N.FREE_RING_MS no new spot is asked, and the ring's time is in the result's ms. REVIEW-18n: the centre path's
+-- NOT REACHED and its short end stand then (it read a bare `unfinished=true`), marked free_spots_unchecked.
+test("nav.path to a creature id: the free-spot ring stops at its deadline, its time in ms (REVIEW-18k)", function()
+    local FOE = "ffffffff-0000-0000-0000-00000000000b"
+    local V = BG3AI.Visibility
+    local entity, visible = V.entity, V.characterVisible
+    V.entity = function(u)
+        local e = entity(u)
+        if e and u == FOE then
+            e.ServerCharacter = {}
+            e.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.499 }, Move = { Radius = 0.249 } } } }
+        end
+        return e
+    end
+    V.characterVisible = function() return true end
+    local ok, err = pcall(function()
+        world[P1] = { -604.96, 0, -1431.71 }
+        world[FOE] = { -599.75, 0, -1430.25 }
+        N.frame = N.frame + 1
+        local spots = 0
+        nodesFor = function(_, t)  -- every path stops where the centre one does; a spot's search takes 200 ms
+            if t[1] ~= -599.75 or t[3] ~= -1430.25 then spots = spots + 1; clock = clock + 200 end
+            return { { -603.6, 0, -1430.9 }, { -602.7, 0, -1430.2 } }
+        end
+        local t0 = clock
+        local r = RPC.ops["nav.path"]({ target = FOE })
+        eq(spots, 2, "no spot asked past the deadline (0 and 200 ms in; at 400 ms it stops)")
+        eq(r.reachable, true, "the centre path stands"); eq(r.unfinished, nil, "not unfinished")
+        eq(r.partial, true, "NOT REACHED"); near(r.end_off, 2.95, "short by", 0.05)
+        eq(r.free_spots_unchecked, true, "the free spots weren't all checked")
+        eq(r.ms ~= nil and r.ms >= clock - t0, true, "the ring's 400 ms are in ms: " .. tostring(r.ms))
+    end)
+    V.entity, V.characterVisible, world[FOE] = entity, visible, nil
+    if not ok then error(err, 0) end
 end)
 
 test("nav.activity reports a harmful surface under a party member", function()

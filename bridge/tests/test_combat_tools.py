@@ -42,6 +42,8 @@ class FakeGame:
             return self.ui.pop(0) if len(self.ui) > 1 else self.ui[0]
         if op == "state.actions":
             return {"uuid": args["uuid"], "resources": {"ActionPoint": [1, 1]}, "actions": [{"name": "Attack"}]}
+        if op == "nav.hazards":  # read with state.actions: the turn block's HAZARD lines
+            return {"hazards": []}
         raise AssertionError(f"unexpected op {op}")
 
     def try_rpc(self, op: str, args: dict | None = None, context: str = "server", default: Any = None) -> Any:

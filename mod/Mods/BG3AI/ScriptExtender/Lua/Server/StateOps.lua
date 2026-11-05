@@ -1,4 +1,4 @@
--- State, part 3 of 3 (State.lua loads the parts in order; split for the 1000-line cap):
+-- State, part 3 of 4 (State.lua loads the parts in order; split for the 1000-line cap):
 -- the state.* RPC ops.
 local RPC = BG3AI.RPC
 local U = BG3AI.Util

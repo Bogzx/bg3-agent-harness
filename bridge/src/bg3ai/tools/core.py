@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -89,8 +90,38 @@ _last_full_frame = None  # PIL image of the latest screenshot (for zoom)
 # plumbing
 # ---------------------------------------------------------------------------
 
+# Per thread: how many records _log wrote (reporting._guard logs a tool that returned without one) and the numbers a
+# tool left for its record (metrics_extra), e.g. flee's probe count and ms.
+_logged = threading.local()
+
+
+def metrics_extra(**kw: Any) -> None:
+    """Numbers for this call's metrics record (not for the agent's text): merged into the next _log on this thread."""
+    d = getattr(_logged, "extra", None) or {}
+    d.update(kw)
+    _logged.extra = d
+
+
 def _log(tool: str, args: dict, result: str, ms: float, extra: dict | None = None) -> None:
-    # Every tool result passes here (via _finish): one latency record per call (metrics.py).
+    # Every tool result passes here (via _finish, or reporting._guard for a return without it): one latency record
+    # per call (metrics.py).
+    _logged.n = getattr(_logged, "n", 0) + 1
+    left = getattr(_logged, "extra", None)
+    if left:
+        _logged.extra = None
+        extra = {**left, **(extra or {})}
+    # reporting._guard's entry: every record this call writes carries its guard_t0 (it names the call: pickpocket's
+    # _click_act step writes one before the call's own, w11 L6 (a)); the save wait only the first, so sums count it
+    # once. A record starts no earlier than its own guard: a tool called by another (route go=true -> travel_to) times
+    # its walk budget from the outer call's start (reporting.call_t0), not its record (w11 L6 (b): t0 70 ms early).
+    guard = getattr(_logged, "guard", None)
+    if guard:
+        ms = min(ms, (time.monotonic() - guard["_m"]) * 1000)
+        mine = {"guard_t0": guard["guard_t0"]}
+        if not guard.get("_used") and "save_wait_ms" in guard:
+            mine["save_wait_ms"] = guard["save_wait_ms"]
+        guard["_used"] = True
+        extra = {**mine, **(extra or {})}
     METRICS.tool_done(tool, ms, nested=reporting._batch["active"], ok=not tool_classes.failed(result, tool), extra=extra)
     try:
         RUNTIME.mkdir(parents=True, exist_ok=True)
@@ -297,8 +328,8 @@ _DIALOGUE_TOOLS = frozenset({"dialogue_advance", "choose_dialogue", "talk_to"})
 
 
 # Events a result already reports in its own words (set by the tool for its one call): item uuids whose item_added
-# is noise, and whether the gold stack's item_added is (sell=junk: the game moves each member's sold items to the
-# trading character first — acceptance 12:21: 5 "item_added … owner=Claude" lines + "Gold count=799").
+# is noise, and whether gold_changed is (sell=junk: the game moves each member's sold items to the trading character
+# first — acceptance 12:21: 5 "item_added … owner=Claude" lines; the SOLD line states the gold).
 # The window stays open ~10 s after the call ("until"): the game's AddedTo for a big sale (54 items) trickles in after
 # the trade job ends and would otherwise land in the next tool's result.
 _EV_DROP: dict[str, Any] = {"items": set(), "gold": False, "until": 0.0}
@@ -312,12 +343,26 @@ def _drop_events(evs: list | None) -> list:
     if not evs or not (items or gold):
         return evs or []
     def noise(e) -> bool:
-        if not isinstance(e, dict) or e.get("kind") != "item_added":
+        if not isinstance(e, dict):
+            return False
+        if e.get("kind") == "gold_changed":
+            return gold
+        if e.get("kind") != "item_added":
             return False
         it = (e.get("data") or {}).get("item") or {}
         u = it.get("uuid") if isinstance(it, dict) else it
-        return (isinstance(u, str) and H._bare(u) in items) or (gold and isinstance(it, dict) and it.get("name") == "Gold")
+        return isinstance(u, str) and H._bare(u) in items
     return [e for e in evs if not noise(e)]
+
+
+_FIGHT_KINDS = {"combat_started", "round_started", "turn_started", "turn_ended", "combat_ended"}
+
+
+def _event_limit(evs: list) -> int:
+    """The EVENTS cap for one drained batch: the whole batch (up to render.EVENT_CEILING rows) while a fight is open
+    (the fight tracker's, fed after this render) or the batch itself has fight events; else render.EVENT_LIMIT."""
+    fight = reporting._fights().cur is not None or any(e.get("kind") in _FIGHT_KINDS for e in evs)
+    return render.EVENT_CEILING if fight else render.EVENT_LIMIT
 
 
 def _events_text(body: str = "", job: str | None = None, max_wait: float | None = None) -> str:
@@ -340,7 +385,7 @@ def _events_text(body: str = "", job: str | None = None, max_wait: float | None 
             reporting._note_dialogue_speaker(evs)
             reporting.OFFLIMITS.feed(evs)
             parts.append(render.render_events(evs, H, body=body, job=job, flap=render.FLAP, party=turn_plan._party_cached(),
-                                              echo=render.ECHO))
+                                              echo=render.ECHO, limit=_event_limit(evs)))
     fight = reporting._fight_feed(seen)
     if fight:
         parts.append(fight)

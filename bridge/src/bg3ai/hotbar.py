@@ -558,7 +558,7 @@ def arm(game: Game, inp: InputClient, caster: str, spell: str, res: HotbarCastRe
 
     scr = clicker._screen(game).get("screen")
     if scr in clicker.COVERING_SCREENS:
-        return fail("slot", "covered", f"the {scr} screen covers the hotbar (press_key ESCAPE first)")
+        return fail("slot", "covered", f"the {scr} screen covers the hotbar (press_key ESCAPE closes it)")
     try:
         want = _slot(game, spell, caster)
     except GameError as e:

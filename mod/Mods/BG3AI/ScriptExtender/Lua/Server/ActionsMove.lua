@@ -32,7 +32,7 @@ local function begin_walk(job, opts)
         target = opts.target, pos = opts.pos, ev = ev_name(job, "mv"),
         last_pos = G.pos(job.char), y0 = (G.pos(job.char) or {})[2], still_ms = 0, travelled = 0,
         tolerance = opts.tolerance or 1.5, reach = opts.reach, melee = opts.melee, on_arrive = opts.on_arrive,
-        stop_at = opts.stop_at,
+        stop_at = opts.stop_at, picked = opts.picked,
         move_id = opts.move_id or job.id, combat = G.in_combat(job.char),
     }
     local p = opts.pos
@@ -92,8 +92,17 @@ local function walk_arrived(job)
     end
     if not walk_close_enough(job, d, de) then
         res.reached = false
-        RPC.finish_job(job, "failed", res, w.stop_at and de and string.format("the walk ended %.1f m from the target,"
-            .. " beyond the %.1f m range", de, w.melee) or "could not get closer to the destination")
+        local why = "could not get closer to the destination"
+        if w.stop_at and de then
+            why = string.format("the walk ended %.1f m from the target, beyond the %.1f m range", de, w.melee)
+        elseif w.picked and d then
+            -- walk_toward's own point (the farthest walkable one it found), not one the agent named
+            -- res.reason is the pathfinder's own (set above: d > 2.0, no target); the pick is the engine path's
+            -- end, so a short stop there is often a creature, door or jump, not the end of the ground (REVIEW-13 #2)
+            why = string.format("stopped %.1f m short of the spot walk_toward picked (the farthest walkable point %s):"
+                .. " %s; walked %.1f m", d, w.picked, tostring(res.reason), w.travelled)
+        end
+        RPC.finish_job(job, "failed", res, why)
     else
         RPC.push("moved_done", { uuid = job.char, move_id = job.id })
         RPC.finish_job(job, "done", res)
@@ -143,8 +152,7 @@ local WALK_OSI = {
         if c.dir and c.dir ~= dir then
             RPC.push("loop_stopped", { uuid = job.char, item = item, reversal = true, job = job.id })
             interrupt(job, "stuck: the walk took ladder " .. item .. " " .. c.dir .. " and then back " .. dir
-                .. " (the game's route loops through it); climb it yourself first (interact " .. item
-                .. "), then send this again from that floor, or route")
+                .. " (the game's route loops through it); interact on " .. item .. " climbs it")
             return
         end
         c.dir, c.y = dir, here[2]
@@ -198,6 +206,14 @@ A.TELEPORT_MIN_DT_MS = 50
 A.TELEPORT_DEST_M = 3.0
 A.TELEPORT_GAME_M = 8.0
 A.TELEPORT_SETTLE_MS = 1500
+-- A fall of our own walk is no teleport (act2-fights-analysis fix 3, launch-v1 logs): the engine's no-path snap
+-- moves the walker across (9.7-18.4 m at its own height, landing 0.8-1.5 m from the leg's end: opus act3_gold_max
+-- r2, haiku goblin_camp r2, deepseek act3_gold_max r5), while haiku grove_gate r1 went 4.5 m, 3.7 m of it down,
+-- landing 4.3 m short of its point, and opus crash_site_grove 5 m straight down: the walk stepping off a ledge,
+-- failed as "engine teleported the character". A step at least FALL_MIN_M down, no longer across than down, within
+-- TELEPORT_GAME_M (a longer drop is a story move: S063) and not onto the walk's end is the walk falling: event
+-- walk_fell, the walk goes on, its horizontal part counted as travelled.
+A.FALL_MIN_M = 1.5
 -- A fast travel's arrival (the bridge calls act.trip_arrived when ui.fast_travel is done). S073 22:33:39: 9 s after
 -- the arrival at Lower City Central Wall, 19 m into a walk from the waypoint, Claude jumped the last 29.8 m (7.8 m
 -- down) onto the walk's own end (dest_m 0) with no story signal, while the save menus were up. A jump in the first
@@ -336,6 +352,14 @@ local function teleport_check(job, track, armed)
         and (not armed or armed(prev)) and not on_route(job, track, prev, here) then
         -- where this walk was going (none once it has ended: Use/Pickup's own walk from the approach point)
         local dest = job.walk and not job.walk.done and job.walk.pos
+        local drop = prev[2] - here[2]
+        local across = math.sqrt((here[1] - prev[1]) ^ 2 + (here[3] - prev[3]) ^ 2)
+        if drop >= A.FALL_MIN_M and across <= drop and step <= A.TELEPORT_GAME_M
+            and not (dest and U.dist(here, dest) <= A.TELEPORT_DEST_M) then
+            RPC.push("walk_fell", { uuid = job.char, from = pos_view(prev), to = pos_view(here), m = U.round(drop, 1) })
+            track.last_pos, track.last_t = here, t
+            return here, across, dt
+        end
         if job.walk then job.walk.done = true end
         pcall(G.osi, "PurgeOsirisQueue", job.char)
         local dest_m = dest and U.dist(here, dest) or nil
@@ -756,12 +780,15 @@ reg("move_to", function(args)
         -- Entity targets: walk to a verified reachable point next to them.
         G.target_visible(target)
         G.within(char, target, G.MAX_MOVE_DIST, "destination")
-        -- within (melee, combat_turn): stop inside the guard's own edge-to-edge reach, not at 2.2 m
-        -- centres (S023-S025: 22 melee attacks refused "out of range (2.5 m, range 1.5 m)" after a move
-        -- said done; a Spiritual Weapon is small, so 2.2-2.7 m was outside its reach).
-        melee = tonumber(args.within) and G.melee_reach(char, target, tonumber(args.within)) or nil
-        reach = melee and math.max(1.2, math.min(A.MOVE_REACH, melee - A.MELEE_STOP_SLACK)) or A.MOVE_REACH
-        local range = not melee and tonumber(args.range)
+        -- Stop inside the edge-to-edge melee reach (G.melee_reach, the guard's own measure): of `within` when given
+        -- (combat_turn), else of the mover's own weapon. S023-S025: 22 melee attacks refused "out of range" after a
+        -- move said done; window 8: move_to said already_there at 2.1 m (centres, the old 2.2 m stop) while the
+        -- engine refuses a 1.5 m weapon from there.
+        local range = not tonumber(args.within) and tonumber(args.range)
+        if not range then
+            melee = G.melee_reach(char, target, tonumber(args.within) or G.weapon_melee_range(char))
+            reach = math.max(1.2, math.min(A.MOVE_REACH, melee - A.MELEE_STOP_SLACK))
+        end
         if range then -- in_reach is tested against the range itself (centres, walk_arrived)
             -- live N10 step 2: the game ended a touch walk (reach 2.5 m, centres) 1.8 m short of its point, 3.3 m off:
             -- aim RANGE_STOP_SLACK inside the reach whatever its size (never nearer than 1 m), as spell_reach measures
@@ -770,6 +797,12 @@ reg("move_to", function(args)
         end
         local plan = range and A.range_point(char, target, reach, range, (not args.trespass) and args.avoid or nil)
             or G.approach_point(char, target, reach)
+        if melee and not range and not plan.here and G.b(G.q("IsCharacter", target)) then
+            -- already in reach (the slack is for a walk's stop, not for standing still)
+            local here, tpos = G.pos(char), G.pos(target)
+            local d = here and tpos and U.dist(here, tpos)
+            if d and d <= melee then plan = { here = true, dist = d } end
+        end
         if plan.here then
             return start("move_to", char, {
                 timeout_ms = 1000,
@@ -801,8 +834,7 @@ reg("move_to", function(args)
         for _, a in ipairs(areas) do
             if in_area(dest, a) then
                 G.refuse("the destination is inside " .. a.area .. " you were warned about (a second offence"
-                    .. " there can start a fight): talk to its guard first (a pass, a check), or trespass=true to"
-                    .. " walk in anyway")
+                    .. " there can start a fight; trespass=true walks in anyway)")
             end
             plates[#plates + 1] = a
         end
@@ -819,8 +851,7 @@ reg("move_to", function(args)
             areas = through
             if via == nil and #through > 0 then
                 G.refuse("the way there crosses " .. area_names(through) .. " you were warned about and no way"
-                    .. " round it was found: go another way, talk to its guard first, or trespass=true to walk"
-                    .. " through anyway")
+                    .. " round it was found (trespass=true walks through anyway)")
             end
         end
     end
@@ -841,6 +872,7 @@ reg("move_to", function(args)
     end
     local final = { pos = pos, target = not plate and target or nil, speed = speed, tolerance = plate and 0.5 or 1.5,
         reach = reach, melee = melee, stop_at = stop_at,
+        picked = not target and type(args.picked) == "string" and args.picked or nil, -- walk_toward's own point
         on_arrive = plate and on_plate or nil }
 
     return start("move_to", char, {

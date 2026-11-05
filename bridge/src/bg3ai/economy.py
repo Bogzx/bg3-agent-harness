@@ -31,7 +31,10 @@ _KEEP_NAME = re.compile(r"key|thieves' tools|trap disarm|torch|shovel|rope|camp 
 _CONSUMABLE_NAME = re.compile(r"potion|elixir|scroll|arrow|bolt|grenade|alchemist's fire|acid vial|bomb|oil of|"
                               r"poison|salve|grease|smokepowder|runepowder|water", re.I)
 _CONSUMABLE_CAT = re.compile(r"^(Potion|MagicScroll|Arrow|Throwable|Poison|Ingredient)")
-_JUNK_CAT = re.compile(r"^(Junk|Luxury|RottenFood|Dye|PreciousGem)")
+_JUNK_CAT = re.compile(r"^(Junk|Luxury|RottenFood|PreciousGem)")
+# Dyes (ObjectCategory Dye/DyeRare/..., the game lets you use them on armour): not junk. w13 L2: sell=junk sold back a
+# Dye Remover x10 bought a moment earlier (20 g -> 10 g) because "Dye" was in _JUNK_CAT.
+_DYE_CAT = re.compile(r"^Dye")
 _SLOT_ALIASES = {"Ring2": "Ring"}
 _ARMOR_PROF = {"Light": "LightArmor", "Leather": "LightArmor", "Padded": "LightArmor", "StuddedLeather": "LightArmor",
                "Hide": "MediumArmor", "ChainShirt": "MediumArmor", "ScaleMail": "MediumArmor",
@@ -101,26 +104,59 @@ def _equipable(it: dict) -> bool:
 
 def is_junk(it: dict, keep: set[str] | None = None, wanted: set[str] | None = None) -> bool:
     """Sell/stash candidates: what a skilled player sells at every trader. Never: equipped, story, bags,
-    food, consumables (potions, scrolls, arrows, throwables), keys/tools/light, kept items (keep), gear
+    food, consumables (potions, scrolls, arrows, throwables), keys/tools/light, dyes, kept items (keep), gear
     someone should wear (wanted), magic gear (rarity >= uncommon: the agent decides)."""
-    if (it.get("equipped_slot") or it.get("story") or it.get("container") or it.get("unique") or it.get("gold")
-            or is_food(it) or is_consumable(it)):
-        return False
-    if it.get("uuid") in (keep or set()) or it.get("uuid") in (wanted or set()):
-        return False
+    return keep_kind(it, keep, wanted) is None
+
+
+def keep_kind(it: dict, keep: set[str] | None = None, wanted: set[str] | None = None) -> str | None:
+    """Why the junk rule (is_junk) keeps an item, as a kind for a count ("equipped", "consumables", ...); None:
+    it is junk. The sell=junk result counts what it kept back by these kinds."""
+    if it.get("gold"):
+        return "gold"
+    if it.get("equipped_slot"):
+        return "equipped"
+    if it.get("story"):
+        return "story"
+    if it.get("container"):
+        return "bags"
+    if it.get("unique"):
+        return "unique"
+    if is_food(it):
+        return "food"
+    if is_consumable(it):
+        return "consumables"
+    if it.get("uuid") in (keep or set()):
+        return "kept (keep=)"
+    if it.get("uuid") in (wanted or set()):
+        return "gear to wear"
     if it.get("tab") == "BooksAndKeys" or _KEEP_NAME.search(it.get("name") or ""):
-        return False
-    if _equipable(it):
-        return _rar(it) == 0 and (it.get("value") or 0) > 0
-    if _JUNK_CAT.match(it.get("cat") or ""):
-        return True
-    return it.get("tab") == "Misc" and _rar(it) == 0 and (it.get("value") or 0) > 0
+        return "books, keys and tools"
+    if _DYE_CAT.match(it.get("cat") or ""):
+        return "dyes"
+    if _rar(it) > 0 and (_equipable(it) or not _JUNK_CAT.match(it.get("cat") or "")):
+        return "magic or rare"
+    if _equipable(it) or _JUNK_CAT.match(it.get("cat") or ""):
+        return None if not _equipable(it) or (it.get("value") or 0) > 0 else "no value"
+    if it.get("tab") == "Misc" and (it.get("value") or 0) > 0:
+        return None
+    return "no value" if (it.get("value") or 0) <= 0 else "other"
 
 
 def junk(inv: dict, keep: set[str] | None = None) -> list[dict]:
     items = [it for it in (inv or {}).get("items") or [] if isinstance(it, dict)]
     wanted = {u["uuid"] for u in upgrades(inv)}
     return [it for it in items if is_junk(it, keep, wanted)]
+
+
+def junk_in_bags(items: list[dict]) -> str:
+    """'; 22 of them are in bags (Alchemy Pouch, Pouch), which the trade screen shows as the bag only' for junk read
+    inside bags (an expanded inventory's `in`), '' when none (w11 L1: preview 23 junk, sell=junk sold 1)."""
+    inside = [it for it in items if it.get("in")]
+    if not inside:
+        return ""
+    bags = ", ".join(sorted({str(it["in"]) for it in inside}))
+    return f"; {len(inside)} of them are in bags ({bags}), which the trade screen shows as the bag only"
 
 
 # --- gear ---------------------------------------------------------------------------------------------
@@ -425,7 +461,7 @@ def alerts(status: dict | None, inv: dict | None, name: Callable[[str], str] = l
         if dead_allies:
             out.append("ally DIED " + ", ".join(f"{name(a['uuid'])}" if a.get("uuid") else str(a.get("name"))
                                                 for a in dead_allies)
-                       + f" (revive: {have} on the body before leaving; Withers can't raise an ally; or reload)")
+                       + f" (revive: {have} on the body; Withers can't raise an ally)")
     if not st.get("in_combat"):
         low = []
         for m in st.get("party") or []:
@@ -440,17 +476,17 @@ def alerts(status: dict | None, inv: dict | None, name: Callable[[str], str] = l
                 fix = (f"no short rests left: long rest needs {SUPPLIES_FULL_REST} supplies, have "
                        f"{sup if isinstance(sup, (int, float)) else '?'}")
             else:
-                fix = "short_rest/heal before a fight or puzzle"
-            out.append("low HP " + ", ".join(low) + f" ({fix})")
+                fix = ""
+            out.append("low HP " + ", ".join(low) + (f" ({fix})" if fix else ""))
     if partial_rest:
         out.append(partial_rest)
     if isinstance(inv, dict) and "items" in inv:
         sup = total_supplies(inv)
         if sup is not None and sup < SUPPLIES_FULL_REST:
-            out.append(f"camp supplies {supplies_text(inv)} (pick up/buy food before a long rest)")
+            out.append(f"camp supplies {supplies_text(inv)}")
         gold = inv.get("gold")
         if isinstance(gold, (int, float)) and gold < GOLD_RESERVE:
-            out.append(f"gold {gold} < {GOLD_RESERVE} reserve (sell junk: trade sell=junk)")
+            out.append(f"gold {gold} < {GOLD_RESERVE} reserve")
         for u, m in (inv.get("members") or {}).items():
             if (m or {}).get("enc"):
                 kg = ""
@@ -459,12 +495,11 @@ def alerts(status: dict | None, inv: dict | None, name: Callable[[str], str] = l
                     if m["enc"] < 2 and isinstance(m.get("heavy"), (int, float)):
                         kg += f"; Heavily at {m['heavy']}kg"
                     kg += ")"
-                out.append(f"{name(u)} {'Heavily ' if m['enc'] >= 2 else ''}Encumbered{kg} "
-                           "(sell or stash junk: manage_inventory op=camp item=junk)")
+                out.append(f"{name(u)} {'Heavily ' if m['enc'] >= 2 else ''}Encumbered{kg}")
         lp = lantern_plan(inv)
         if lp:
             out.append(f"{name(lp['frm'])} fights with the {lp['name']} in the main hand: {name(lp['to'])} (caster) "
-                       "can hold the light for everyone (equip_best moves it and arms "
+                       "can hold it: its aura covers the party from any holder (equip_best moves it and arms "
                        f"{name(lp['frm'])})")
         ups = upgrades(inv)
         if ups:
@@ -521,8 +556,8 @@ def gear_report(inv: dict, name: Callable[[str], str] = lambda u: u) -> list[str
     lines = []
     lp = lantern_plan(inv)
     if lp:
-        lines.append(f"- {name(lp['to'])}: hold the {lp['name']} (its aura covers the party from any holder); "
-                     f"{name(lp['frm'])} fights with a weapon (equip_best)")
+        lines.append(f"- {lp['name']}: its aura covers the party from any holder; equip_best gives it to "
+                     f"{name(lp['to'])} and a weapon to {name(lp['frm'])}")
     for o in upgrades(inv):
         held = "" if o["holder"] == o["who"] else f" (in {name(o['holder'])}'s bag)"
         lines.append(f"- {name(o['who'])}: equip {o['name']}{held} in {o['slot']}: {o['why']}")
@@ -530,7 +565,7 @@ def gear_report(inv: dict, name: Callable[[str], str] = lambda u: u) -> list[str
     if j:
         val = sum((it.get("value") or 0) * _count(it) for it in j)
         kg = sum((it.get("weight") or 0) * _count(it) for it in j)
-        lines.append(f"- junk to sell: {len(j)} items, ~{val} g, {kg:.1f} kg (trade sell=junk at any trader)")
+        lines.append(f"- junk: {len(j)} items, ~{val} g, {kg:.1f} kg (trade sell=junk sells it to a trader with gold)")
     if supplies_text(inv):
         lines.append(f"- camp supplies: {supplies_text(inv)}")
     return lines
@@ -540,8 +575,8 @@ def gear_report(inv: dict, name: Callable[[str], str] = lambda u: u) -> list[str
 # Trade screen as text. S023-S026: every trade call (open, offer, request, confirm) returned one 4-6.6 KB line
 # (60 wares + 60 own items, unsorted, as compact() renders dicts); the agent scanned it for food by name. Now:
 # wares grouped (food with its supply value, consumables, gear by rarity, other), sorted, capped per group, with
-# totals; own items only when listing (top by price + the junk total, sell="junk" sells them); offer/confirm
-# calls show the table and the balance only.
+# totals; own items only when listing (top by price + the junk total, sell="junk" sells them); offer/request
+# calls show the table and the balance only, a confirmed deal its items (deal_lines).
 # ---------------------------------------------------------------------------
 
 TRADE_GROUP_MAX = 10
@@ -598,9 +633,11 @@ def _overpay(n: int, trader_gold: int | None) -> str:
             "(confirm refuses; donate=true gives it)")
 
 
-def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: bool = False) -> str:
+def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: bool = False,
+               before: dict | None = None, donate: bool = False) -> str:
     """The trade screen for the agent. h(item) -> its handle (e12). listing: show wares and your items (opening or
-    trade() with no args); else only the table/balance. full: no caps."""
+    trade() with no args); else only the table/balance. full: no caps. before: the screen read before a confirm
+    (deal_lines prices the deal from it). donate: the call had donate=true (deal_lines says GAVE/GOT)."""
     gmax = 10 ** 6 if full else TRADE_GROUP_MAX
     lines = []
     head = []
@@ -610,7 +647,10 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
         head.append(f"trader gold {res['trader_gold']}")
     if res.get("price_modifier_pct") is not None:
         head.append(f"prices {res['price_modifier_pct']}% of value")
-    lines.append("TRADE " + " · ".join(head) + " (price = the whole stack)")
+    if head or "wares" in res or "offer" in res:  # a deal whose screen closed as it finished has no screen read
+        lines.append("TRADE " + " · ".join(head) + " (price = the whole stack)")
+    if res.get("note"):  # 'trade screen closed' (Services.lua: the window closed during the finish)
+        lines.append(f"({res['note']})")
     off = res.get("offer") or {}
     you, them = off.get("you") or {}, off.get("trader") or {}
     bal = res.get("balance") or {}
@@ -621,7 +661,9 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
                  f"{h(it)} {it.get('name') or '?'}{' x' + str(_count(it)) if _count(it) > 1 else ''} {_price(it)}g"
                  for it in s.get("items") or [] if isinstance(it, dict)]
         return ", ".join(items) or "nothing"
-    if you.get("items") or them.get("items") or you.get("gold") or them.get("gold") or not listing:
+    # after a confirmed barter the table is empty and the window closes: the deal is said instead (deal_lines)
+    done = bool(res.get("confirmed"))
+    if (you.get("items") or them.get("items") or you.get("gold") or them.get("gold") or not listing) and not done:
         give, get = bal.get("you_give") or 0, bal.get("you_get") or 0
         lines.append(f"TABLE you give: {side(you)} (={give}g) | you get: {side(them)} (={get}g) | "
                      + (f"short by {get - give}g (add items/gold or barter)" if get > give else
@@ -632,8 +674,12 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
             lines.append("HAND-OVER: they have no wares and no gold (a quest give, not a shop): "
                          "trade(offer=<id>, confirm=true) gives the item")
         else:
-            lines.append("TRADER HAS NO GOLD: selling would give your items away; swap for wares of equal value "
-                         "(offer=<ids>, request=<ids>) or sell elsewhere")
+            lines.append("TRADER HAS NO GOLD: selling would give your items away")
+    # launch-v1 haiku act3_gold_max r2 seq 16-21: an offer re-sent with confirm named items the first call had put on
+    # the table; they count as moved, and the line says which
+    already = [f"{h(it)} {it.get('name') or '?'}" for it in res.get("already") or [] if isinstance(it, dict)]
+    if already:
+        lines.append("ALREADY ON THE TABLE: " + ", ".join(already))
     probs = [str(p) for p in res.get("problems") or [] if p]
     if probs:  # S028 15:48: "some items couldn't be moved" said nothing about which or why (an equipped hammer)
         lines.append("NOT MOVED: " + "; ".join(probs))
@@ -641,10 +687,10 @@ def trade_text(res: dict, h: Callable[[dict], str], listing: bool = True, full: 
         lines.append(f"TRADER says: {res['feedback']}")
     if res.get("declined"):
         lines.append("DECLINED: the trader refuses this deal")
-    if res.get("can_confirm") is False:
+    if res.get("can_confirm") is False and not done:
         lines.append("(the Trade button is disabled)")
     if not listing:
-        lines.append("(wares/your items unchanged: trade() lists them)")
+        lines += deal_lines(res, before, h, donate) if done else ["(wares/your items unchanged: trade() lists them)"]
         return "\n".join(lines)
 
     wares = [w for w in res.get("wares") or [] if isinstance(w, dict)]
@@ -721,8 +767,62 @@ def equipped_offers(inv: dict | None, uuids: list[str], name_of: Callable[[str],
         if isinstance(it, dict) and it.get("uuid") in uuids and it.get("equipped_slot"):
             who = name_of(it["owner"]) if it.get("owner") else "someone"
             out.append(f"{it.get('name') or '?'} is equipped by {who} ({it['equipped_slot']}): the trade screen lists "
-                       "only unequipped items; equip something else in that slot first, or offer another item")
+                       "only unequipped items")
     return out
+
+
+def deal_lines(res: dict, before: dict | None, h: Callable[[dict], str], donate: bool = False) -> list[str]:
+    """A confirmed barter's items, each at the price the screen showed before it: ['SOLD e159 Backpack 1 g',
+    'BOUGHT e40 Potion of Healing x3 45 g']. w12 L2: trade(offer=e159, confirm=true) showed the emptied table and
+    'gold_changed delta=1' only; the Backpack had sold for 1 g (the other one was worth 52). The items are the ones
+    on the table before the call (before.offer) and the ones this call moved (res.moved); the gold the Balance adds
+    is in EVENTS (gold_changed). before=None: no lines (sell=junk says SOLD itself). REVIEW-17 F3: the mod prices
+    the deal itself: res.deal is the table FinishBarter took (before.offer's shape, every item at its shown price)
+    and each moved record carries the price/count it showed when it moved, so before is {} unless the screen was
+    read for a hand-over; with neither, the item is named without a price. donate=True: GAVE/GOT, not SOLD/BOUGHT:
+    a donate=true deal can be an overpay the trader paid no gold for (REVIEW-17 F5: 'SOLD e2 Backpack 52 g' read as
+    52 g received)."""
+    if before is None:
+        return []
+    deal = res.get("deal")
+    off = deal if isinstance(deal, dict) else (before.get("offer") or {})
+    shown: dict[str, dict] = {}  # uuid -> the screen's record (price = the whole stack)
+    for it in [*(before.get("your_items") or []), *(before.get("wares") or []),
+               *((off.get("you") or {}).get("items") or []), *((off.get("trader") or {}).get("items") or [])]:
+        if isinstance(it, dict) and it.get("uuid"):
+            shown.setdefault(it["uuid"], it)
+    went: dict[str, list[dict]] = {"you": [], "trader": []}
+    seen: set = set()  # real uuids only: table items with no uuid (REVIEW-17 F4) are each their own item
+
+    def new(it: dict) -> bool:
+        u = it.get("uuid")
+        if u and u in seen:
+            return False
+        if u:
+            seen.add(u)
+        return True
+    for side in ("you", "trader"):
+        for it in (off.get(side) or {}).get("items") or []:
+            if isinstance(it, dict) and not it.get("gold") and new(it):
+                went[side].append(dict(it))
+    for m in res.get("moved") or []:
+        if isinstance(m, dict) and m.get("side") in went and new(m):
+            rec = shown.get(m.get("uuid")) or m  # the mod's record: price/count as the item showed when it moved
+            it = {"uuid": m.get("uuid"), "name": m.get("name") or rec.get("name"), "count": _count(rec),
+                  "price": rec.get("price")}
+            if isinstance(m.get("count"), int) and 0 < m["count"] < _count(rec):  # part of a stack (count=N)
+                it["count"] = m["count"]
+                if isinstance(it["price"], (int, float)):
+                    it["price"] = round(it["price"] * m["count"] / _count(rec))
+            went[m["side"]].append(it)
+
+    def row(it: dict) -> str:
+        p = it.get("price")
+        return (f"{h(it)} {it.get('name') or '?'}{' x' + str(_count(it)) if _count(it) > 1 else ''} "
+                f"{p if isinstance(p, (int, float)) else '?'} g")
+    return [f"{word} " + " | ".join(row(it) for it in went[side])
+            for word, side in ((("GAVE", "you"), ("GOT", "trader")) if donate else (("SOLD", "you"), ("BOUGHT", "trader")))
+            if went[side]]
 
 
 def trade_answer(options: list) -> dict | None:
@@ -770,7 +870,7 @@ def pockets_text(res: dict, h: Callable[[dict], str]) -> str:
             + (f" | +{more} more" if more else "")
             + (" (odds ?: the window had not shown that item's odds when it was read)"
                if any(odds_unread(it) for it in items) else "")
-            + ' → pickpocket(npc, take="<name or id>"); pickpocket(npc, leave=true) leaves with nothing. The odds assume'
+            + ' (pickpocket(npc, take="<name or id>") tries one (a Sleight of Hand roll); leave=true leaves with nothing). The odds assume'
             + " nobody sees the thief: in the owner's sight a steal fails whatever they say")
 
 
@@ -780,8 +880,8 @@ def steal_text(res: dict, h: Callable[[dict], str]) -> str:
     if res.get("pending"):
         return f"stole? {what}: the roll had not finished after 5 s (get_inventory shows if it came)"
     if res.get("closed"):
-        return (f"CAUGHT? the pickpocket window closed right after Steal on {what}: a failed steal ends it (look for a "
-                f"dialogue or a crime; get_inventory shows whether it came)")
+        return (f"CAUGHT? the pickpocket window closed right after Steal on {what}: a failed steal ends it (a "
+                f"dialogue or a crime can follow; get_inventory shows whether it came)")
     roll = f"rolled {res.get('rolled')} vs DC {res.get('dc')}" if res.get("rolled") is not None else ""
     odds = f"{res.get('chance')}% chance" if res.get("chance") is not None else ""
     tail = ", ".join(x for x in (odds, roll) if x)

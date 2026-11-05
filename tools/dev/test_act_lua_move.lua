@@ -146,10 +146,11 @@ test("move_to entity: walks to a verified point, never CharacterMoveTo", functio
     eq(j.status, "running", "status")
     eq(#called("CharacterMoveTo"), 0, "CharacterMoveTo calls")
     local mv = called("CharacterMoveToPosition")
-    eq(#mv, 1, "move calls"); near(mv[1][3], 8.5, "dest x")
-    arrive(j, { 8.5, 0, 0 })
+    -- the mover's own melee reach (1.5 + 0.25 + 0.25 Move radii) less the stop slack -> the 1.0 m ring
+    eq(#mv, 1, "move calls"); near(mv[1][3], 9.0, "dest x")
+    arrive(j, { 9.0, 0, 0 })
     eq(j.status, "done", "status " .. tostring(j.error))
-    near(j.result.dist, 1.5, "dist to target"); eq(j.result.target, NPC, "target")
+    near(j.result.dist, 1.0, "dist to target"); eq(j.result.target, NPC, "target")
 end)
 
 test("move_to entity: unreachable -> failed job, no movement", function()
@@ -168,13 +169,13 @@ end)
 
 test("move_to entity within: stops inside the edge-to-edge melee reach (S025 Spiritual Weapon 2.4 m)", function()
     world[NPC].pos = { 2.0, 0, 0 }
-    world[NPC].comps.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.25 } } } }
-    -- 2.0 m is 'already there' for a plain move (2.2 m centres) but outside 1.5 + 0.5 + 0.25 - 0.4 = 1.85 m.
+    world[NPC].comps.Bound = { Bound = { AIBounds = { Stand = { Radius = 0.25 }, Move = { Radius = 0.15 } } } }
+    -- 2.0 m is outside 1.5 + 0.25 + 0.15 = 1.9 m (Move radii); the walk stops inside it (the 1.0 m ring)
     local j = job(op("move_to", { char = P1, target = NPC, within = 1.5 }))
     eq(j.status, "running", "status " .. tostring(j.error))
     local mv = called("CharacterMoveToPosition")
-    eq(#mv, 1, "move calls"); near(mv[1][3], 0.5, "dest x (ring 1.5 m on the actor's side)")
-    arrive(j, { 0.5, 0, 0 })
+    eq(#mv, 1, "move calls"); near(mv[1][3], 1.0, "dest x (ring 1.0 m on the actor's side)")
+    arrive(j, { 1.0, 0, 0 })
     eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.in_reach, true, "in_reach")
     world[NPC].comps.Bound = nil
 end)
@@ -207,6 +208,58 @@ test("move_to: teleport is detected and purged", function()
     eq(j.result.teleported, true, "teleported"); eq(j.result.by_game, nil, "ours")
     local ev = last_event("teleport_blocked")
     assert(ev and ev.data.m == 30, "teleport_blocked m")
+end)
+
+-- act2-fights-analysis fix 3 (launch-v1 haiku grove_gate r1, round 4): Shadowheart's move to (212,30,415) went 4.5 m,
+-- 3.7 m of it down, landing 4.3 m from the point, and failed "engine teleported the character": the walk fell.
+test("a fall of the walk (3.7 m down, 2.7 m across, short of its point) is no teleport: the walk goes on", function()
+    local seq = RPC.eventSeq
+    world[P1].pos = { 211.0, 29.5, 412.8 }
+    local j = job(op("move_to", { char = P1, pos = { 212, 30, 415 } }))
+    world[P1].pos = { 211.4, 29.5, 413.3 }
+    tick()
+    world[P1].pos = { 212.3, 25.8, 415.8 }
+    tick()
+    settle()
+    eq(j.status, "running", "status " .. tostring(j.error)); eq(last_event("teleport_blocked", seq), nil, "not blocked")
+    local ev = last_event("walk_fell", seq)
+    eq(ev and ev.data.m, 3.7, "walk_fell m")
+    world[P1].pos = { 0, 0, 0 }
+end)
+
+test("opus crash_site_grove: 5 m straight down mid-walk is the walk falling; a fall onto its point still settles",
+    function()
+    local seq = RPC.eventSeq
+    world[P1].pos = { 290.3, 23.9, 349.7 }
+    local j = job(op("move_to", { char = P1, pos = { 294, 19, 349.7 } }))
+    tick()
+    world[P1].pos = { 290.3, 18.9, 349.7 }
+    tick()
+    settle()
+    eq(j.status, "running", "status " .. tostring(j.error)); eq(last_event("teleport_blocked", seq), nil, "not blocked")
+    seq = RPC.eventSeq
+    world[P1].pos = { 0, 5, 0 }
+    local j2 = job(op("move_to", { char = P1, pos = { 0.5, 0, 0 } }))
+    tick()
+    world[P1].pos = { 0.5, 0, 0 } -- 5 m down onto the point itself: the engine's snap is judged as before
+    tick()
+    settle()
+    eq(last_event("walk_fell", seq), nil, "no fall")
+    eq(j2.status, "failed", "onto its point: " .. tostring(j2.error))
+    world[P1].pos = { 0, 0, 0 }
+end)
+
+test("haiku goblin_camp r2: the engine's no-path snap (18.4 m across, 1.4 m from the leg's end) is still blocked",
+    function()
+    world[P1].pos = { -101.1, 10, 383.4 }
+    local j = job(op("move_to", { char = P1, pos = { -102.6, 9.9, 403.6 } }))
+    world[P1].pos = { -101.1, 10, 383.9 }
+    tick()
+    world[P1].pos = { -102.2, 9.9, 402.3 }
+    tick()
+    settle()
+    eq(j.status, "failed", "status"); assert(j.error:find("engine teleported"), j.error)
+    world[P1].pos = { 0, 0, 0 }
 end)
 
 test("V9 S066: a jump onto the walk's spot + the walker pulled into a conversation = the game moved it", function()
@@ -739,7 +792,7 @@ test("interact V24: a door opened moments ago that still reads locked: 'it is op
     A.dispatch("Opened", { DOOR })
     osiv[key("IsOpened", DOOR)] = 1
     clock = clock + 2000
-    interact_refused("it is open now (the game unlocked or opened it 2 s ago)")
+    interact_refused("it is open now (the game unlocked or opened it 2 s ago")
     eq(#called("Use"), 0, "Use")
 end)
 

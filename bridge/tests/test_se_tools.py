@@ -116,7 +116,7 @@ class PressEscape(unittest.TestCase):
         self.assertEqual(fake.keys, ["ESCAPE", "RESUME:Resume", "ESCAPE"])
         self.assertIn("STILL OPEN", out)
         self.assertNotIn("closed it again", out)
-        self.assertIn("choose_dialogue", out)
+        self.assertIn("ESCAPE does not leave a conversation; its Leave/exit answer does", out)
 
     def test_escape_on_game_menu_closes_it_once(self):
         fake = self.use(["game_menu", "game"])
@@ -308,6 +308,29 @@ class NightCamp(unittest.TestCase):
         self.assertIn("camp: FAILED: a conversation is open, nothing was pressed; at night in camp, leaving first ends "
                       "the night (the party sleeps: a long rest)", out)
 
+    def test_camp_leave_at_night_with_a_required_talk_left_says_so_without_pressing(self):
+        # launch-v1 haiku act3_gold_max r5 08:46-08:57: camp leave and fast_travel failed "the night at camp hasn't
+        # ended" (the sleep press inside them refused 30 s later) until the agent talked to Withers, out of sight
+        fake = NightFake()
+        base = fake.rpc
+
+        def rpc(op, args=None, context="server"):
+            if op == "camp.rest_flow":
+                return {"steps": [], "story": {"DB_Camp_NightMode": 1}, "required_talks": [{}]}
+            return base(op, args, context)
+
+        fake.rpc = fake.try_rpc = rpc
+        self.use(fake)
+        out = getattr(travel.camp, "fn", travel.camp)("leave")
+        self.assertEqual(fake.jobs, [])
+        self.assertIn("camp: FAILED: nothing was pressed: the night at camp can't end yet: the game still wants a talk "
+                      "with someone not in view first;", out)
+        self.assertNotIn("'!'", out)  # nobody in view: no '!' a player could see
+        self.assertNotRegex(out, r"\d people")  # never a count of people not in view
+        out = getattr(travel.fast_travel, "fn", travel.fast_travel)("Last Light Inn")
+        self.assertEqual(fake.jobs, [])
+        self.assertIn("the night at camp can't end yet", out)
+
     def test_a_busy_ui_is_not_read_as_no_night(self):
         # A UI stuck busy 26 min: the refused travel_block read counted as "not night", so camp leave went on to
         # act.leave_camp and failed "cannot travel right now" 13 times without the reason
@@ -423,7 +446,16 @@ class NightCamp(unittest.TestCase):
         fake.err = "Unavailable"
         out = go()
         self.assertIn("(Unavailable): this area does not let the party go to camp", out)
-        self.assertIn("walk back out the way you came", out)
+        self.assertTrue(out.endswith("(a dungeon or story area)."), out)  # D630: no 'Ways out: walk back ...'
+        self.assertNotIn("short_rest", out)  # REVIEW-13 item 12: no short-rest read here, no claim
+        fake.err = "DangerZone"
+        self.assertNotIn("walk away", go())
+        fake.err = "Unavailable"
+        self.assertEqual(travel._CAMP_BLOCKS, {  # D630: the game's reason only, no 'finish it first, then camp()'
+            "Combat": "a fight is on", "Dialog": "a conversation is open",
+            "Condition": "a party member's condition blocks it (asleep after a rest, downed, ...)",
+            "DangerZone": "this is a danger zone (enemies or a hostile area around)",
+            "InDanger": "the party is in danger (hostiles close or aware of you)"})
         fake.err = None
         self.assertIn("The game gave no reason", go())
 

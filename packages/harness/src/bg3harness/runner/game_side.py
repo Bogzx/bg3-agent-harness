@@ -408,8 +408,10 @@ class GameSide:
         return self.load_save(save or self.choose_save())
 
     def apply_play_settings(self) -> None:
-        """Best effort, never fatal: autoskip, no tutorials, dismiss popups, then the save/load gates."""
+        """Best effort, never fatal: the game's mouse to the harness (game.take_input), autoskip, no tutorials,
+        dismiss popups, then the save/load gates."""
         self.gates = None
+        renv.log(game.take_input())
         for op, args in rpolicy.play_settings(self.environ):
             try:
                 game.rpc(op, args, context="client")

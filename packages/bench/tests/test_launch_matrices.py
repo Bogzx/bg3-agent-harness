@@ -74,13 +74,14 @@ def test_the_deepseek_matrix_plans_18_jobs_cell_by_cell_cheapest_reserve_last(na
 
 
 def test_both_deepseek_matrices_play_one_results_row():
-    # results.build_results groups by (client, model, condition), so the two matrices' runs make one row
+    # results.build_results groups by (client, model, effort, condition), so the two matrices' runs make one row; the
+    # profile declares "high" since bench-v0.10 (pi served high to every launch-v1 run, which declared "medium")
     played = {
         (j["client"], j["model"], j["effort"], j["condition"], j["profile"])
         for name in ("deepseek", "deepseek-rest")
         for j in matrix_cli.load(MATRICES / f"launch-v1-{name}.toml", REPO)["jobs"]
     }
-    assert played == {("pi", "deepseek-flash", "medium", "rules", str(REPO / "profiles" / "deepseek-flash.toml"))}
+    assert played == {("pi", "deepseek-flash", "high", "rules", str(REPO / "profiles" / "deepseek-flash.toml"))}
 
 
 def test_the_pilot_plans_one_run_per_claude_model_on_the_anthropic_api():
@@ -152,3 +153,24 @@ def test_the_one_action_fight_matrices_charge_each_model_to_its_own_budgets_unde
 
 def raw_file(name: str) -> dict:
     return tomllib.loads((MATRICES / f"{name}.toml").read_text())
+
+
+PILOT_V010 = ["act1_goblin_camp_no_fight", "act1_gold_1000", "choice_act2_nightsong", "act3_gold_max"]
+
+
+def test_the_v010_pilot_plays_each_model_once_with_opus_act3_last_so_the_cap_picks_the_option():
+    m = matrix_cli.load(MATRICES / "v010-pilot.toml", REPO)
+    jobs = m["jobs"]
+    assert not m["skipped"] and m["budget"] == REPO / "runtime" / "budget-v010-pilot.json"
+    assert [(j["model"], j["scenario"], j["repeat"]) for j in jobs] == [(o, s, 1) for o in ORDER for s in PILOT_V010]
+    assert set(PILOT_V010) <= SCORED | UNSCORED  # launch scenarios: start saves, launch-v1 costs to price them
+    for j in jobs:
+        names = [Path(f).name for f in j["shared"]]
+        api = ["budget-deepseek.json"] if j["model"] == "deepseek-flash" else ["budget-anthropic.json"]
+        share = [] if j["model"] == "deepseek-flash" else [f"budget-{j['model'].split('-')[1]}.json"]
+        assert sorted(names) == sorted(share + api), j["id"]
+        assert j["max_cost"] >= 0.5 and j["client"] == "pi" and j["condition"] == "rules"
+    # option 1 (cap $17.12) never starts the last job, Opus act3_gold_max; option 2 (cap $35.34) can
+    *rest, last = jobs
+    assert (last["model"], last["scenario"]) == ("claude-opus-5-5", "act3_gold_max")
+    assert max(j["max_cost"] for j in rest) <= 17.12 < last["max_cost"] <= 35.34

@@ -9,7 +9,7 @@ import re
 import time
 from typing import Any, Callable
 
-from .. import boxclick, hotbar, hoverclick, render, turn, twostep
+from .. import boxclick, busywait, hotbar, hoverclick, render, turn, twostep
 from ..game import GameError, JobResult
 from . import core, observe, overview, plumbing, reporting, world_tools
 
@@ -147,7 +147,7 @@ def _hotbar_use(char: str, spell: str, picks: list[str], args: dict, note: str) 
                 or (isinstance(r.result, dict) and r.result.get("began")):
             # review M3: past the cell (targets clicked) the cast may have started: never a second cast
             hb["tail"] = (f"hotbar: the route failed at {res.stage} ({res.detail.get('why') or res.reason}); "
-                          "not cast again by Osiris (the cast may have started: check the NOW line / CHANGES)")
+                          "not cast again by Osiris (the cast may have started: the NOW line / CHANGES show it)")
             return None
         two = {k: v for k, v in args.items() if k not in ("target", "targets")}
         two.update(target=picks[0], **({} if _one_pick(picks) else {"targets": picks[1:2]}))
@@ -218,7 +218,7 @@ def _twostep_use(char: str, spell: str, args: dict, note: str) -> str:
         else:
             tail += (f"hotbar: the two-step route failed at {res.stage} ({d.get('why') or res.reason}); nothing was"
                     " cast" + ("" if landing is not None else
-                               ": a Scroll of Revivify by name, or Withers at camp, also bring a body back"))
+                               "; a Scroll of Revivify also revives; Withers revives at camp"))
         _log_hotbar(spell, res)
     return _with_tail(out, "\n".join(x for x in (tail, hand) if x), note)
 
@@ -233,7 +233,7 @@ def _hand_back(char: str) -> str:
     try:
         how = hotbar.cancel(core.game, inp, char)
     except GameError as e:
-        return f"the spell in hand could not be put back ({e}): press_key ESCAPE"
+        return f"the spell in hand could not be put back ({e}); press_key ESCAPE puts it back"
     return f"the spell was still in hand after the cast: put back ({how})" if how else ""
 
 
@@ -314,7 +314,7 @@ def _opener_combat(tu: str, res: Any, talk_before: bool = False) -> str:
     dmg = res.get("total_damage") if isinstance(res, dict) else None
     if isinstance(dmg, (int, float)) and dmg > 0:
         return (f"combat: NOT started — {queueing._label(tu)} took {render.num(dmg)} damage but no fight began "
-                "(dormant or unaware; it acts only once combat starts): attack again or move on")
+                "(dormant or unaware; it acts only once combat starts)")
     return f"combat: not started (no hit on {queueing._label(tu)} seen)"
 
 
@@ -354,13 +354,21 @@ def _end_turn_by_hud(char: str, r: JobResult) -> JobResult:
     cs = core.game.try_rpc("state.combat") or {}
     if not cs.get("active") or char not in turn.acting(cs):   # it ended after all (a late read): never press twice
         return JobResult("done", {"ended": True}, None, r.events, r.elapsed_ms)
+    busy = None
     try:
         with plumbing._InputHeld():  # M7: no click/select from the MCP thread between this select and the press
             if not uitools._hud_has(char):  # the press ends whoever the HUD has selected (A16)
                 core.game.run_job("act.select", {"char": char}, wait_s=5)
             core.game.rpc("ui.command", {"widget": "*", "command": "EndTurn"}, context="client")
     except GameError as e:
-        return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn failed too: {e}", r.events, r.elapsed_ms)
+        # act2-fights-analysis fix 3 (launch-v1 deepseek windmill r3, balthazar r1, act3_gold_max r1): a busy answer
+        # that came once a UI call ran ("met it after a UI call ran") may come after the press itself: the turn may
+        # have moved on, so it is checked as after any press. Refused at the gate (nothing pressed) or any other
+        # error: failed at once.
+        if not busywait.is_busy(str(e)) or busywait.BEFORE_MARK in str(e):
+            return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn failed too: {e}", r.events,
+                             r.elapsed_ms)
+        busy = str(e)
     pressed = time.monotonic()
     deadline = pressed + END_HUD_WAIT_S
     while time.monotonic() < deadline:
@@ -372,8 +380,11 @@ def _end_turn_by_hud(char: str, r: JobResult) -> JobResult:
                    "End Turn was pressed too)")
             return JobResult("done", {"ended": True, "via": via}, None, r.events, r.elapsed_ms)
         time.sleep(0.2)
+    if busy:
+        return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn failed too: {busy}", r.events,
+                         r.elapsed_ms)
     return JobResult("failed", r.result, f"{r.error}; the HUD's End Turn didn't end it either (a cutscene or line "
-                     "may be holding the turn: wait_for, then end_turn again)", r.events, r.elapsed_ms)
+                     "may be holding the turn)", r.events, r.elapsed_ms)
 
 
 @core.mcp.tool()
@@ -501,7 +512,7 @@ def _wait_for_party_turn(max_s: float) -> str:
             return f"waiting stopped: {ui.get('screen')} on screen\n" + "\n".join(reporting._render_ui(ui))
         if time.monotonic() > deadline:
             reporting._batch["last"] = "interrupted"
-            return "other combatants are still acting (use wait or get_combat_state)"
+            return "other combatants are still acting"
         time.sleep(turn_slots.TURN_POLL_S)
 
 
@@ -526,15 +537,27 @@ def flee(who: str | None = None) -> str:
         # live4 §5: _name_of gives the handle for a hostile never named in a result ("e7 e7"); state.combat names it
         who_near = near[2] or overview._name_of(near[1])
         return (f"REFUSED: enemy too close: {core.H.get(near[1])} {who_near} at {near[0]:.1f} m; "
-                f"fleeing needs every enemy {FLEE_MIN_M:.0f} m away (the Flee button's tooltip). Get farther first.")
-    rpc = lambda op, a: core.game.rpc(op, a, context="client")  # noqa: E731
+                f"fleeing needs every enemy {FLEE_MIN_M:.0f} m away (the Flee button's tooltip).")
+    # The metrics record's flee numbers (not the agent's text), filled in place up to the record's write: client op ->
+    # [calls, ms], and the hover search's tries and outcome
+    ops: dict[str, list] = {}
+    hover: dict = {}
+    core.metrics_extra(flee={"ops": ops, "hover": hover})
+
+    def rpc(op: str, a: dict) -> Any:
+        t = time.monotonic()
+        try:
+            return core.game.rpc(op, a, context="client")
+        finally:
+            n = ops.setdefault(op, [0, 0.0])
+            n[0], n[1] = n[0] + 1, round(n[1] + (time.monotonic() - t) * 1000, 1)
     inp = world_tools._inp()
     if inp is None:
         return "FAILED: no mouse input to answer the flee question (the input helper is not running)"
     with plumbing._InputHeld():
         if not uitools._hud_has(char):   # the HUD's Flee is the selected character's
             core.game.run_job("act.select", {"char": char}, wait_s=5)
-        how = _flee_press(rpc, inp)
+        how = _flee_press(rpc, inp, hover, char)
         if not how.startswith("pressed"):
             return f"FAILED: {how}"
         ans = boxclick.click_box(rpc, inp, "yes")
@@ -569,16 +592,23 @@ def _nearest_hostile(cs: dict, char: str) -> tuple[float, str, str] | None:
     return min(out) if out else None
 
 
-def _flee_press(rpc, inp) -> str:
+def _flee_press(rpc, inp, hover: dict | None = None, char: str | None = None) -> str:
     """Press the HUD's Flee until the game asks "Do you want to flee from combat?": its command when a page has one
-    (as End Turn's), else a hover-checked click on the button (a command can do nothing, as Steal's did)."""
+    (as End Turn's), else a hover-checked click on the button (a command can do nothing, as Steal's did).
+    hover: filled with the hover search's tries and outcome (for the metrics record)."""
     no_ask = "the game didn't ask to flee (an enemy within 27 m, maybe one you can't see)"
-    probe = rpc("ui.flee_probe", {}) or {}
-    ran = False
+    probe = rpc("ui.flee_probe", {"char": char} if char else {}) or {}
+    st = probe.get("flee") if isinstance(probe.get("flee"), dict) else {}
+    if st.get("can") is False:
+        # v010 live window 4 (48 s): the button greyed out (CanFlee false), so no command asked and no cursor spot was
+        # ever over it. What its tooltip shows a player: FleeBlockCause and FleeDistance.Value/Max.
+        return f"the game won't flee now (Flee is greyed out: {_flee_block(st)})"
+    ran, tried = False, set()
     for c in probe.get("commands") or []:
-        if not c.get("can"):
+        if not c.get("can") or c["name"] in tried:   # window 4: one command name on 20 pages, 2 s box wait each
             continue
         ran = True
+        tried.add(c["name"])
         rpc("ui.flee", {"name": c["name"], "widget": c.get("widget")})
         if _box_shows(rpc):
             return f"pressed Flee ({c['name']})"
@@ -589,15 +619,46 @@ def _flee_press(rpc, inp) -> str:
             return "the game won't flee now (Flee is greyed out: an enemy within 27 m, maybe one you can't see)"
         return "no Flee button on the HUD"
 
-    def button() -> dict:
-        b = (rpc("ui.flee_probe", {}) or {}).get("button")
+    def button() -> dict:  # button_only: no commands scan per cursor spot (FleeOps.lua keeps the found element)
+        b = (rpc("ui.flee_probe", {"button_only": True}) or {}).get("button")
         return {"open": bool(b), "over": bool(b and b.get("over")), "enabled": bool(b and b.get("enabled") is not False)}
     click = hoverclick.hover_click(button, inp, "flee", FLEE_SEED)
+    if hover is not None:
+        hover.update(tries=click.get("tries"), outcome="clicked" if click.get("clicked") else
+                     (click.get("error") or "gone"))
     if not click.get("clicked"):
         return f"couldn't click Flee ({click.get('error') or 'the button went away'})"
     if _box_shows(rpc):
         return "pressed Flee (clicked)"
     return no_ask
+
+
+# eoc::FleeCapabilityComponent.Flags (FleeErrorFlags) -> the reason in words ("Enemy too close!" is the tooltip's own
+# text, live2 §2; the others are the flag names said plainly)
+FLEE_FLAGS = {"EnemyTooClose": "Enemy too close!", "Region": "fleeing isn't allowed in this area",
+              "CantMove": "can't move", "Downed": "downed", "Incapacitated": "incapacitated",
+              "Condition": "a condition prevents it", "Summon": "a summon can't flee",
+              "PartyFollower": "a party follower can't flee"}
+
+
+def _flee_block(st: dict) -> str:
+    """The Flee button's tooltip warning: 'Enemy too close! (2.3/27 m)'. The HUD's FleeBlockCause and FleeDistance
+    when set, else the game's FleeCapability flags in words, the distance (0.1 m) after the enemy one (window 5:
+    'Enemy too close! (2.3/27 m); fleeing isn't allowed in this area')."""
+    v, mx = st.get("value"), st.get("max")
+    if not (isinstance(v, (int, float)) and v >= 0 and isinstance(mx, (int, float)) and mx > 0):
+        v, mx = st.get("at"), st.get("need")
+    dist = (f" ({round(v, 1):g}/{round(mx, 1):g} m)"
+            if isinstance(v, (int, float)) and v >= 0 and isinstance(mx, (int, float)) and mx > 0 else "")
+    if st.get("cause"):
+        return str(st["cause"]).strip() + dist
+    flags = [f for f in st.get("flags") or [] if isinstance(f, str)]
+    parts = [FLEE_FLAGS.get(f, f) + (dist if f == "EnemyTooClose" else "") for f in flags]
+    if not parts:
+        return "the game gives no reason" + dist
+    if "EnemyTooClose" not in flags:
+        parts[-1] += dist
+    return "; ".join(parts)
 
 
 def _box_shows(rpc) -> bool:
@@ -620,7 +681,7 @@ def end_combat_report(what_worked: str, what_to_change: str, next_goal: str) -> 
     if path:
         with open(path, "a") as f:
             f.write(f"- {time.strftime('%H:%M')} COMBAT REPORT worked: {what_worked} | change: {what_to_change} | next: {next_goal}\n")
-    return reporting._finish("end_combat_report", {}, f"Logged to {path.name if path else '(no session log)'}. Now loot and heal up.", t0)
+    return reporting._finish("end_combat_report", {}, f"Logged to {path.name if path else '(no session log)'}.", t0)
 
 
 _NOTE_TIME = re.compile(r"^(\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?)\s+")

@@ -116,7 +116,7 @@ function A.landing_ok(char, spell, dest)
     G.point_ok(char, dest)
     local p, rng = G.pos(char), A.landing_range(spell)
     if p and rng and U.dist(p, dest) > rng + 0.5 then
-        G.refuse(string.format("the landing is out of range (%.1f m, range %.1f m): move closer first",
+        G.refuse(string.format("the landing is out of range (%.1f m, range %.1f m)",
             U.dist(p, dest), rng))
     end
     -- Over the Faith-Leap chasm at the walkway's height (Navigation.lua N.helperZone): the game decides, as for move_to
@@ -132,12 +132,12 @@ function A.landing_ok(char, spell, dest)
     end
     if near then return end
     if #hs == 0 then
-        G.refuse(string.format("no ground at all under the landing (%.1f,%.1f,%.1f) (the void): pick a floor you can"
-            .. " see", dest[1], dest[2], dest[3]))
+        G.refuse(string.format("no ground at all under the landing (%.1f,%.1f,%.1f) (the void)",
+            dest[1], dest[2], dest[3]))
     end
     if chasm then
         G.refuse(string.format("the landing (%.1f,%.1f,%.1f) is in a Chasm or within %.1f m of one (the void): a fall"
-            .. " there is fatal; pick a spot on the floor you stand on or can see, away from its edge",
+            .. " there is fatal",
             dest[1], dest[2], dest[3], A.LANDING_CHASM_MARGIN_M))
     end
     -- the floors named below are only ones the party sees or has walked (N.known); others go unnamed
@@ -150,10 +150,11 @@ function A.landing_ok(char, spell, dest)
     end
     G.refuse(string.format("the landing (%.1f,%.1f,%.1f) is in the air: no floor within %.0f m of that height",
         dest[1], dest[2], dest[3], A.LANDING_FLOOR_SLACK_M)
-        .. (best and string.format(" (the nearest floor there is at y=%.1f); give the floor's own y", best)
+        .. "; a landing's y is a floor's own height"
+        .. (best and string.format(" (the nearest floor there is at y=%.1f)", best)
             or void and string.format(" (the only floor there is the void's bottom at y=%.1f, a Chasm: a fall there"
-                .. " is fatal); pick a spot on the floor you stand on or can see", void)
-            or "; give the floor's own y"))
+                .. " is fatal)", void)
+            or ""))
 end
 
 -- A teleport's caster has gone from where the cast was ordered (or died / went down there): it was cast, whatever
@@ -291,6 +292,42 @@ function A.callers_near(p)
     return out
 end
 
+-- The weapon set a spell is cast with (live w10, live.md "Sneak cast probe load"): the hotbar pick of a melee action
+-- draws the melee weapons before the game checks the cast; an Osiris UseSpell checks it with the set as it is. Sneak
+-- Attack (Melee) with Cedar's bow drawn (WeaponSet / Unsheath "Ranged") was refused InvalidTarget, every time, and
+-- cast once a Main Hand Attack had drawn the swords. A spell whose Sheathing names a set (Melee, Ranged) switches the
+-- caster's WeaponSet to it first, as the player's weapon toggle does (free in BG3: no action, no resource), and is
+-- ordered once the set reads back with the other set no longer drawn; a switch that doesn't take fails the cast.
+A.WEAPON_SWITCH_MS = 1500
+local WEAPON_SETS = { Melee = "Melee", Ranged = "Ranged" }
+
+-- The set the spell needs when the caster's WeaponSet is another one, else nil (no set named, no weapon sets).
+function A.weapon_need(char, st)
+    local want = WEAPON_SETS[tostring(st and st.Sheathing or "")]
+    if not want then return nil end
+    local e = G.entity(char)
+    local ok, cur = pcall(function() return tostring(e.WeaponSet.WeaponSet) end)
+    if not ok or cur == want then return nil end
+    return want
+end
+
+-- The set reads want and the other set isn't drawn; and what was read.
+function A.weapon_ready(char, want)
+    local e = G.entity(char)
+    local _, set = pcall(function() return tostring(e.WeaponSet.WeaponSet) end)
+    local _, drawn = pcall(function() return tostring(e.Unsheath.State) end)
+    return set == want and drawn ~= (want == "Melee" and "Ranged" or "Melee"),
+        ("weapon set %s, %s drawn"):format(tostring(set), tostring(drawn))
+end
+
+-- REVIEW-17 F6: a Canceled jump's words, decided A.JUMP_CANCEL_WINDOW_MS after its failure: the cancel for the attack
+-- it drew when a foe's interrupt came within that window of the failure (either order), else the engine's words.
+local function jump_cancel_why(job, why)
+    local jc = job.jump_cancel
+    if jc and A.foe_interrupted(job, jc.t) then return A.JUMP_AOO_CANCELLED end
+    return why
+end
+
 local function resolve_spell(spell, upcast)
     if upcast then
         local variant = spell .. "_" .. tostring(upcast)
@@ -388,12 +425,13 @@ reg("cast", function(args)
     if A.two_step_spell(base) and not targets[2] and not A.TASK_POS2 and not ui then
         if A.revive_spell(base) then
             G.refuse(tostring(base) .. " is a two-step cast (the body, then the spot they stand up on) and this"
-                .. " action can't give its second pick yet. Read a Scroll of Revivify by name (use_ability"
-                .. " ability=\"Scroll of Revivify\" target=<the body>: it clicks the body, then the ground beside it),"
-                .. " or Withers at camp")
+                .. " action can't give its second pick yet"
+                .. "; a Scroll of Revivify through use_ability (ability=\"Scroll of Revivify\","
+                .. " target=<the body>) gives both picks (the body, then the ground beside it); Withers revives"
+                .. " at camp")
         end
         G.refuse(tostring(base) .. " is a two-step teleport (who goes, then the landing) and this action can't give"
-            .. " its landing yet: walk, jump or climb there (route),")
+            .. " its landing yet")
     end
     if #targets == 0 and not pos then
         local st = Ext.Stats.Get(base)
@@ -405,7 +443,7 @@ reg("cast", function(args)
     end
     if pos and #targets == 0 and not ui and A.needs_entity(base) then
         G.refuse(tostring(base) .. " takes a creature or an object as its target, not a ground point (cast at the"
-            .. " point it does nothing): give target=<its id> (get_nearby lists objects too)")
+            .. " point it does nothing): it takes target=<its id> (get_nearby lists objects too)")
     end
 
     -- Upcasting to the spell's own level is just a normal cast.
@@ -443,7 +481,7 @@ reg("cast", function(args)
             G.target_visible(t)
             G.within(char, t, G.MAX_INTERACT_DIST, "target")
             if c.range and U.dist(G.pos(char), G.pos(t)) > c.range + 0.5 then
-                G.refuse((i == 2 and "second" or ("target " .. i)) .. " is out of range: move closer first")
+                G.refuse((i == 2 and "second" or ("target " .. i)) .. " is out of range")
             end
         end
         if spell ~= base then
@@ -509,6 +547,25 @@ reg("cast", function(args)
         or A.CAST_NO_START_MS
     if ui then no_start_ms = A.CAST_UI_NO_START_MS end
     local walk_m = walk and walk.plan.length_m or 0
+    -- go(job) now, or once the weapon set the spell needs reads back (on_tick: job.switch)
+    local function with_weapons(job, go)
+        local want = A.weapon_need(char, bst)
+        if not want then return go(job) end
+        local e = G.entity(char)
+        local wrote, err = pcall(function()
+            e.WeaponSet.WeaponSet = want
+            e:Replicate("WeaponSet")
+            -- the write selects the set but leaves the drawn weapons (live w10 L4): sheathe and draw again, so the
+            -- game draws the selected set (Osiris SetWeaponUnsheathed, bg3le osi-api 4.8.400 :948)
+            G.osi("SetWeaponUnsheathed", char, 0, 1)
+            G.osi("SetWeaponUnsheathed", char, 1, 1)
+        end)
+        if not wrote then
+            return RPC.finish_job(job, "failed", nil, "the switch to the " .. want:lower() .. " weapons failed ("
+                .. tostring(err) .. "): not cast")
+        end
+        job.switch = { want = want, t = RPC.now_ms(), go = go }
+    end
     local function order(job)
         job.osi_task = "spell"
         job.ordered_ms, job.ordered_pos = RPC.now_ms(), G.pos(char)
@@ -520,14 +577,18 @@ reg("cast", function(args)
             -- Engine form has 6 inputs (6th = WithoutMove), verified live
             -- on bg3le; the 5-input form is kept as a fallback for builds
             -- without it.
+            A.cast_rolls(job, char, spell)
+            job.cast_at_pos = true -- an engine refusal there is said neutrally (A.engine_refusal)
             G.osi_forms("UseSpellAtPosition", { char, spell, pos[1], pos[2], pos[3], without_move },
                 { char, spell, pos[1], pos[2], pos[3] })
         else
+            A.cast_rolls(job, char, spell, targets[1])
             G.osi("UseSpell", char, spell, targets[1], targets[2] or NULL_GUID, without_move)
             A.give_second_pick(job, char, spell, targets, landing)
         end
     end
     return start("cast", char, {
+        react_hold = base == "Projectile_Jump", -- a jump out of reach provokes as a walk does (A.reaction_hold)
         standup_of = standup_of,
         eta_s = 2.0 + (walk and walk_eta(walk_m) or 0),
         timeout_ms = 30000 + (walk and walk_timeout(walk_m) or 0),
@@ -545,7 +606,7 @@ reg("cast", function(args)
                 if matches(a) and not job.began then job.began, job.hp0 = true, hp_of(char) end
             end,
             CastedSpell = function(job, a)
-                if matches(a) and not job.casted then
+                if matches(a) and not job.casted and A.roll_checked(job) then
                     -- Hits usually land before CastedSpell; give stragglers a
                     -- short settle window (see on_tick), then report.
                     job.casted = RPC.now_ms()
@@ -560,12 +621,20 @@ reg("cast", function(args)
                     job.casted, job.failed_event = RPC.now_ms(), true
                     return
                 end
-                local why = A.cast_failed_why(char, targets[1], spell)
+                local why = A.cast_failed_why(char, targets[1], spell, job)
+                if base == "Projectile_Jump" and select(2, A.engine_refusal(job)) == "Canceled" then
+                    -- maybe the engine's cancel for a drawn attack: decided in on_tick (jump_cancel_why)
+                    job.jump_cancel = job.jump_cancel or { t = G.now_ms() }
+                end
                 if job.ui and not job.clicked_ms and not job.began then
                     -- L8 23:59 (se, Dimension Door): picking the level in the upcast picker sent this 0.12 s
                     -- before the first target click, and the job failed while the bridge went on clicking. In the
                     -- hotbar route it is held until the bridge's clicks are done (act.ui_clicked).
                     job.ui_failed = job.ui_failed or why
+                    return
+                end
+                if job.jump_cancel then
+                    job.jump_cancel.why = job.jump_cancel.why or why
                     return
                 end
                 RPC.finish_job(job, "failed", nil, why)
@@ -594,11 +663,42 @@ reg("cast", function(args)
             end,
         }),
         on_tick = function(job)
+            local jc = job.jump_cancel
+            if jc and jc.why and not job.ui_failed then
+                if G.now_ms() - jc.t > A.JUMP_CANCEL_WINDOW_MS then
+                    RPC.finish_job(job, "failed", nil, jump_cancel_why(job, jc.why))
+                end
+                return
+            end
+            if A.roll_stop_tick(job) then return end
+            local sw = job.switch
+            if sw then
+                local ready, read = A.weapon_ready(char, sw.want)
+                if ready then
+                    job.switch = nil
+                    return sw.go(job)
+                end
+                if RPC.now_ms() - sw.t >= A.WEAPON_SWITCH_MS then
+                    RPC.finish_job(job, "failed", nil, ("the switch to the %s weapons didn't take (%s after %.1f s):"
+                        .. " not cast"):format(sw.want:lower(), read, A.WEAPON_SWITCH_MS / 1000))
+                end
+                return
+            end
             if job.phase == "approach" then return approach_tick(job) end
             if job.ui_failed and job.clicked_ms and not job.casted and not job.began
                 and RPC.now_ms() - job.clicked_ms >= A.CAST_UI_REFUSED_MS then
-                RPC.finish_job(job, "failed", nil, job.ui_failed)
+                RPC.finish_job(job, "failed", nil, jump_cancel_why(job, job.ui_failed))
                 return
+            end
+            if job.state_ms and not job.began then job.began, job.hp0 = true, hp_of(char) end
+            if job.state_ms and not job.casted then
+                if not A.cast_paused(char) then job.paused_ms = nil
+                elseif not job.paused_ms then job.paused_ms = RPC.now_ms()
+                elseif RPC.now_ms() - job.paused_ms >= A.CAST_PAUSED_MS then
+                    job.stopping = true -- on_finish's purge of leftover tasks would cancel the held cast
+                    RPC.finish_job(job, "interrupted", { began = true, paused = true, cast = spell }, A.CAST_PAUSED)
+                    return
+                end
             end
             if not job.casted and not job.began and job.ordered_ms then
                 local p = G.pos(char)
@@ -635,7 +735,7 @@ reg("cast", function(args)
                     end
                     if base == "Projectile_Jump" then
                         why = why .. ": it ignores a landing the jump can't reach (too far or too high for this"
-                            .. " character, or no clear arc): pick a nearer, lower landing (route / get_layout)"
+                            .. " character, or no clear arc)"
                     end
                     local blk = combat and G.blocking_status(char)
                     if blk then
@@ -675,10 +775,8 @@ reg("cast", function(args)
                                 RPC.finish_job(job, "failed", { cast = spell, fell_m = U.round(drop, 1),
                                     now_at = U.vec(p, 1), landing = dest },
                                     string.format("teleported, then FELL %.1fm below the landing (to y=%.1f) and %s:"
-                                        .. " the point had no floor under it (the void or an edge). %s Teleport only"
-                                        .. " onto a floor you stand on or can see, away from its edge",
-                                        drop, p[2], dead and "DIED" or "is DOWNED",
-                                        dead and "Revive them or load a save." or "Help them up."))
+                                        .. " the point had no floor under it (the void or an edge)",
+                                        drop, p[2], dead and "DIED" or "is DOWNED"))
                                 return
                             end
                             job.fell_m = U.round(drop, 1)
@@ -722,7 +820,7 @@ reg("cast", function(args)
                             RPC.finish_job(job, "failed", { cast = spell, moved_m = U.round(moved, 1) },
                                 string.format("the jump went nowhere: moved %.1fm, the landing is still %.1fm away"
                                     .. " (the game shortens a landing it can't reach: too far or too high, no clear arc,"
-                                    .. " or no floor there): pick a nearer, lower spot on solid floor (get_layout)",
+                                    .. " or no floor there)",
                                     moved, off))
                             return
                         elseif off > A.JUMP_OFF_M then
@@ -732,10 +830,8 @@ reg("cast", function(args)
                             if dead or downed then
                                 RPC.finish_job(job, "failed", { cast = spell, fell_m = U.round(drop, 1) },
                                     string.format("FELL %.1fm below the landing (to y=%.1f) and %s: the landing had no"
-                                        .. " floor at that height (a chasm or a drop). %s Never jump there again; walk"
-                                        .. " (route / get_layout) or aim at solid floor at your own height",
-                                        drop, p[2], dead and "DIED" or "is DOWNED",
-                                        dead and "Load a save or revive them." or "Help them up."))
+                                        .. " floor at that height (a chasm or a drop)",
+                                        drop, p[2], dead and "DIED" or "is DOWNED"))
                                 return
                             end
                             job.fell_m = U.round(drop, 1)
@@ -789,7 +885,7 @@ reg("cast", function(args)
                         res.revived = not res.target.dead or nil
                     end
                 end
-                RPC.finish_job(job, "done", res)
+                RPC.finish_job(job, "done", A.unrolled_result(job, res))
             end
         end,
         start = function(job)
@@ -804,10 +900,13 @@ reg("cast", function(args)
                     end
                     check = c
                     j.walked = U.round(walk_m, 1)
-                    j.osi_task = "spell"
-                    j.ordered_ms, j.ordered_pos = RPC.now_ms(), G.pos(char)
-                    G.osi("UseSpell", char, spell, targets[1], NULL_GUID, without_move)
-                    A.give_second_pick(j, char, spell, targets, landing)
+                    with_weapons(j, function(jj)
+                        jj.osi_task = "spell"
+                        jj.ordered_ms, jj.ordered_pos = RPC.now_ms(), G.pos(char)
+                        A.cast_rolls(jj, char, spell, targets[1])
+                        G.osi("UseSpell", char, spell, targets[1], NULL_GUID, without_move)
+                        A.give_second_pick(jj, char, spell, targets, landing)
+                    end)
                 end)
             end
             if ui then
@@ -822,7 +921,7 @@ reg("cast", function(args)
             if pos and base == "Projectile_Jump" and BG3AI.Nav and BG3AI.Nav.inflight then
                 job.jump_marked = pcall(BG3AI.Nav.inflight, "jump", pos)
             end
-            order(job)
+            with_weapons(job, order)
         end,
         on_finish = function(job)
             if job.jump_marked then pcall(BG3AI.Nav.inflightDone, "jump") end -- NAV-7: only its own marker

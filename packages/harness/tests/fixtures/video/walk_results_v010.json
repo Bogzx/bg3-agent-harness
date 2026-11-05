@@ -1,0 +1,13 @@
+{
+ "about": "bg3 tool results of blocking walks (bench-v0.10, harness 0.3.0), captured 2026-11-03 at 7daae992 from the bridge itself (move_to, walk_toward, travel_to against bridge/tests' FakeGame: done, failed mid-walk, a dialogue ending the wait, the walk budget running out); the evidence video's side panel must show their outcome.",
+ "results": {
+  "move_to_dialogue": "move_to: started j1, ETA 1s (4m)\nstopped waiting: dialogue on screen\nDIALOGUE Lae'zel: Wait.\nUI screen=dialogue\nwait_for('j1') keeps waiting for it\nRUNNING j1 move_to ~0.5s left",
+  "move_to_done": "move_to: done — @(3,0,4)\nOBJECTIVES none on the map",
+  "move_to_failed": "move_to: FAILED — no path: blocked by a closed gate\nOBJECTIVES none on the map",
+  "move_to_long": "move_to: started j1, ETA 1s (4m)\nstill waiting for j1 after 0.6s\nRUNNING j1 move_to ~0.4s left\nwait_for('j1') keeps waiting for it",
+  "travel_to_done": "travel_to marker m1 Old well: started (50m)\nqueue e4 Claude: done (1 steps)\n1. travel_to marker m1 Old well: 50m\nleg 1: move_to: done\nleg 2: move_to: done\narrived (0m from it)\nOBJECTIVES none on the map",
+  "travel_to_failed": "travel_to marker m1 Old well: started (50m)\nqueue e4 Claude: STOPPED: step 1 travel_to m1: leg 1 failed\n1. travel_to marker m1 Old well: 50m\nleg 1: move_to: FAILED — no path: the bridge is out\nSTOPPED: leg 1 failed\nOBJECTIVES none on the map",
+  "walk_toward_done": "heading N toward N: 20m\nwalk_toward: done — @(0,0,20)\nOBJECTIVES none on the map",
+  "walk_toward_failed": "heading N toward N: 20m\nwalk_toward: FAILED — stopped: fell short of the ledge\nOBJECTIVES none on the map"
+ }
+}

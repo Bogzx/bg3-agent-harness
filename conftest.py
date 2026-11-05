@@ -19,6 +19,17 @@ temp_profile()
 
 ROOT = Path(__file__).resolve().parent
 
+PLUGIN = "bg3harness.testing.pytest_profile"
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """With plugin autoload off the bg3harness plugin isn't loaded, so neither is its socket guard (no test reaches the
+    real game's debug port: bg3harness.testing.liveport): register it here. With autoload on it is already in."""
+    pm = config.pluginmanager
+    if not (pm.has_plugin("bg3harness-profile") or pm.has_plugin(PLUGIN)):
+        pm.import_plugin(PLUGIN)
+
+
 # node id, or a directory ending in "/" for every test under it -> (runs when true, reason)
 NEEDS: dict[str, tuple[bool, str]] = {
     "runner/test_play.py::SessionReview::test_real_review_after_the_keeper": (

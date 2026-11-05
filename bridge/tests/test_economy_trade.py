@@ -233,6 +233,14 @@ class TradeHandover(unittest.TestCase):
                                  lambda it: "e9", listing=False)
         self.assertIn("NOT MOVED: item Hammer isn't on this side", out)
 
+    def test_items_already_on_the_table_named(self):
+        # launch-v1 haiku act3_gold_max r2 seq 16-21: the confirm re-sent ids the offer had put on the table
+        res = {"already": [{"uuid": "u83", "name": "Scroll of Revivify", "side": "you"},
+                           {"uuid": "u183", "name": "Scroll of Cone of Cold", "side": "you"}]}
+        out = economy.trade_text(res, lambda it: {"u83": "e83", "u183": "e183"}[it["uuid"]], listing=False)
+        self.assertIn("ALREADY ON THE TABLE: e83 Scroll of Revivify, e183 Scroll of Cone of Cold", out)
+        self.assertNotIn("NOT MOVED", out)
+
     def test_equipped_offer_named(self):
         inv = {"items": [{"uuid": "u1", "name": "Ceremonial Warhammer", "equipped_slot": "Melee Main Weapon",
                           "owner": "c1"}, {"uuid": "u2", "name": "Mace"}]}
@@ -349,6 +357,9 @@ class TradeConfirmCloses(unittest.TestCase):
         out, calls = self._trade({"confirmed": True, "moved": []}, confirm=True)
         self.assertEqual([a for op, a in calls if op == "ui.key"], [{"key": "ESCAPE"}])
         self.assertIn("closed the trade window: back in the game", out)
+        # night 2026-11-04: what happened, with no call to open it again
+        self.assertIn("(closed the trade window: back in the game)", out)
+        self.assertNotIn("trade(npc=", out)
 
     def test_no_confirm_keeps_it_open(self):
         out, calls = self._trade({"moved": []})
@@ -363,6 +374,160 @@ class TradeConfirmCloses(unittest.TestCase):
         out, _ = self._trade({"confirmed": True, "moved": []}, closes_after=None, confirm=True)
         self.assertIn("(closing the trade window: screen=dialogue after ESCAPE)", out)
         self.assertIn("SCREEN dialogue", out)
+
+
+class TradeDealSaid(unittest.TestCase):
+    """w12 L2 (Gloomy Fentonson): trade(offer=e159, confirm=true) answered with the emptied table, '(the Trade button
+    is disabled)', '(wares/your items unchanged: trade() lists them)' and gold_changed delta=1: it never said the
+    Backpack went for 1 g (Claude's other Backpack was worth 52). A confirmed deal names each item at its price."""
+
+    SMALL, BIG = "6b366a51-9f42-1718-f4ea-7e7cd1eab021", "f9e16eab-b9a2-c6dd-c4d7-cebad23a37af"
+    POTION, SCROLL = "11111111-2222-3333-4444-555555555801", "11111111-2222-3333-4444-555555555802"
+    BEFORE = {"party_gold": 410, "trader_gold": 1858, "price_modifier_pct": 25,
+              "offer": {"you": {"items": []}, "trader": {"items": []}},
+              "your_items": [{"uuid": BIG, "name": "Backpack", "price": 52},
+                             {"uuid": SMALL, "name": "Backpack", "price": 1},
+                             {"uuid": SCROLL, "name": "Scroll of Grease", "price": 20}],
+              "wares": [{"uuid": POTION, "name": "Potion of Healing", "price": 75, "count": 5}]}
+    AFTER = {"confirmed": True, "party_gold": 411, "trader_gold": 1857, "price_modifier_pct": 25,
+             "offer": {"you": {"items": [], "gold": 0}, "trader": {"items": [], "gold": 0}},
+             "balance": {"you_get": 0, "you_give": 0}, "can_confirm": False,
+             "moved": [{"uuid": SMALL, "name": "Backpack", "side": "you"}]}
+
+    def _trade(self, after: dict, before: dict | None, **kw):
+        calls = []
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                calls.append(op)
+                if op == "ui.trade":
+                    return before
+                return {"screen": "game"} if op == "ui.state" else default
+
+        def fake_act(tool, op, args, **k):  # renders the way plumbing._job_text does
+            reporting._batch["result"] = after
+            return "trade: done\n" + economy.trade_text(after, progression._item_handle, **progression._trade_view)
+
+        saved = (core.game, plumbing._act, core.H)
+        core.H = Handles()
+        for u, n in ((self.BIG, "Backpack"), (self.SMALL, "Backpack"), (self.POTION, "Potion"), (self.SCROLL, "Scroll")):
+            core.H.get(u, n)  # e1 BIG, e2 SMALL, e3 POTION, e4 SCROLL
+        core.game, plumbing._act = G(), fake_act
+        try:
+            return progression.trade(**kw), calls
+        finally:
+            core.game, plumbing._act, core.H = saved
+
+    def test_w12_sale_names_the_item_and_its_price(self):
+        out, _ = self._trade(self.AFTER, self.BEFORE, offer="e2", confirm=True)
+        self.assertIn("\nSOLD e2 Backpack 1 g", out)
+        self.assertNotIn("unchanged", out)
+        self.assertNotIn("TABLE", out)
+        self.assertNotIn("Trade button is disabled", out)
+        self.assertIn("TRADE your gold 411", out)
+
+    def test_bought_part_of_a_stack_and_sold_an_item_put_on_the_table_before(self):
+        # REVIEW-17 F3: the mod keeps the table FinishBarter took (deal), each item at its shown price; no screen read
+        after = dict(self.AFTER, moved=[{"uuid": self.POTION, "name": "Potion of Healing", "side": "trader",
+                                         "count": 2, "price": 30}],
+                     deal={"you": {"items": [{"uuid": self.SCROLL, "name": "Scroll of Grease", "price": 20},
+                                             {"count": 10, "price": 10, "gold": True}]},
+                           "trader": {"items": [{"uuid": self.POTION, "name": "Potion of Healing", "count": 2,
+                                                 "price": 30}]}})
+        out, calls = self._trade(after, self.BEFORE, request="e3", count=2, confirm=True)
+        self.assertIn("\nSOLD e4 Scroll of Grease 20 g\nBOUGHT e3 Potion of Healing x2 30 g", out)
+        self.assertNotIn("ui.trade", calls)  # F3: no full screen read before a confirm that isn't a hand-over
+
+    def test_an_item_past_the_screen_read_is_said_at_the_price_it_moved_at(self):
+        # REVIEW-17 F3: the hand-over read lists 60 items per side; the 61st sold at '? g'. The moved record has it.
+        before = dict(self.BEFORE, your_items=[])
+        after = dict(self.AFTER, moved=[{"uuid": self.BIG, "name": "Backpack", "side": "you", "count": 1,
+                                         "price": 52}])
+        out, calls = self._trade(after, before, offer="e1", confirm=True)
+        self.assertIn("\nSOLD e1 Backpack 52 g", out)
+        self.assertEqual(calls.count("ui.trade"), 1)  # offer without request: the hand-over check still reads it
+
+    def test_unread_screen_names_the_items_without_a_price(self):
+        out, _ = self._trade(self.AFTER, None, offer="e2", confirm=True)
+        self.assertIn("\nSOLD e2 Backpack ? g", out)
+
+    def test_an_offer_without_confirm_keeps_the_table(self):
+        after = dict(self.AFTER, confirmed=None, offer={"you": {"items": [{"uuid": self.SMALL, "name": "Backpack",
+                                                                           "price": 1}]}, "trader": {"items": []}},
+                     balance={"you_give": 1, "you_get": 0})
+        out, calls = self._trade(after, self.BEFORE, offer="e2")
+        self.assertIn("TABLE you give: e2 Backpack 1g", out)
+        self.assertIn("(wares/your items unchanged: trade() lists them)", out)
+        self.assertNotIn("SOLD", out)
+        self.assertNotIn("ui.trade", calls)  # no read before an offer that isn't confirmed
+
+    def test_sell_junk_barter_leaves_the_sold_list_to_its_own_line(self):
+        out = economy.trade_text(self.AFTER, lambda it: "e2", listing=False)  # before=None: _sell_junk's view
+        self.assertEqual(out, "TRADE your gold 411 · trader gold 1857 · prices 25% of value (price = the whole stack)")
+
+    def test_tool_description_says_a_confirmed_deal_is_named(self):
+        # the description said confirm calls "show the table and the balance only": false since the deal is named
+        doc = core.mcp._tool_manager.get_tool("trade").description
+        self.assertIn("a confirmed deal names each item sold and bought with its price (SOLD/BOUGHT; GAVE/GOT for a "
+                      "donate=true deal, which the trader may not have paid in full)", doc)  # REVIEW-17 F5
+        self.assertNotIn("offer/request/confirm calls show the table", doc)
+
+    def test_view_is_cleared_after_the_call(self):
+        self._trade(self.AFTER, self.BEFORE, offer="e2", confirm=True)
+        self.assertIsNone(progression._trade_view["before"])  # sell=junk renders through it next
+
+    def test_a_donate_overpay_says_given_and_got_not_sold(self):
+        # REVIEW-17 F5: donate=true lets an overpay through (52 g of goods for a 30 g potion, no gold back); 'SOLD e1
+        # Backpack 52 g' read as 52 g received. The deal says what went each way. The moved records carry the price
+        # and count they showed (F3: a confirm with a request reads no screen first).
+        after = {**self.AFTER, "moved": [{"uuid": self.BIG, "name": "Backpack", "side": "you", "count": 1,
+                                          "price": 52},
+                                         {"uuid": self.POTION, "name": "Potion of Healing", "side": "trader",
+                                          "count": 2, "price": 30}]}
+        out, _ = self._trade(after, self.BEFORE, offer="e1", request="e3", count=2, confirm=True, donate=True)
+        self.assertIn("\nGAVE e1 Backpack 52 g\nGOT e3 Potion of Healing x2 30 g", out)
+        self.assertNotIn("SOLD", out)
+        self.assertNotIn("BOUGHT", out)
+        self.assertFalse(progression._trade_view["donate"])  # the next result (sell=junk) is not a donate
+        out, _ = self._trade(after, self.BEFORE, offer="e1", request="e3", count=2, confirm=True)
+        self.assertIn("\nSOLD e1 Backpack 52 g\nBOUGHT e3 Potion of Healing x2 30 g", out)
+
+    def test_table_items_with_no_uuid_are_each_named(self):
+        # REVIEW-17 F4: the first table item with no uuid put None in `seen` and every later one was skipped
+        before = {**self.BEFORE, "offer": {"you": {"items": [{"name": "Backpack", "price": 52},
+                                                             {"name": "Scroll of Grease", "price": 20}]},
+                                           "trader": {"items": []}}}
+        lines = economy.deal_lines({"confirmed": True, "moved": []}, before, lambda it: "(no id)")
+        self.assertEqual(lines, ["SOLD (no id) Backpack 52 g | (no id) Scroll of Grease 20 g"])
+
+    def test_w15_a2_part_of_a_stack_is_one_record(self):
+        # w15 a2: Muddy Red Dye x8 (48 g), request count=2, confirm. The mod now names the part the game put on the table
+        # after the moved item (Services.lua SV.splits), so the deal and the moved record are one item, said once.
+        u = "b20ab553-20b9-3423-06f8-1136413778b4"
+        res = {"confirmed": True,
+               "moved": [{"uuid": u, "name": "Muddy Red Dye", "side": "trader", "count": 2, "price": 12}],
+               "deal": {"you": {"items": [{"gold": True, "count": 12, "price": 12}]},
+                        "trader": {"items": [{"uuid": u, "name": "Muddy Red Dye", "count": 2, "price": 12}]}}}
+        lines = economy.deal_lines(res, {}, lambda it: "e127" if it.get("uuid") == u else "(no id)")
+        self.assertEqual(lines, ["BOUGHT e127 Muddy Red Dye x2 12 g"])
+
+    def test_a_deal_whose_screen_closed_while_finishing_is_named(self):
+        # REVIEW-17 F2: the mod's closed-screen answer has no offer/wares, so plumbing printed the generic compact of
+        # `moved` (no prices, the earlier calls' table items left out) and no SOLD line
+        closed = {"confirmed": True, "moved": [{"uuid": self.SMALL, "name": "Backpack", "side": "you"}],
+                  "note": "trade screen closed"}
+        saved = (core.H, dict(progression._trade_view))
+        core.H = Handles()
+        for u, n in ((self.BIG, "Backpack"), (self.SMALL, "Backpack")):
+            core.H.get(u, n)
+        progression._trade_view.update(listing=False, full=False, before=self.BEFORE)
+        try:
+            out = plumbing._job_text("trade", JobResult("done", closed, None, [], 900))
+        finally:
+            core.H = saved[0]
+            progression._trade_view.clear()
+            progression._trade_view.update(saved[1])
+        self.assertEqual(out, "trade: done\n(trade screen closed)\nSOLD e2 Backpack 1 g")
 
 
 _HALF = {"unmatched": 1, "wares": [{"price": 1040}, {"price": 832}]}
@@ -476,6 +641,100 @@ class TradeNoGold(unittest.TestCase):
         finally:
             core.game = orig
         self.assertIn("the trader has no gold left", out)
+
+
+class TradeAcrossNodes(unittest.TestCase):
+    """w11 L1 (Tolna Tome-Monger): 'What do you have on offer?' leads to a whispered node whose answers offer
+    '(What do you have on offer?)' again; picking that opens the shop. trade(npc) follows it as a player does."""
+
+    ROOT = [{"i": 1, "text": "What do you have on offer?"}, {"i": 2, "text": "Leave."}]
+    WHISHT = [{"i": 1, "text": "(I'd be interested in any especially rare tomes...)"},
+              {"i": 2, "text": "IS THAT TRUE, BOOKS? ..."}, {"i": 3, "text": "(What do you have on offer?)"},
+              {"i": 4, "text": "Leave."}]
+
+    def _open(self, nodes):
+        """nodes: the answers each pick leads to, in order; None = the trade screen."""
+        test = self
+        self.picks: list = []
+        state = {"screen": "dialogue", "dialogue": {"options": self.ROOT}}
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                return dict(state) if op == "ui.state" else default
+
+            def run_job(self, op, args, context="server", wait_s=25.0):
+                test.picks.append(args["i"])
+                nxt = nodes[len(test.picks) - 1]
+                state.clear()
+                if nxt is None:
+                    state.update(screen="trade")
+                    return JobResult("done", {"screen": "trade", "lines": []})
+                state.update(screen="dialogue", dialogue={"options": nxt})
+                return JobResult("done", {"screen": "dialogue", "lines": [], "dialogue": {"options": nxt}})
+
+        saved = (core.game, plumbing.POLL_S)
+        core.game, plumbing.POLL_S = G(), 0.0
+        try:
+            return progression._open_trade("")
+        finally:
+            core.game, plumbing.POLL_S = saved
+
+    def test_the_trade_answer_on_the_next_node_is_picked_too(self):
+        out = self._open([self.WHISHT, None])
+        self.assertEqual(self.picks, [1, 3])
+        self.assertEqual(out, "(opened: picked 'What do you have on offer?' then '(What do you have on offer?)')")
+
+    def test_a_next_node_with_no_trade_answer_names_its_answers(self):
+        out = self._open([[{"i": 1, "text": "Who are you?"}, {"i": 2, "text": "Leave."}]])
+        self.assertEqual(self.picks, [1])
+        self.assertIn("trade: FAILED — picked 'What do you have on offer?' but no trade screen opened (screen=dialogue);"
+                      " it stopped at a node with the answers: 1. Who are you?; 2. Leave.", out)
+
+    def test_w12_shop_that_comes_after_a_continue_line_is_opened(self):
+        """w12 L2 (Gloomy Fentonson): the pick settled on his line with '1. Continue.' and the call failed 'no trade
+        screen opened (screen=dialogue)'; the trade screen was up < 0.5 s later. The call waits for it."""
+        line = {"screen": "dialogue", "lines": [{"speaker": "Gloomy Fentonson", "text": "You in need of protection?"}],
+                "dialogue": {"speaker": "Gloomy Fentonson", "options": [{"i": 1, "text": "Continue."}]}}
+        state, reads = {"screen": "dialogue", "dialogue": {"options": [{"i": 1, "text": "Let me take a look at what you have."}]}}, [0]
+
+        class G:
+            def try_rpc(self, op, args=None, context="server", default=None):
+                if op != "ui.state":
+                    return default
+                reads[0] += 1
+                if reads[0] > 3:  # the 3rd read after the pick still shows the line, the next one the shop
+                    state.clear()
+                    state.update(screen="trade")
+                return dict(state)
+
+            def run_job(self, op, args, context="server", wait_s=25.0):
+                state.clear()
+                state.update(line)
+                reads[0] = 0
+                return JobResult("done", dict(line))
+
+        saved = (core.game, plumbing.POLL_S)
+        core.game, plumbing.POLL_S = G(), 0.0
+        try:
+            out = progression._open_trade("")
+        finally:
+            core.game, plumbing.POLL_S = saved
+        self.assertEqual(out, "(opened: picked 'Let me take a look at what you have.')")
+
+    def test_a_shop_that_never_comes_still_fails_after_the_wait(self):
+        saved = progression.TRADE_SCREEN_S
+        progression.TRADE_SCREEN_S = 0.05
+        try:
+            out = self._open([[{"i": 1, "text": "Continue."}]])
+        finally:
+            progression.TRADE_SCREEN_S = saved
+        self.assertIn("no trade screen opened (screen=dialogue); it stopped at a node with the answers: 1. Continue.", out)
+
+    def test_bounded_by_nodes_walked(self):
+        out = self._open([self.WHISHT] * 5)
+        self.assertEqual(self.picks, [1, 3, 3])
+        self.assertEqual(len(self.picks), progression.TRADE_NODES)
+        self.assertIn("it stopped at a node with the answers: 1. (I'd be interested", out)
 
 
 if __name__ == "__main__":

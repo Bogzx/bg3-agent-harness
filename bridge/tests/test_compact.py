@@ -165,10 +165,10 @@ class Rules(unittest.TestCase):
 
     def test_hints_full_once_then_short(self):
         c = fresh()
-        pace = ("PACE: you waited right after issuing. Next time first do independent work (queue the arrival steps, "
-                "look, plan, notes): the character acts while you think.")
+        # the PACE line reporting.py writes since 7e23f2f6 (the old rule matched the text before it: never shortened)
+        pace = "PACE: this wait_for came 0.4s after the last issued action, with no other call in between."
         self.assertIn(pace, c.apply("wait_for", pace))
-        self.assertEqual(c.apply("wait_for", pace), "PACE: you waited right after issuing (do independent work first).")
+        self.assertEqual(c.apply("wait_for", pace), "PACE: wait_for 0.4s after the last issued action, no call between.")
 
     def test_shared_turn_hint_short_after_once(self):
         # observe's SHARED TURN text since combat_turn was removed (and combat_turn's, in recorded runs)

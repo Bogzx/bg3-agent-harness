@@ -112,8 +112,7 @@ def _level_camp_member(row: dict, plan: str, out: str, st: dict) -> str:
         # Live 11:14: Wyll L4 needs a cantrip + a spell the stored plan lacked. Swapping back now would make the
         # retry swap in again (~30 s): keep him in with the page up; the retry is the normal one-member call.
         keep = (f"{name} stays in the party" + (f" ({outname} at camp)" if outname else "") +
-                f" with the level-up page open: call level_up(who=\"{name}\", plan=...) with the picks below"
-                + (f", then swap_party(into=\"{outname}\", out=\"{name}\") to bring {outname} back" if outname else ""))
+                " with the level-up page open (picks below)")
         ndone = sum(1 for r in results if ": level_up: done" in r)   # live 12:2x: L4 done, L5 lacked picks → said FAILED
         head = f"level_up: partly done ({ndone} of {len(results)} levels)" if ndone else "level_up: FAILED"
         return f"{head} — {name} (camp member): " + "; ".join(steps + [keep]) + "\n" + "\n".join(results)
@@ -206,8 +205,8 @@ def _level_up_steps(uuid: str, args: dict, note: str) -> str:
 def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = False, sell: str = "",
           keep: str = "", full: bool = False, donate: bool = False, count: int = 0) -> str:
     """Barter with a trader. Open with npc=<id> (talks to them and picks the conversation's trade answer, e.g. 'Let me see your wares.'; if none is offered yet it stops at the conversation), then list items via get_inventory; offer/request: comma lists of item ids to move; confirm=true to finish the deal (then the window closes). price is for the whole stack (price=156 count=3: 52 each; a stack moves whole). Wares marked supply=N are food (camp supplies per item; a long rest needs 40). A stack's "how many?" box is answered for you: the whole stack, or count=N.
-    sell="junk": sell everything a player sells at every trader in one call (not equipped, story, consumables, food, keys/tools, magic gear, or keep=<comma ids>), up to the trader's gold; get_inventory(filter="junk") previews it.
-    Opening or trade() with no args lists the wares grouped (food with supply, potions/scrolls, gear by rarity) and your best-priced items, capped per group; full=true lists everything. offer/request/confirm calls show the table and the balance only.
+    sell="junk": sell everything a player sells at every trader in one call (not equipped, story, consumables, food, keys/tools, magic gear, or keep=<comma ids>), up to the trader's gold; the result names everything sold (SOLD, by name with count and gold) and counts what was kept back by kind (KEPT); get_inventory(filter="junk") previews it.
+    Opening or trade() with no args lists the wares grouped (food with supply, potions/scrolls, gear by rarity) and your best-priced items, capped per group; full=true lists everything. offer/request calls show the table and the balance only; a confirmed deal names each item sold and bought with its price (SOLD/BOUGHT; GAVE/GOT for a donate=true deal, which the trader may not have paid in full).
     confirm refuses an uneven table before the barter (a trader with no gold swaps items only); donate=true gives the offered items (or an overpay's difference) for nothing (answers the game's "Donate these items?"); automatic on a quest hand-over screen (a dialogue answer like "take them" opens a trade screen whose other side has no wares and no gold): trade(offer=<id>, confirm=true) gives it and closes the screen."""
     if sell:
         if sell.strip().lower() != "junk":
@@ -243,16 +242,23 @@ def trade(npc: str = "", offer: str = "", request: str = "", confirm: bool = Fal
         args["offer"] = [plumbing._uuid(i) for i in offer.split(",") if i.strip()]
     if request:
         args["request"] = [plumbing._uuid(i) for i in request.split(",") if i.strip()]
-    handover = False
-    if confirm and offer and not request:
-        handover = economy.handover(core.game.try_rpc("ui.trade", {}, context="client"))
-        donate = donate or handover
+    handover, before = False, None
+    if confirm:  # {} = say the deal (deal_lines: the mod's priced table); the screen is read only for a hand-over
+        before = {}
+        if offer and not request:
+            got = core.game.try_rpc("ui.trade", {}, context="client")
+            handover = economy.handover(got)
+            donate = donate or handover
+            before = got if isinstance(got, dict) else {}
     if donate:
         args["donate"] = True
-    _trade_view.update(listing=not (offer or request or confirm), full=full)
+    _trade_view.update(listing=not (offer or request or confirm), full=full, before=before, donate=bool(donate))
     if full:
         args["max"] = 500
-    out = plumbing._act("trade", "ui.trade", args, context="client", wait_s=20)
+    try:
+        out = plumbing._act("trade", "ui.trade", args, context="client", wait_s=20)
+    finally:
+        _trade_view["before"], _trade_view["donate"] = None, False  # sell=junk renders through the same view and says SOLD itself
     res = reporting._batch.get("result")
     if _trade_view["listing"]:
         for _ in range(TRADE_FILL_TRIES):
@@ -293,7 +299,7 @@ def _close_trade_after_deal() -> str:
     if uitools._ui_screen()[0] != "trade":
         return ""
     if plumbing._close_left_trade(TRADE_CLOSE_S) and uitools._ui_screen()[0] == "game":
-        return "(closed the trade window: back in the game; trade(npc=<trader>) opens it again)"
+        return "(closed the trade window: back in the game)"  # night 2026-11-04: no 'trade(npc=...) opens it again'
     u = core.game.try_rpc("ui.state", context="client") or {}
     return "\n".join([f"(closing the trade window: screen={u.get('screen') or '?'} after ESCAPE)"] + reporting._render_ui(u))
 
@@ -304,20 +310,18 @@ def _answer_donate(res: dict, handover: bool) -> str:
     after (nothing else can happen there) so the conversation goes on."""
     gave = ", ".join(f"{_item_handle(m)} {m.get('name') or '?'}" for m in res.get("moved") or []
                      if isinstance(m, dict) and m.get("side") == "you") or "the offered items"
-    box = None
-    end = time.monotonic() + 3.0
-    while time.monotonic() < end:
-        box = core.game.try_rpc("ui.confirm", {"answer": "Yes", "dry": True}, context="client")
-        if isinstance(box, dict) and box.get("buttons"):
-            break
-        box = None
-        time.sleep(0.2)
+    def shown(b: Any) -> bool:
+        return isinstance(b, dict) and bool(b.get("buttons"))
+
+    box = plumbing.poll_until(lambda: core.game.try_rpc("ui.confirm", {"answer": "Yes", "dry": True}, context="client"),
+                              shown, 3.0)
+    box = box if shown(box) else None
     if box is None:
         return (f"trade: FAILED — gave {gave} with Barter, but no 'Donate these items?' box came up\n"
                 + "\n".join(reporting._render_ui(core.game.try_rpc("ui.state", context="client") or {})))
     q = f"{box.get('title') or ''} {box.get('text') or ''}".strip()
     if not re.search(r"donat|give", q, re.I):
-        return f"trade: STOPPED — the game asks: {q} {box.get('buttons')}; answer with confirm"
+        return f"trade: STOPPED — the game asks: {q} {box.get('buttons')}"
     c = world_tools._box_act("confirm", "ui.confirm", {"answer": "Yes"}, wait_s=8)
     if "confirm: done" not in c:
         return f"trade: FAILED — gave {gave} with Barter; the donate box: {c}"
@@ -342,11 +346,7 @@ def _open_trade(npc: str) -> str:
         return core.game.try_rpc("ui.state", context="client") or {}
 
     def wait(pred, s: float) -> dict:
-        end, u = time.monotonic() + s, ui()
-        while not pred(u) and time.monotonic() < end:
-            time.sleep(0.2)
-            u = ui()
-        return u
+        return plumbing.poll_until(ui, pred, s)
 
     u = ui()
     if u.get("screen") == "trade":
@@ -362,21 +362,49 @@ def _open_trade(npc: str) -> str:
     d = u.get("dialogue") or {}
     pick = economy.trade_answer(d.get("options") or [])
     if pick is None:
-        opts = "; ".join(f"{o.get('i')}. {o.get('text')}" for o in d.get("options") or [] if isinstance(o, dict))
+        opts = _answers_text(d)
         return (f"trade: no trade answer in the conversation with {npc} yet ({opts or 'no answers shown'})\n"
                 + (talked + "\n" if talked else "")
-                + "STOPPED: pick an answer with choose_dialogue (the trade one may come later), then trade()")
-    r = core.game.run_job("ui.dialogue_choose", {"i": pick["i"]}, context="client", wait_s=20)
-    if r.status != "done":
-        return f"trade: FAILED — picking '{pick.get('text')}': " + plumbing._job_text("choose_dialogue", r)
-    u = wait(lambda x: x.get("screen") == "trade", 4.0)
-    if u.get("screen") != "trade":
-        return (f"trade: FAILED — picked '{pick.get('text')}' but no trade screen opened (screen={u.get('screen')})\n"
-                + "\n".join(reporting._render_ui(u)))
-    return f"(opened: {'talked to ' + npc + ', ' if npc else ''}picked '{pick.get('text')}')"
+                + "STOPPED (the trade answer may come on a later node)")
+    picked: list[str] = []
+    while True:
+        r = core.game.run_job("ui.dialogue_choose", {"i": pick["i"]}, context="client", wait_s=20)
+        if r.status != "done":
+            return f"trade: FAILED — picking '{pick.get('text')}': " + plumbing._job_text("choose_dialogue", r)
+        picked.append(str(pick.get("text")))
+        # The choose job settles on the next decision point: the trade screen, or a new node's answers (Tolna, w11 L1:
+        # 'What do you have on offer?' leads to a whispered node that offers '(What do you have on offer?)' again).
+        # A node with no trade answer can still give way to the shop by itself: w12 L2, Gloomy Fentonson's 'Let me
+        # take a look at what you have.' settled on his line with '1. Continue.' and the trade screen came < 0.5 s
+        # later, after the call had failed. Only a node that offers the trade answer again is answered at once.
+        res = r.result if isinstance(r.result, dict) else {}
+        if res.get("screen") == "dialogue" and economy.trade_answer((res.get("dialogue") or {}).get("options") or []):
+            u = res
+        else:
+            u = wait(lambda x: x.get("screen") == "trade", TRADE_SCREEN_S)
+        if u.get("screen") == "trade":
+            break
+        d = u.get("dialogue") or {}
+        pick = economy.trade_answer(d.get("options") or []) if u.get("screen") == "dialogue" else None
+        if pick is None or len(picked) >= TRADE_NODES:
+            said = " then ".join(f"'{t}'" for t in picked)
+            at = (f"; it stopped at a node with the answers: {_answers_text(d) or 'none shown'}"
+                  if u.get("screen") == "dialogue" else "")
+            return (f"trade: FAILED — picked {said} but no trade screen opened (screen={u.get('screen')}){at}\n"
+                    + "\n".join(reporting._render_ui(u)))
+    said = " then ".join(f"'{t}'" for t in picked)
+    return f"(opened: {'talked to ' + npc + ', ' if npc else ''}picked {said})"
 
 
-_trade_view: dict[str, bool] = {"listing": True, "full": False}  # how the next trade result is rendered
+TRADE_SCREEN_S = 4.0  # after a trade answer: how long the shop may take to come up
+TRADE_NODES = 3  # trade answers _open_trade picks along one conversation, one per node, before it reports where it stopped
+
+
+def _answers_text(d: dict) -> str:
+    return "; ".join(f"{o.get('i')}. {o.get('text')}" for o in d.get("options") or [] if isinstance(o, dict))
+
+
+_trade_view: dict[str, Any] = {"listing": True, "full": False, "before": None, "donate": False}  # how the next trade result is rendered
 
 
 def _item_handle(it: dict) -> str:
@@ -389,9 +417,10 @@ SELL_CHUNK = 25
 
 def _sell_junk(keep: str = "") -> str:
     t0 = time.monotonic()
-    inv = core.game.rpc("state.inventory", {})
+    inv = core.game.rpc("state.inventory", {"expand": True})  # bag contents too: the junk left in bags is counted
     plumbing._remember_names(inv)
-    junk = {it["uuid"]: it for it in economy.junk(inv, inventory._keep_set(keep))}
+    keep_set = inventory._keep_set(keep)
+    junk = {it["uuid"]: it for it in economy.junk(inv, keep_set)}
     st = core.game.rpc("ui.trade", {"max": 500}, context="client")  # every slot, not the default 60
     plumbing._remember_names(st)
     on_screen = [it for it in (st.get("your_items") or []) if isinstance(it, dict) and it.get("uuid") in junk]
@@ -406,11 +435,11 @@ def _sell_junk(keep: str = "") -> str:
         total += p
     if not picked:
         why = ("no junk in the bags" if not junk else
-               ("the trader has no gold left: sell at another trader, or swap junk for wares of equal value "
-                "(offer=<ids>, request=<ids>)" if not budget else
+               ("the trader has no gold left" if not budget else
                 f"the trader has only {budget} gold, less than any one junk item") if on_screen
                else "none of the junk is on this trade screen")
-        return reporting._finish("trade", {"sell": "junk"}, f"trade: done — nothing sold ({why})", t0)
+        return reporting._finish("trade", {"sell": "junk"}, f"trade: done — nothing sold ({why})"
+                                 + _bag_junk_line(junk, {it["uuid"] for it in on_screen}), t0)
     core._EV_DROP.update(items={core.H._bare(u) for u in picked}, gold=True, until=0.0)
     # Barters of SELL_CHUNK items: the job moves one item per tick (~0.2 s each, a stack's quantity box more), so
     # acceptance 01:07's 72 junk items ran into the 15 s job timeout with nothing sold. A failed barter stops the rest.
@@ -424,15 +453,63 @@ def _sell_junk(keep: str = "") -> str:
             done += len(ch)
     finally:
         core._EV_DROP["until"] = time.monotonic() + core.EV_DROP_TAIL_S  # late AddedTo events of this sale
+    sold = _sold_lines([it for it in on_screen if it["uuid"] in set(picked[:done])], junk)
     if done < len(picked):
         return out + (f"\n(sold {done} of {len(picked)} junk items in {done // SELL_CHUNK} barter(s) before this "
-                      f"one failed; trade sell=junk again sells the rest)" if done else "")
+                      f"one failed; trade sell=junk again sells the rest)" + sold if done else "")
     left = len(on_screen) - len(picked)
     if len(chunks) > 1:
         out += f"\n({len(chunks)} barters of up to {SELL_CHUNK} items)"
     note = f"\n(sold {len(picked)} junk items, ~{total} g at the shown prices" + (
-        f"; {left} more left: the trader ran out of gold, stash them with manage_inventory op=camp item=junk)" if left else ")")
-    return out + note
+        f"; {left} more left: the trader ran out of gold)" if left else ")")
+    return out + note + sold + _kept_line(st.get("your_items") or [], junk, inv, keep_set) + _bag_junk_line(junk, set(picked))
+
+
+def _bag_junk_line(junk: dict, out_of_it: set[str]) -> str:
+    """'\nLEFT IN BAGS 22 junk items (Alchemy Pouch, Pouch): the trade screen shows the bag, not what is in it'.
+    out_of_it: uuids not to count (the ones sold; with nothing sold, the ones the screen listed)."""
+    inside = [it for it in junk.values() if it.get("in") and it.get("uuid") not in out_of_it]
+    if not inside:
+        return ""
+    bags = ", ".join(sorted({str(it["in"]) for it in inside}))
+    return f"\nLEFT IN BAGS {len(inside)} junk items ({bags}): the trade screen shows the bag, not what is in it"
+
+
+def _sold_lines(items: list[dict], junk: dict) -> str:
+    """'\nSOLD Goblin Scimitar x16 48 g | Javelin x10 20 g | ...': every item a sell=junk barter sold, grouped by name
+    (count, gold at the shown prices), most gold first. The sale's own item events are dropped from EVENTS
+    (core._EV_DROP), so this is where the agent sees what went (human-gap research 2026-11-02: launch-v1's 36
+    sell=junk calls sold 430 items for ~4,000 g and named none of them)."""
+    groups: dict[str, list[int]] = {}
+    for it in items:
+        name = str(it.get("name") or junk.get(it["uuid"], {}).get("name") or "?")
+        g = groups.setdefault(name, [0, 0])
+        g[0] += economy._count(it) if it.get("count") else economy._count(junk.get(it["uuid"], {}))
+        g[1] += it.get("price") or 0
+    if not groups:
+        return ""
+    rows = sorted(groups.items(), key=lambda kv: (-kv[1][1], kv[0]))
+    return "\nSOLD " + " | ".join(f"{n}{f' x{c}' if c > 1 else ''} {g} g" for n, (c, g) in rows)
+
+
+def _kept_line(screen: list, junk: dict, inv: dict, keep_set: set[str]) -> str:
+    """'\nKEPT (not junk) on this trade screen: 12 consumables, 4 equipped, ...': what the junk rule held back of the
+    items offered for sale here, counted by why (economy.keep_kind), most first."""
+    by_uuid = {it["uuid"]: it for it in (inv or {}).get("items") or [] if isinstance(it, dict) and it.get("uuid")}
+    wanted = {u["uuid"] for u in economy.upgrades(inv)}
+    kinds: dict[str, int] = {}
+    for it in screen:
+        if not isinstance(it, dict) or it.get("uuid") in junk:
+            continue
+        rec = by_uuid.get(it.get("uuid"))
+        kind = economy.keep_kind(rec, keep_set, wanted) if rec else "other"
+        if kind in (None, "gold"):
+            continue
+        kinds[kind] = kinds.get(kind, 0) + economy._count(it if it.get("count") else rec or {})
+    if not kinds:
+        return ""
+    return "\nKEPT (not junk) on this trade screen: " + ", ".join(
+        f"{n} {k}" for k, n in sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
 # The next module (and so the rest, in file order) loads after this one; later ones used here.

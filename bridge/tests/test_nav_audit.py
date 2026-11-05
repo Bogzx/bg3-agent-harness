@@ -24,8 +24,8 @@ class ArrivalLeads(Base):
             return {"leads": [{"uuid": CHEST, "name": "Crate", "kind": "container", "dist": 3.0, "dir": "N",
                                "unvisited": True}], "ways": [{"dir": "N", "open_m": 20}]}
         self.g.try_rpc = frontier
-        out = batch._arrival_leads()
-        self.assertEqual(seen, [("nav.frontier", {"ways_cached": True})])
+        out = batch.walk_end_tail()
+        self.assertEqual([a for op, a in seen if op == "nav.frontier"], [{"ways_cached": True}])
         self.assertIn("LEADS (unvisited", out)
         self.assertIn("WAYS walkable: N 20m+", out)
 
@@ -35,7 +35,7 @@ class KilledLevelWays(unittest.TestCase):
         out = render.render_frontier({"leads": [], "ways": [{"dir": "N", "open_m": 20}], "ways_off": "slow"},
                                      core.H)
         self.assertIn("WAYS walkable: N 20m+", out)
-        self.assertIn("WAYS partial: path searches are throttled on this level", out)
+        self.assertIn("WAYS partial: a throttled level searches up to 2 directions per read", out)
 
     def test_no_line_on_a_healthy_level(self):
         out = render.render_frontier({"leads": [], "ways": [{"dir": "N", "open_m": 20}]}, core.H)

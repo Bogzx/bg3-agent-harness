@@ -229,8 +229,9 @@ function N.visited(level, p, slack)
 end
 
 -- Known ground (FAIRNESS.md: what a player saw or remembers seeing). A point is known when a party member stood in
--- its breadcrumb cell (the 4 m cell itself, same height band), or a party member sees it now (V.pointSeen: within
--- sight range, a clear ray from the eye to 0.5 m above it). A point once seen stays known this session (1 m cells,
+-- its breadcrumb cell (the 4 m cell itself, same height band), or a party member sees it now (V.pointSeen: on screen,
+-- within V.CAMERA_M of the leader or the member's own sight range, a clear ray from the eye to 0.5 m above it; ledges
+-- up to V.EDGE_DROP_M below an edge). A point once seen stays known this session (1 m cells,
 -- 2 m height bands). Fail closed: no ray answer (uncalibrated, broken) is not seen. Nav answers about a goal that is
 -- not known only with its straight distance and direction; walks end only on known ground.
 N.SEEN_MAX = 20000
@@ -943,6 +944,35 @@ function N.path(charUuid, target, deadline, noSearch)
     end
     if not r.unfinished then cachePut(key, r) end
     return r
+end
+
+-- The free spots `rad` around an occupied target `tpos`, nearest to `from` first: the first whose path `passes` is the
+-- answer (a copy with approach_pos), nil when none does. The engine's path to an occupied centre stops where its own
+-- goal handling does (w15 b2: 2.95 m from a Destroyer it then walked 1.7 m closer to). No new spot past
+-- FREE_RING_MS (REVIEW-18k: up to 8 engine searches on the server thread): unfinished, reachable unknown. -> r, ms
+N.FREE_RING_MS = 300
+function N.freeSpotPath(charUuid, tpos, rad, from, passes)
+    local t0, ring = Ext.Utils.MonotonicTime(), {}
+    for _, d in ipairs(RING) do
+        local q = { tpos[1] + d[1] * rad, tpos[2], tpos[3] + d[2] * rad }
+        ring[#ring + 1] = { q, from and U.dist(from, q) or 0 }
+    end
+    table.sort(ring, function(a, b) return a[2] < b[2] end)
+    local out
+    for _, it in ipairs(ring) do
+        if Ext.Utils.MonotonicTime() - t0 > N.FREE_RING_MS then
+            out = { reachable = nil, unfinished = true }
+            break
+        end
+        local fy = floorAt and floorAt(it[1][1], it[1][3], tpos[2]) or tpos[2]
+        local r2 = N.path(charUuid, { it[1][1], fy, it[1][3] })
+        if passes(r2) then -- a copy: r2 is the path cache's
+            out = { approach_pos = U.vec({ it[1][1], fy, it[1][3] }, 1) }
+            for k, v in pairs(r2) do out[k] = out[k] or v end
+            break
+        end
+    end
+    return out, Ext.Utils.MonotonicTime() - t0
 end
 
 -- File-local helpers the other parts use.

@@ -278,6 +278,29 @@ do -- A13 S069 20:37:23 (Vicar Humbletoes, trader gold 0): request Mantle 819g +
     ok(j.status == "failed" and tostring(j.error):find("the trader has no gold left", 1, true)
         and count("FinishBarter") == 0, "sell to a 0-gold trader: " .. tostring(j.error))
 
+    -- an item whose price can't be read (TradePrice < 0) counted 0: with the Balance's 1 coin the table read even and
+    -- the item went for 1 g. Fail closed, naming it; a gold stack's own TradePrice doesn't matter (count).
+    local bag = { Count = 1, TradePrice = -1 }
+    local coin = { Count = 1, TradePrice = -1, ItemType = "Gold" }
+    setup({ bag }, { coin }, 1858)
+    BG3AI.Services.offered[tostring(bag)] = { name = "Backpack" }
+    j = run(ops["ui.trade"]({ confirm = true }).job, 6000)
+    ok(j.status == "failed" and j.error == "not confirmed: the price of Backpack on the table could not be read"
+        and count("FinishBarter") == 0, "unreadable price: not confirmed: " .. tostring(j.status) .. " "
+        .. tostring(j.error) .. " FB=" .. count("FinishBarter"))
+    setup({ { Count = 1, TradePrice = 1 } }, { bag }, 1858)
+    j = run(ops["ui.trade"]({ confirm = true }).job, 6000)
+    ok(j.status == "failed" and tostring(j.error):find("could not be read", 1, true) and count("FinishBarter") == 0,
+        "unreadable price on the trader's side: not confirmed: " .. tostring(j.error))
+    setup({ { Count = 1, TradePrice = 1 } }, { coin }, 1858)
+    j = run(ops["ui.trade"]({ confirm = true }).job, 6000)
+    ok(j.status == "done" and count("FinishBarter") == 1, "1 g item for a 1-coin stack: bartered: "
+        .. tostring(j.error))
+    setup({ bag }, {}, 1858)
+    j = run(ops["ui.trade"]({ confirm = true, donate = true }).job, 6000)
+    ok(count("FinishBarter") == 1, "donate gives our side whatever its price: bartered: " .. tostring(j.error))
+    BG3AI.Services.offered = {}
+
     for k, f in pairs(saved) do UIt[k] = f end
     Ext.Entity = _entity
 end
@@ -372,6 +395,32 @@ do
     shield.buttons, sent = rows(2, 2), {}
     r = ops["ui.react"]({ use = true, which = 2 })
     ok(r.job and r.needs_click == nil, "ui.react: two interruptors -> commands, no click")
+    -- v010 live windows 6-7: Karlach's Reckless Attack, one interruptor with one row. Its Accept button is collapsed;
+    -- InterruptAcceptPlayerCommand closed the prompt without the reaction (w6), and the row's press (its
+    -- CommandParameter, a PassThrough multi-binding, reads nil) left it unanswered (w7). The bridge clicks the row.
+    local _prop = UIt.prop
+    UIt.prop = function(e, k)
+        if k == "IsChecked" and type(e) == "table" then return e.checked end
+        return _prop(e, k)
+    end
+    local reckless = popup(true, { { id = "reckless" } })
+    reckless.buttons = rows(1)
+    local pressedRow
+    reckless.buttons[2].onPress = function(b) pressedRow = b.k end
+    pages, sent = { reckless }, {}
+    r = ops["ui.react"]({ use = true })
+    ok(r.needs_click == 1 and r.rows == 1 and r.job == nil and pressedRow == nil and #sent == 0,
+        "ui.react: lone interruptor, one row -> needs_click 1, no press, no command (sent " .. #sent .. ")")
+    okr, errr = pcall(ops["ui.react"], { use = true, which = 2 })
+    ok(not okr and tostring(errr):find("no reaction option 2 (1 shown)", 1, true),
+        "ui.react: lone row, which 2 refused")
+    -- the row already chosen (Decision Use, the toggle checked): pressing it would undo the choice -> Accept as before
+    reckless.buttons[2].checked, pressedRow, sent = true, nil, {}
+    r = ops["ui.react"]({ use = true })
+    ok(r.job and pressedRow == nil and sent[1] and sent[1].name == "InterruptAcceptPlayerCommand",
+        "ui.react: a checked lone row -> Accept")
+    UIt.prop = _prop
+    pages = { shield }
     -- ui.react_probe: over the wanted row, over another, watch reads no rows
     shield.buttons = rows(6)
     shield.buttons[1 + 4].over = true                                       -- row 4 under the cursor
@@ -385,4 +434,15 @@ do
     r = ops["ui.react_probe"]({ which = 4 })
     ok(r.open == false and r.events == 0, "react_probe: gone")
     for k, f in pairs(saved) do UIt[k] = f end
+end
+
+-- w11 L7: the trader's Balance gold read TradePrice 0 ({price 0, count 52, gold true}): a gold stack is worth its count
+do
+    local SV = BG3AI.Services
+    local yours = { { name = "Backpack", price = 52 } }
+    local theirs = { { price = 0, count = 52, gold = true } }
+    ok(SV.tableValue(theirs) == 52, "gold stack at its count: " .. tostring(SV.tableValue(theirs)))
+    ok(SV.tradeImbalance(SV.tableValue(yours), SV.tableValue(theirs)) == nil, "the Backpack sale is even")
+    ok(SV.tableValue({ { price = 1, gold = true } }) == 1, "a 1-coin gold stack (count unset) is worth 1")
+    ok(SV.tableValue({ { name = "Candle", price = 12, count = 12 } }) == 12, "an item stack: its whole-stack price")
 end

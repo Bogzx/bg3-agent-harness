@@ -147,17 +147,13 @@ def dead_end_text(e: DeadEnd) -> str:
 
 
 def stop_note(e: DeadEnd | None, wp: dict | None, what: str = "it") -> str:
-    """Appended to travel_to's stop: '' the first time; from the second stop at the same spot, say so and
-    name another way (a waypoint nearer the goal, else the closest explored spot / the wiki)."""
+    """Appended to travel_to's stop: '' the first time; from the second stop at the same spot, that it stopped there
+    before, and the unlocked waypoint nearer the goal if there is one (D630: facts, no 'don't try this again')."""
     if e is None or e.count < DEAD_REPEAT:
         return ""
-    out = f"; tried {e.count}x: {dead_end_text(e)}. Don't try this approach again"
+    out = f"; tried {e.count}x: {dead_end_text(e)}"
     if wp:
-        out += (f": fast travel to {wp['name']} ({wp.get('to_goal_m', '?')}m from {what}) and come from that side "
-                f"(travel_to waypoint=\"{wp['name']}\")")
-    else:
-        out += (": the way in is from another side. route(...) shows the closest spot you have been; "
-                "wiki_search how to reach it, or explore along the roads (get_map)")
+        out += f"; the {wp['name']} waypoint is {wp.get('to_goal_m', '?')}m from {what}"
     return out
 
 
@@ -166,9 +162,7 @@ def start_warning(ends: list[DeadEnd]) -> str:
     bad = [e for e in ends if e.count >= DEAD_REPEAT]
     if not bad:
         return ""
-    return ("KNOWN DEAD END toward it: " + "; ".join(dead_end_text(e) for e in bad[:2])
-            + ". If this trip stops there again, take another approach (route() lists waypoints and the closest "
-              "spot you have been)")
+    return "KNOWN DEAD END toward it: " + "; ".join(dead_end_text(e) for e in bad[:2])
 
 
 def connector_dead(c: dict, ends: list[DeadEnd]) -> DeadEnd | None:

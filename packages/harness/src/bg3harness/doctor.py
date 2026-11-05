@@ -1,6 +1,6 @@
 """Can a new machine run the harness? Every check a stranger's machine needs, each failure with the fix. Stdlib only and
-read-only: it reads files and runs version queries (and one 0.1 s ffmpeg test encode), never installs or changes
-anything.
+read-only but for one file: it reads files and runs version queries (and 0.1 s ffmpeg test encodes), never installs
+anything, and writes only the bench recording's encoder setting, once, when none is set (check_record).
 
     python3 tools/doctor.py [--json]          # or: uv run python -m bg3harness.doctor [--json]
 
@@ -14,7 +14,8 @@ this adds what a first install misses:
   shim       the SDL input shim build/bg3sdl/libbg3sdl.so ($BG3AI_INPUT_LIB): the agent's clicks and keys
   display    DISPLAY / XAUTHORITY the game can open a window with, as the launcher fills them (bg3harness.display_env)
   ffmpeg     ffmpeg with libx264 (the evidence video), and the bench recording's encoder encoding a test frame
-             ($BG3AI_BENCH_RECORD_ENCODER, default h264_nvenc)
+             ($BG3AI_BENCH_RECORD_ENCODER, else ~/.config/bg3ai/record-encoder; with neither, the first of h264_nvenc
+             and libx264 that encodes is written there)
   disk       free space for the runtime dir: recordings take 1-2 GB per hour
   uv/python  uv on PATH and a Python >= 3.14 it can use (the packages require it)
   node/pi    Node.js >= 22.19 and tools/pi's pinned pi (only for the non-Claude clients: WARN, never FAIL)
@@ -33,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from bg3harness import bg3le_buildinfo, bg3le_prebuilt, display_env, preflight, steam_paths
+from bg3harness import recorder as hrec
 from bg3harness.preflight import FAIL, PASS, WARN
 
 MIN_PYTHON = (3, 14)
@@ -40,7 +42,8 @@ MIN_NODE = (22, 19)  # pi 1.3.0's engines (the web apps' Vite needs 20.19+ or 22
 NODE = ".".join(map(str, MIN_NODE))
 DISK_WARN_GB, DISK_FAIL_GB = 20, 5
 LAYER = "VkLayer_MESA_screenshot.json"
-RECORD_ENCODER_ENV = "BG3AI_BENCH_RECORD_ENCODER"  # bg3harness.runner.run_host reads the same variable
+RECORD_ENCODER_ENV = hrec.ENCODER_ENV  # bg3harness.runner.run_host reads the same variable
+RECORD_PROBE = ("h264_nvenc", "libx264")  # the encoder check_record writes when none is set: the GPU's first
 
 
 @dataclass(frozen=True)
@@ -200,19 +203,46 @@ def check_ffmpeg(ctx: Ctx) -> list[Check]:
             "ffmpeg", FAIL, f"{ffmpeg} has no libx264 encoder", "install a full ffmpeg build (apt install ffmpeg)"
         )
     ]
-    encoder = ctx.env.get(RECORD_ENCODER_ENV) or "h264_nvenc"
-    rc, out = _test_encode(ctx, ffmpeg, encoder) if encoder in encoders else (1, f"ffmpeg lists no {encoder} encoder")
-    if rc == 0:
-        checks.append(Check("record", PASS, f"the bench recording's encoder {encoder} encodes a test frame"))
-    else:
-        fix = (
-            f"set {RECORD_ENCODER_ENV}=libx264 (CPU encoding) or install the NVIDIA driver with NVENC"
-            if encoder == "h264_nvenc"
-            else f"set {RECORD_ENCODER_ENV} to an encoder that works here (h264_nvenc or libx264)"
-        )
-        last = out.strip().splitlines()[-1][:160] if out.strip() else f"exit {rc}"
-        checks.append(Check("record", FAIL, f"{encoder} can't encode here: {last}", fix))
+    checks.append(check_record(ctx, ffmpeg, encoders))
     return checks
+
+
+def check_record(ctx: Ctx, ffmpeg: str, encoders: set[str]) -> Check:
+    """The bench recording's encoder (recorder.machine_encoder) encodes a test frame. With none set, the first of
+    RECORD_PROBE that does is written to the machine's setting (recorder.encoder_file), once: the bench reads it."""
+
+    def encode(encoder: str) -> tuple[int, str]:
+        return _test_encode(ctx, ffmpeg, encoder) if encoder in encoders else (1, f"ffmpeg lists no {encoder} encoder")
+
+    encoder, where = hrec.machine_encoder(ctx.env, ctx.home)
+    if encoder is None:
+        tried: list[str] = []
+        for encoder in RECORD_PROBE:
+            rc, out = encode(encoder)
+            if rc == 0:
+                try:
+                    Path(where).parent.mkdir(parents=True, exist_ok=True)
+                    Path(where).write_text(encoder + "\n")
+                except OSError as e:
+                    detail = f"{encoder} encodes a test frame but {where} can't be written: {e}"
+                    return Check("record", FAIL, detail, f"set {RECORD_ENCODER_ENV}={encoder}, or make it writable")
+                return Check("record", PASS, f"{encoder} encodes a test frame: wrote it to {where} (bench recordings)")
+            tried.append(f"{encoder}: {_last_line(out, rc)}")
+        fix = "install the NVIDIA driver with NVENC, or an ffmpeg with libx264 (apt install ffmpeg)"
+        return Check("record", FAIL, f"no recording encoder encodes here ({'; '.join(tried)})", fix)
+    rc, out = encode(encoder)
+    if rc == 0:
+        return Check("record", PASS, f"the bench recording's encoder {encoder} ({where}) encodes a test frame")
+    fix = (
+        f"set {RECORD_ENCODER_ENV} to an encoder that works here (h264_nvenc or libx264)"
+        if where == RECORD_ENCODER_ENV
+        else f"delete {where} and rerun the doctor (it writes the encoder that works), or write one there"
+    )
+    return Check("record", FAIL, f"{encoder} ({where}) can't encode here: {_last_line(out, rc)}", fix)
+
+
+def _last_line(out: str, rc: int) -> str:
+    return out.strip().splitlines()[-1][:160] if out.strip() else f"exit {rc}"
 
 
 def _nearest_dir(path: Path) -> Path:

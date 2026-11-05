@@ -62,6 +62,12 @@ export function verdict(r: RunRow): string {
   return r.outcome ?? "–";
 }
 
+/** A valid run's disclosed relaunches before its start (result.json recovered_launches), "" when none. */
+export function relaunches(r: RunRow): string {
+  const n = r.recovered_launches.length;
+  return n ? `${n} relaunch${n > 1 ? "es" : ""} before its start` : "";
+}
+
 /** Each run's attempt number within its cell (scenario, model, condition), oldest first: run dir -> [n, of]. */
 export function attempts(runs: RunRow[]): Map<string, [number, number]> {
   const cells = new Map<string, RunRow[]>();

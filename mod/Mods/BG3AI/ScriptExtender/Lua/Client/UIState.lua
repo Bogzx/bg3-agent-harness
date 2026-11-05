@@ -196,7 +196,8 @@ end
 -- tree until the next layout pass, still pointing at the freed VMs. VMs are
 -- taken from ActiveDialogue.Answers (live) and paired by index with the
 -- rendered texts; if the counts differ the node is changing and nothing is
--- returned (changing = true).
+-- returned (changing = true). Exception: S.rowNumber (a row's AnswerIdx), only
+-- under the by-number pairing's guard (answers shown, not UI.quiet, rows current).
 function S.dialogueAnswers(widget, ad)
     local out = {}
     local list = UI.byName(widget, "answerList")
@@ -246,6 +247,19 @@ function S.dialogueAnswers(widget, ad)
         -- 144, 216, 350), and ExtentHeight / row height counts every answer. When that count is the VM count,
         -- the rows pair with VMs by position whatever texts the VMs have (with one texted VM, e.g. "Leave.",
         -- the rule above found none and get_dialogue showed no options at all).
+        -- v010 live window 4 (Lae'zel's cage, 6 answers, 5 rows; the 4th "[PALADIN] [DECEPTION] ..." wraps to two
+        -- lines): the VMs have no text and listWindow's first-row arithmetic counted 7 answers, so no pairing above
+        -- held and the rows went out rows_only, whose button press the game ignored (twice; 33 of 40 launch-v1
+        -- choices on that node "still running"). Pair each row with the live VM of the same AnswerIdx (the number
+        -- the row shows, minus 1), whatever the rows' heights or the scroll.
+        if #items > 0 and props(ad).ShowAnswers == true and not UI.quiet(6) and (texted == 0 or current) then
+            local byNum, last = S.pairRenderedByNumber(items, vms, n)
+            if byNum then
+                local below = last - byNum[#byNum].i
+                return byNum, false, { below = below > 0 and below or nil,
+                    above = byNum[1].i > 1 and byNum[1].i - 1 or nil, by_number = true }
+            end
+        end
         if n > #items and #items > 0 and props(ad).ShowAnswers == true then
             local win = S.listWindow(list, items)
             if win and win.total == n then
@@ -285,7 +299,8 @@ function S.dialogueAnswers(widget, ad)
         if text then
             local vm = try(vms.At, vms, idx)
             local tags, body = S.splitTags(text)
-            local a = { i = #out + 1, text = body, vm = vm }
+            local ai = vm and tonumber(props(vm).AnswerIdx)
+            local a = { i = #out + 1, text = body, vm = vm, num = ai and ai + 1, runs = try(S.tagRuns, textEl) }
             if #tags > 0 then a.tags = tags end
             if vm then addTags(a, try(S.answerTags, vm)) end
             if vm and props(vm).Enabled == false then a.off = true end
@@ -369,7 +384,7 @@ function S.pairRenderedWithVMs(items, vms, n)
         if not hit then return nil end
         local vm = table.remove(pool, hit).vm
         local tags, body = S.splitTags(text)
-        local a = { i = #out + 1, text = body, vm = vm }
+        local a = { i = #out + 1, text = body, vm = vm, runs = try(S.tagRuns, textEl) }
         if #tags > 0 then a.tags = tags end
         addTags(a, try(S.answerTags, vm))
         if props(vm).Enabled == false then a.off = true end
@@ -417,7 +432,7 @@ function S.pairRenderedByPosition(items, vms, first)
         local vm = try(vms.At, vms, idx)
         if not vm then return nil end
         local tags, body = S.splitTags(text)
-        local a = { i = idx, text = body, vm = vm, row = k }
+        local a = { i = idx, text = body, vm = vm, row = k, runs = try(S.tagRuns, textEl) }
         if #tags > 0 then a.tags = tags end
         addTags(a, try(S.answerTags, vm))
         if props(vm).Enabled == false then a.off = true end
@@ -440,6 +455,49 @@ function S.renderedRows(items, first)
         out[#out + 1] = a
     end
     return out
+end
+
+-- The number a rendered answer row shows (AnswerTextPrefix binds AnswerIdx + 1), from the row's DataContext (SAFETY
+-- note at S.dialogueAnswers). Window 5: the prefix's text reads "." (its number run has no readable Text). nil: unread.
+function S.rowNumber(item)
+    local dc = try(function() return item.DataContext end)
+    local idx = dc and tonumber(UI.prop(dc, "AnswerIdx"))
+    return idx and idx + 1 or nil
+end
+
+-- The live answer VMs by the number the game shows for them (AnswerIdx + 1), and the highest such number.
+function S.vmsByNumber(vms, n)
+    local by, last = {}, 0
+    for k = 1, n do
+        local vm = try(vms.At, vms, k)
+        local idx = vm and tonumber(props(vm).AnswerIdx)
+        if idx then
+            by[idx + 1] = vm
+            if idx + 1 > last then last = idx + 1 end
+        end
+    end
+    return by, last
+end
+
+-- Rows paired with the live VMs by S.rowNumber (texts from the rows, tags also from the VM: window 5's rendered tag
+-- runs read empty): { {i = shown number, text, tags, vm, row, num} }, the highest number; nil unless all pair.
+function S.pairRenderedByNumber(items, vms, n)
+    local by, last = S.vmsByNumber(vms, n)
+    local out = {}
+    for k, item in ipairs(items) do
+        local num = S.rowNumber(item)
+        local vm = num and by[num]
+        local textEl = UI.byName(item, "AnswerText")
+        local text = textEl and answerText(textEl) or UI.allText(item)
+        if not (vm and clean(text)) then return nil end
+        local tags, body = S.splitTags(text)
+        local a = { i = num, text = body, vm = vm, row = k, num = num, runs = try(S.tagRuns, textEl) }
+        if #tags > 0 then a.tags = tags end
+        addTags(a, try(S.answerTags, vm))
+        if props(vm).Enabled == false then a.off = true end
+        out[#out + 1] = a
+    end
+    return out, last
 end
 
 -- The continue answer VM (ActiveDialogue.ContinueAnswer) when present.
@@ -480,7 +538,9 @@ function S.dialogue(wmap)
         if #answers > 0 then
             d.options = {}
             for _, a in ipairs(answers) do
-                d.options[#d.options + 1] = { i = a.i, text = a.text, tags = a.tags, off = a.off }
+                -- idx (the game's AnswerIdx) and runs (tag runs on the row): state.dialogue_tags' merge keys
+                d.options[#d.options + 1] = { i = a.i, text = a.text, tags = a.tags, off = a.off, runs = a.runs,
+                    idx = a.vm and tonumber(props(a.vm).AnswerIdx) }
             end
         end
     end
@@ -918,23 +978,5 @@ end
 
 RPC.register("ui.state", function(args) return S.state(args or {}) end)
 RPC.register("ui.story_timer", function() return S.storyTimer() or { none = true } end)
-
--- ui.answer_list -> {over, first, total, offset, scrollable} of the open dialogue's answer list: the bridge
--- finds the list under the cursor (over) and wheels it to read the rows below the fold (a player scrolls).
-RPC.register("ui.answer_list", function()
-    local w = UI.widgetMap().Dialogue
-    local list = w and UI.isVisible(w.el) and UI.byName(w.el, "answerList")
-    if not list then return { open = false } end
-    local items = UI.findAll(list, function(e)
-        local ty = UI.typeName(e)
-        return ty == "ls.LSListBoxItem" or ty == "ListBoxItem"
-    end, { prune = true })
-    local out = { open = true, over = UI.get(list, "IsMouseOver") == true, rows = #items }
-    local win = #items > 0 and S.listWindow(list, items)
-    if win then
-        out.first, out.total, out.offset, out.scrollable = win.first, win.total, win.offset, win.scrollable
-    end
-    return out
-end)
 
 return S

@@ -25,7 +25,7 @@ class Ways(unittest.TestCase):
                 {"dir": "E", "open_m": 0, "jump": {"gap_m": 3.2, "from": [2.5, 0, 0], "to": [6, -1.2, 0], "dy": -1.2}}]
         self.assertEqual(render.render_ways(ways),
                          "WAYS walkable: N 20m+ | blocked: E | jump: E gap 3.2m from (2.5,0,0) to (6,-1.2,0) "
-                         "(1.2m down) (jump_to the far side from the edge)")
+                         "(1.2m down) (a jump from the edge reaches the far side)")
         H = Handles()
         res = {"leads": [{"uuid": "u-vines", "name": "Vines", "kind": "ladder", "dist": 5, "dir": "N",
                           "height_m": 9.2, "leads": "up", "to": [3, 9.2, 4], "to_unvisited": True}]}

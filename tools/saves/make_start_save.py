@@ -5,8 +5,9 @@
 For the live worker. The game runs with BG3AI_SCENARIO_SETUP=1 and has a PROBE- copy loaded (never an original,
 STRESS-TEST.md), already moved to the scenario's start spot. Then, through the mod's scn.* ops (Server/Scenario.lua):
 
-  1. checks: scenario setup on, out of combat, no dialogue, the game screen up, difficulty Balanced (read only: the
-     mod can't set it; change it in Options > Gameplay and run again);
+  1. checks: scenario setup on, out of combat, no dialogue, the game screen up, the scenario's difficulty
+     (game_settings.difficulty, Balanced if it has none; read only: the mod can't set it; change it in Options >
+     Gameplay and run again);
   2. Karmic Dice off (scn.karmic {set=false}, read back), the avatar renamed to --owner (scn.rename_avatar);
   3. saves as SCN-<name> through the bridge's save path (bg3ai.tools.saving: the save menus, the disk wait) and
      checks the new folder's owner is --owner (the folder name comes from the avatar's name);
@@ -27,6 +28,7 @@ if sys.path and sys.path[0] and __file__.startswith(sys.path[0]) and __name__ ==
     del sys.path[0]
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -41,6 +43,7 @@ REPO = Path(__file__).resolve().parents[2]
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,35}$")  # SCN-<name> stays within the bridge's 40-char save label
 OWNER_RE = re.compile(r"^[A-Z][a-z]{1,15}$")  # bg3bench.authoring.neutral_name_problems: one capitalised word
 DIFFICULTY = "Balanced"
+SCENARIOS = REPO / "packages" / "bench" / "scenarios"
 
 
 class Rpc(Protocol):
@@ -51,8 +54,15 @@ class RefusedError(Exception):
     """The game isn't in a state to make the save, or a step didn't take."""
 
 
-def check_ready(rpc: Rpc) -> None:
-    """Scenario setup on, out of combat and dialogue, the game screen up, Balanced."""
+def scenario_difficulty(name: str, scenarios: Path = SCENARIOS) -> str:
+    """The difficulty scenario `name` plays at (its game_settings.difficulty); Balanced without a file or setting."""
+    f = scenarios / f"{name}.json"
+    doc = json.loads(f.read_text()) if f.is_file() else {}
+    return (doc.get("game_settings") or {}).get("difficulty") or DIFFICULTY
+
+
+def check_ready(rpc: Rpc, difficulty: str = DIFFICULTY) -> None:
+    """Scenario setup on, out of combat and dialogue, the game screen up, the game at `difficulty`."""
     rpc("scn.status")  # refused without BG3AI_SCENARIO_SETUP=1: that error says so
     st = rpc("state.status")
     if st.get("in_combat"):
@@ -63,9 +73,9 @@ def check_ready(rpc: Rpc) -> None:
     if screen != "game":
         raise RefusedError(f"{screen!r} on screen: close it so the game screen is up")
     diff = rpc("scn.difficulty")
-    if option_name(diff.get("difficulty")) != DIFFICULTY:  # the mod reads the ruleset name (DIFFICULTY_MEDIUM)
+    if option_name(diff.get("difficulty")) != difficulty:  # the mod reads the ruleset name (DIFFICULTY_MEDIUM)
         raise RefusedError(
-            f"difficulty is {diff.get('difficulty')!r} ({diff.get('rulesets')}): set {DIFFICULTY} in Options > "
+            f"difficulty is {diff.get('difficulty')!r} ({diff.get('rulesets')}): set {difficulty} in Options > "
             "Gameplay (the mod can't set it)"
         )
 
@@ -77,13 +87,14 @@ def make(
     name: str,
     owner: str = "Tav",
     log: Callable[[str], None] = print,
+    difficulty: str = DIFFICULTY,
 ) -> Path:
     """Steps 1-4 (module docstring); returns the save folder written. scn.undo runs on every way out."""
     if not NAME_RE.match(name):
         raise RefusedError(f"scenario name {name!r}: lowercase letters, digits and _ (start with a letter, <= 36)")
     if not OWNER_RE.match(owner):
         raise RefusedError(f"owner {owner!r}: one plain capitalised word (Tav, Ana)")
-    check_ready(rpc)
+    check_ready(rpc, difficulty)
     label = f"SCN-{name}"
     k = rpc("scn.karmic", {"set": False})
     if k.get("karmic") is not False:
@@ -161,7 +172,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return core.game.rpc(op, args, context=context)
 
     try:
-        make(rpc, bridge_save(saving, saver, core), registrar(args.store, args.name), args.name, args.owner)
+        make(
+            rpc,
+            bridge_save(saving, saver, core),
+            registrar(args.store, args.name),
+            args.name,
+            args.owner,
+            difficulty=scenario_difficulty(args.name),
+        )
     except (RefusedError, GameError) as e:
         print(f"make_start_save: {e}", file=sys.stderr)
         return 1

@@ -113,8 +113,10 @@ The three harness-only files are not agent-facing:
   included (trades, pickpockets, thefts, crimes, kills, loot), in the facts v1 event shapes.
 * **Roll log** (`RollLog.lua`, ops `roll.since` / `roll.snapshot`): every die roll the game makes, for the
   benchmark's luck number (D9). `natural` and `dc` are filled where the game exposes them, which on this build is
-  passive and skill/ability checks (the RequestedRoll component); saving throws and attack rolls are logged with
-  `natural`/`dc` null (success, roller and stream counts only), so the luck number is the checks' luck. Closed
+  passive and skill/ability checks plus death and concentration saves (the RequestedRoll component). Spell saving
+  throws are logged with `natural`/`dc` null (success, roller and stream counts only). Attack rolls have no
+  RollResult: each attack-roll cast (CastedSpell) is logged as its own `event: "attack"` record with the caster
+  and the exact stream draws since the previous record, `natural` null. So the luck number is the checks' luck. Closed
   2026-10-24 after two live probe passes found no source for them (`tools/dev/probe_roll_sources.py`; evidence in
   research/fix/vis.md "R2" and research/fix/live.md Window D2: `runtime/probes/fix-live/rolls-dump.txt`,
   `rolls2-dump.txt`, `runtime/probes/fix-vis/rolls.json`, `rolls2.json`; the passive checks' PASS in
@@ -278,7 +280,7 @@ A lesson is shown once per fight, and once per region entry (on a region change 
 re-read when its mtime changes.
 
 **4. LAST ATTEMPT (act).** After a reload within ~10 min of a bad fight, load_game's result and the first
-get_status carry `LAST ATTEMPT: <summary> — plan a different approach (…)`. The first turn of the retried fight
+get_status carry `LAST ATTEMPT: <summary>` (facts only since 2026-11-04, D630: no harness tips). The first turn of the retried fight
 repeats 2-3 key facts. setup's LESSONS line is separate and comes from the store.
 
 **act implementation (2026-10-10 19:50):** debrief.py + server.py hooks, as specified above, with act's extra fields

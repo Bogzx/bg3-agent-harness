@@ -61,7 +61,7 @@ def _nearby_miss_text(full: dict, words: list[str], radius: float) -> str:
         out += " Characters in view: " + ", ".join(shown) + (f" (+{len(chars) - 8} more)" if len(chars) > 8 else "")
     else:
         out += " No characters in view."
-    return out + " Someone out of sight: get_map / the journal for where they went, or route to their last place."
+    return out
 
 
 def _nearby_party_lines(words: list[str]) -> list[str]:
@@ -252,9 +252,9 @@ def route(objective: str = "", target: str = "", x: float | None = None, y: floa
     """The way to a goal, read from the engine instead of a screenshot: objective (o1, or a map marker m1), a visible target id, or x,y,z.
     Says how far and how high it is, the walk in legs (8m NW, CLIMB 9m up, 6m E) with
     fire in view on the way, and when no path exists: the closest walkable spot and the ladders/doors in view ranked by how much they
-    help (which way a ladder climbs), ending with one NEXT step. connectors=true lists ladders/doors even when a path exists.
+    help (which way a ladder climbs, which ladders the way up or down takes). connectors=true lists ladders/doors even when a path exists.
     A goal on ground the party hasn't seen or walked gets only its distance and direction.
-    go=true: check and go in one call: starts travel_to the goal when a path exists, else to the closest walkable spot."""
+    go=true: check and go in one call: travel_to the goal when a path exists, else to the closest walkable spot (it returns at the trip's end, as travel_to does)."""
     t0 = time.monotonic()
     args: dict[str, Any] = {"char": plumbing._who_uuid(who)} if who else {}  # no char: nav.route uses the active one
     t = (target or objective).strip()
@@ -348,7 +348,7 @@ def path_preview(target: str = "", x: float | None = None, y: float | None = Non
 
 def _route_hint(args: dict) -> str:
     """nav.route for a failed walk toward a pos/target: the height gap, the closest spot, the best ladder/door,
-    and one NEXT step (route.hint_text). '' if it can't be had."""
+    and the route fact the rest doesn't state (route.hint_text). '' if it can't be had."""
     q = {k: args[k] for k in ("char", "pos", "target") if k in args}
     res = core.game.try_rpc("nav.route", q) if ("pos" in q or "target" in q) else None
     if not isinstance(res, dict):
@@ -379,8 +379,8 @@ WALK_CLIP_MOVEMENT = True
 @core.mcp.tool()
 @reporting._guard
 def walk_toward(direction: str = "", objective: str = "", target: str = "", max_m: float = 30.0,
-                who: str | None = None, run: bool = True, wait: bool = False) -> str:
-    """Walk as far as the ground allows (up to max_m) toward a compass direction (N, NE, E, SE, S, SW, W, NW), a quest objective (id like o1 from get_status/get_map, or words from its name), or a visible target id. Picks the farthest point with a direct walkable path, then walks there like move_to (out of combat it returns within ~1 s with a job id + ETA, or the result if it already ended; in combat it returns at the walk's end). Good for "head west" or "go toward the objective marker" when no door or item is in view. In a fight a walk longer than the movement left is cut to it (the result says so)."""
+                who: str | None = None, run: bool = True, wait: bool = True) -> str:
+    """Walk as far as the ground allows (up to max_m) toward a compass direction (N, NE, E, SE, S, SW, W, NW), a quest objective (id like o1 from get_status/get_map, or words from its name), or a visible target id. Picks the farthest point with a direct walkable path, then walks there like move_to (it returns at the walk's end with what changed and the minimap block; out of combat wait=false returns within ~1 s with a job id + ETA instead). Good for "head west" or "go toward the objective marker" when no door or item is in view. In a fight a walk longer than the movement left is cut to it (the result says so)."""
     t0 = time.monotonic()
     args: dict[str, Any] = {"char": plumbing._who(who), "max_m": max_m}
     if objective:
@@ -413,9 +413,9 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         n = res.get("samples") if isinstance(res, dict) else None
         hz = macros.hazard_text(res.get("hazard")) if isinstance(res, dict) else ""
         if hz:
-            return reporting._finish("walk_toward", args, f"FAILED: the way toward {what} crosses {hz}. Go around it"
-                           " (another direction, get_frontier) or "
-                           f"{macros.hazard_way_out(res.get('hazard'))}.", t0)
+            fact = macros.hazard_fact(res.get("hazard"))
+            return reporting._finish("walk_toward", args, f"FAILED: the way toward {what} crosses {hz}"
+                           + (f" ({fact})" if fact else "") + ".", t0)
         body = (f"FAILED: no walkable ground toward {what} within {render.num(max_m)}m"
                 + (f" ({n} spots checked)" if n is not None else ""))
         note = render.opened_note(res, core.H)
@@ -425,8 +425,7 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         others = navhints.other_dirs_text(res.get("others") if isinstance(res, dict) else None)
         if not hint and not others:
             hint = _wedged_hint(args.get("char"), args.get("pos")).lstrip("; ")
-        return reporting._finish("walk_toward", args, body + ("\n" + hint if hint else others + "." if others else
-                                                    ". Try another direction, get_frontier, or a door."), t0)
+        return reporting._finish("walk_toward", args, body + ("\n" + hint if hint else others + "."), t0)
     head = f"heading {res.get('dir') or ''} toward {what}: {render.num(res.get('straight_m', 0))}m"
     if res.get("path_m") is not None:
         head += f" (path {render.num(res['path_m'])}m{', winding' if res.get('winding') else ''})"
@@ -436,9 +435,11 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
         head += f", stopping short of {macros.hazard_text(res['hazard_beyond'])}"
     if res.get("standing_in"):
         head += f" (you are standing in {res['standing_in']})"
-    wait, note = plumbing._walk_wait(wait)
-    body = plumbing._act("walk_toward", "act.move_to", {"char": args["char"], "pos": res["pos"], "run": run}, wait=wait,
-                note=note)
+    wait, block = plumbing._walk_wait(wait)
+    # the point is walk_toward's own pick (a direction or an objective's way), so a short stop says so (act.move_to)
+    picked = {"picked": f"toward {what}"} if not target else {}
+    body = plumbing._act("walk_toward", "act.move_to", {"char": args["char"], "pos": res["pos"], "run": run, **picked},
+                         wait=wait, block=block, t0=t0)  # the 90 s budget counts from the call (nav.reach_toward first)
     left = turn.movement_left(body) if WALK_CLIP_MOVEMENT and turn.move_too_long(body) else None
     over = turn_plan._path_over(body)
     if left is not None and left >= 1.0 and over is not None and res.get("straight_m") is not None:
@@ -457,7 +458,7 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
             r2 = core.game.try_rpc("nav.reach_toward", {**args, "max_m": budget, "loose": True}) if budget >= 1.0 else None
         if isinstance(r2, dict) and r2.get("reachable") and r2.get("pos"):
             body = plumbing._act("walk_toward", "act.move_to", {"char": args["char"], "pos": r2["pos"], "run": run},
-                        wait=wait, note=note)
+                        wait=wait, block=block)
             head += (f"; cut to the movement left ({render.num(left)}m): "
                      f"{render.num(r2.get('straight_m', budget))}m")
     return head + "\n" + body
@@ -466,7 +467,7 @@ def walk_toward(direction: str = "", objective: str = "", target: str = "", max_
 @core.mcp.tool()
 @reporting._guard
 def get_combat_state() -> str:
-    """Turn order (visible combatants), whose turn it is, round, and the active character's remaining action economy."""
+    """Turn order (visible combatants, with what each is concentrating on), whose turn it is, round, the clouds and harmful surfaces in view (HAZARD lines, as look), and the active character's remaining action economy."""
     t0 = time.monotonic()
     return reporting._finish("get_combat_state", {}, _combat_state_text(), t0)
 
@@ -488,8 +489,10 @@ def _combat_state_text() -> str:
     limit = render.turn_limit_line(timer)
     if limit:
         body += "\n" + limit
-    # One read should be enough to plan the whole turn: add the acting party member's actions.
-    st = core.game.try_rpc("state.status") or {}
+    # One read should be enough to plan the whole turn: add the acting party member's actions. The clouds and
+    # surfaces in view (nav.hazards, as look lists them) ride in the same eval as the status.
+    st, hz = _read_with_hazards("state.status", {})
+    st = st or {}
     turn_plan._remember_party(st)  # the result's events text reads the party from it, not from a second read
     party = {c.get("uuid") for c in st.get("party") or []}
     hint = reporting._fight_hint(res, party)
@@ -502,26 +505,43 @@ def _combat_state_text() -> str:
     if len(mine) > 1:
         body += ("\nSHARED TURN: " + ", ".join(queueing._label(u) for u in mine)
                  + " can all act now, in any order (who=<member> on each action, end_turn for each)")
+    hzl = overview._hazard_lines(hz, always=True)  # the full combat view: every patch in view, every call
+    if hzl:
+        body += "\n" + "\n".join(hzl)
     if cur in party:
-        block = _turn_block(res, cur)
+        block = _turn_block(res, cur, hazards=False)
         if block:
             body += "\n" + block
     body += _light_note(res)
     return body
 
 
-def _turn_block(cs: Any, cur: str) -> str:
+def _read_with_hazards(op: str, args: dict, char: str | None = None) -> tuple[Any, Any]:
+    """(op's result, the nav.hazards patches) from ONE server eval; (None, None) when the eval fails. The patches are
+    the ones a party member sees within 12 m of `char` (default: the selected character), as look lists them."""
+    try:
+        res, hz = delta.multi_rpc(core.game, [(op, args), ("nav.hazards", {"char": char} if char else {})])
+    except GameError:
+        return None, None
+    return res, (hz.get("hazards") if isinstance(hz, dict) else None)
+
+
+def _turn_block(cs: Any, cur: str, hazards: bool = True) -> str:
     """The acting party member's turn block as get_combat_state shows it: its reach line and YOUR ACTIONS (one
     state.actions read; cs is the state.combat already read). '' when the read fails. end_turn and
-    wait_for('my_turn') end with it too, so a party turn needs no get_combat_state first (a player sees the hotbar)."""
-    acts = core.game.try_rpc("state.actions", {"uuid": cur})
+    wait_for('my_turn') end with it too, so a party turn needs no get_combat_state first (a player sees the hotbar).
+    hazards: also the HAZARD lines around `cur` when the patches in view changed since they were last shown (the
+    same eval; Balthazar: the agent learnt of the Cloudkill cloud only from '+Cloudkill' on whoever it had hit)."""
+    acts, hz = _read_with_hazards("state.actions", {"uuid": cur}, cur) if hazards else \
+        (core.game.try_rpc("state.actions", {"uuid": cur}), None)
     overview._learn_actions(cur, acts)
     if not acts:
         return ""
     mv = (acts.get("resources") or {}).get("Movement")  # [amount, max] (State.lua resourcesView)
     rl = turn.reach_line(cs, cur, mv[0] if isinstance(mv, (list, tuple)) and mv else None, queueing._label) \
         if isinstance(cs, dict) else None
-    return "\n".join(([rl] if rl else []) + ["YOUR ACTIONS (" + core.H.get(cur) + ")", render.render_actions(acts, core.H)])
+    return "\n".join(overview._hazard_lines(hz) + ([rl] if rl else [])
+                     + ["YOUR ACTIONS (" + core.H.get(cur) + ")", render.render_actions(acts, core.H)])
 
 
 _light_noted: set[str] = set()  # members told this combat that they fight with the lantern
@@ -539,9 +559,9 @@ def _light_note(cs: Any) -> str:
         u, light = o.get("uuid"), o.get("light_in_hand")
         if light and u and u not in _light_noted:
             _light_noted.add(u)
-            out.append(f"LIGHT: {queueing._label(u)} fights with the {light} in the main hand (torch damage). Keep it held "
-                       "in the Shadow Curse (its aura is the party's Moonshield); after the fight equip_best gives "
-                       "it to a caster and puts a real weapon back in this hand.")
+            out.append(f"LIGHT: {queueing._label(u)} fights with the {light} in the main hand (torch damage); in the Shadow "
+                       "Curse its aura is the party's Moonshield; equip_best gives it to a caster and a weapon to "
+                       "this hand.")
     return "".join("\n" + x for x in out)
 
 
@@ -565,9 +585,13 @@ def get_events() -> str:
 
 
 def _shots_dir() -> Path:
-    """Where the game's capture layer writes (its output_dir, set at launch from the launcher's runtime). A bridge
-    with its own BG3AI_RUNTIME (acceptance.py) waited in the wrong folder: "did not present a frame in time"."""
-    return Path(os.environ.get("BG3AI_SHOTS_DIR") or core.RUNTIME / "shots")
+    """Where the game's capture layer writes: its output_dir, read from the running game's environment, else
+    BG3AI_SHOTS_DIR, else runtime/shots (both only guess what the launcher passed). A bridge with its own
+    BG3AI_RUNTIME (acceptance.py) or from another checkout (v010 window 9: w8-fixes' call.py, the game from
+    w9-fixes) waited in the wrong folder: "did not present a frame in time"."""
+    from ..screen import layer_output_dir
+
+    return layer_output_dir() or Path(os.environ.get("BG3AI_SHOTS_DIR") or core.RUNTIME / "shots")
 
 
 @core.mcp.tool()
@@ -576,6 +600,7 @@ def screenshot(scale: float = 0.5, map: bool = False) -> Image | str:
     """Picture of the game screen exactly as the player sees it. Costly: use only when text tools can't answer (layout, puzzles, unknown popups). scale: 0.25-1.0 of 2560px width. map=true: opens the map, takes the picture and closes the map again, in one call (no M / ESCAPE by hand)."""
     from ..screen import ScreenCapture
 
+    t0 = time.monotonic()  # the record covers the capture (it was a 0 ms record after it: survey 2026-11-04)
     if core._screen is None:
         core._screen = ScreenCapture(_shots_dir())
     width = int(2560 * max(0.25, min(scale, 1.0)))
@@ -593,7 +618,7 @@ def screenshot(scale: float = 0.5, map: bool = False) -> Image | str:
         if opened:
             core.game.try_rpc("ui.map_close", context="client")
     core._last_full_frame = full
-    core._log("screenshot", {"scale": scale, "map": map}, f"{full.size}", 0)
+    core._log("screenshot", {"scale": scale, "map": map}, f"{full.size}", (time.monotonic() - t0) * 1000)
     return Image(data=jpg, format="jpeg")
 
 
@@ -607,7 +632,7 @@ def zoom(x: float, y: float, w: float, h: float) -> Image | str:
     import io
 
     if core._last_full_frame is None:
-        return "Take a screenshot first."
+        return "No screenshot taken yet."
     W, Hh = core._last_full_frame.size
     box = (int(x * W), int(y * Hh), int((x + w) * W), int((y + h) * Hh))
     crop = core._last_full_frame.crop(box)

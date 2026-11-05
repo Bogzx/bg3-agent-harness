@@ -774,11 +774,9 @@ def finish_needs_click(game: Game, inp: InputClient, result: dict | None) -> dic
 # right-click context menus and screenshots on locked doors while nobody in the party carried Thieves' Tools.
 TOOL_NEEDED: dict[str, tuple[str, str, str]] = {
     # op: (item name, name fragment to match, what to do instead)
-    "act.lockpick": ("Thieves' Tools", "thieves", "use its key, force it (attack the lock or door; "
-                     "a Sturdy one shrugs off weak hits), cast Knock, find another way in, or buy Thieves' "
-                     "Tools from a trader"),
-    "act.disarm": ("Trap Disarm Toolkit", "trap disarm", "avoid the trap, trigger it from range, "
-                   "or buy a Trap Disarm Toolkit from a trader"),
+    "act.lockpick": ("Thieves' Tools", "thieves", "its key, an attack on the lock or door (a Sturdy one shrugs off "
+                     "weak hits) or Knock opens it too; traders sell Thieves' Tools"),
+    "act.disarm": ("Trap Disarm Toolkit", "trap disarm", "traders sell Trap Disarm Toolkits"),
 }
 
 
@@ -819,7 +817,7 @@ def tool_check(game: Game, op: str, char: str | None) -> str | None:
     me = names.get(char) or "this character"
     if owners:
         who = [str(names.get(u) or u) for u in owners]
-        return f"{me} carries no {name}; {', '.join(who)} does: run it again with who={who[0]}"
+        return f"{me} carries no {name}; {', '.join(who)} does (who={who[0]})"
     return f"nobody in the party carries {name}: {instead}"
 
 
@@ -854,16 +852,16 @@ def run_click_action(game: Game, inp: InputClient | None, op: str, args: dict, w
     if not merged.get("click", {}).get("ok"):
         jr.status = "failed"
         reason = merged.get("click", {}).get("reason", "click failed")
-        jr.error = {"covered": f"the {merged.get('click', {}).get('screen')} screen covers the world (press_key ESCAPE first)",
+        jr.error = {"covered": f"the {merged.get('click', {}).get('screen')} screen covers the world (press_key ESCAPE closes it)",
                     "off_screen": "the target is not on screen",
                     "hover_miss": "could not point at the target",
                     "no_effect": "nothing happened",
                     "interrupted": ("a conversation started instead (someone saw it: lockpicking, disarming "
-                                    "or picking a pocket in sight of its owner or a guard is a crime): answer it"),
+                                    "or picking a pocket in sight of its owner or a guard is a crime)"),
                     "no_menu_entry": "the right-click menu had no such entry"}.get(reason, reason)
         if merged.get("click", {}).get("trap") == "still armed":
             jr.error = ("the trap is still armed after Disarm (no roll and no change within 4 s; opening or using it now sets it "
-                        "off): try disarm again with whoever has the best Sleight of Hand, or leave it")
+                        "off)")
     return jr
 
 

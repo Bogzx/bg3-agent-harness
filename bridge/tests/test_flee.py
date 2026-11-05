@@ -55,6 +55,7 @@ class Flee(unittest.TestCase):
         self.button = None  # {"over_at": (x, y)} when the HUD has a findable Flee button
         self.box = False
         self.fled = False
+        self.flee = None  # ui.flee_probe's flee state ({can, cause, value, max}), None: not read
         self.inp = FakeInput()
         test = self
 
@@ -81,6 +82,9 @@ class Flee(unittest.TestCase):
                     b = test.button
                     return {
                         "commands": test.commands,
+                        **(
+                            {"flee": test.flee} if test.flee is not None and not (args or {}).get("button_only") else {}
+                        ),
                         "button": b
                         and {
                             "widget": "HotBar",
@@ -163,6 +167,56 @@ class Flee(unittest.TestCase):
         self.assertNotIn("ui.flee", self.names())
         self.assertNotIn("click_box", self.names())
 
+    def test_greyed_out_by_the_game_stops_at_once_with_its_reason(self):
+        # v010 live window 4: CanFlee false (an enemy within 27 m the party can't see); 20 commands + 48 hover
+        # spots, 48 s
+        self.flee = {"can": False, "cause": "Enemy too close!", "value": 10.63, "max": 27}
+        self.commands = [{"widget": w, "name": "Flee", "can": True} for w in ("HotBar", "PlayerPortraits")]
+        self.button = {"over_at": (831, 922)}
+        out = combat.flee()
+        self.assertIn("FAILED: the game won't flee now (Flee is greyed out: Enemy too close! (10.6/27 m))", out)
+        self.assertEqual(self.names(), ["state.combat", "ui.flee_probe"])
+        self.assertEqual(self.inp.clicks, [])
+
+    def test_greyed_out_reason_from_the_games_flee_capability(self):
+        # v010 live window 5 (Balthazar's fight, enemy at 1.4 m): the HUD's FleeBlockCause empty, FleeDistance -1/-1;
+        # the reason is the game's eoc::FleeCapabilityComponent of the fleeing character
+        self.flee = {"can": False, "value": -1, "max": -1, "flags": ["EnemyTooClose"], "at": 1.42, "need": 27}
+        out = combat.flee()
+        self.assertIn("FAILED: the game won't flee now (Flee is greyed out: Enemy too close! (1.4/27 m))", out)
+        self.assertEqual([a for op, a in self.ops if op == "ui.flee_probe"], [{"char": P1}])
+
+    def test_window5_live_values_two_flags(self):
+        # v010 live window 5 load 7 (Gauntlet of Shar room, enemy at 2.3 m): ui.flee_probe read flags EnemyTooClose +
+        # Region, FleeDistance 2.26189 and CurrentFleeDistance 27.0 -> at 2.26189, need 27.0 (FleeOps.lua mapping)
+        self.flee = {
+            "can": False,
+            "value": -1,
+            "max": -1,
+            "flags": ["EnemyTooClose", "Region"],
+            "at": 2.26189,
+            "need": 27.0,
+        }
+        out = combat.flee()
+        self.assertIn("(Flee is greyed out: Enemy too close! (2.3/27 m); fleeing isn't allowed in this area)", out)
+
+    def test_greyed_out_several_flags_no_distance(self):
+        self.flee = {"can": False, "value": -1, "max": -1, "flags": ["CantMove", "Downed"], "at": -1, "need": 27}
+        self.assertIn("(Flee is greyed out: can't move; downed)", combat.flee())
+
+    def test_greyed_out_without_a_cause(self):
+        self.flee = {"can": False, "value": -1, "max": 27}
+        self.assertIn("(Flee is greyed out: the game gives no reason)", combat.flee())
+
+    def test_one_command_name_runs_once(self):
+        # window 4: ui.flee ran 20 times (one name on many pages), each followed by the 2 s wait for the question
+        self.flee = {"can": True}
+        self.command_works = False
+        self.commands = [{"widget": f"Page{k}", "name": "Flee", "can": True} for k in range(20)]
+        out = combat.flee()
+        self.assertIn("FAILED: the game didn't ask to flee", out)
+        self.assertEqual([op for op in self.names() if op == "ui.flee"], ["ui.flee"])
+
     def test_no_question_no_yes(self):
         self.command_works = False
         out = combat.flee()
@@ -178,6 +232,64 @@ class Flee(unittest.TestCase):
         with mock.patch.object(boxclick, "click_box", click_box):
             out = combat.flee()
         self.assertIn("FAILED: pressed Flee (RequestFlee) and answered Yes, but Claude is still in the fight", out)
+
+
+class FleeRecords(Flee):
+    """Every flee call writes its metrics record, a FAILED one with the flee numbers (launch-v1: two ~49 s flee
+    failures left no record, so their time couldn't be split between probes, the box wait and the hover search)."""
+
+    def setUp(self):
+        super().setUp()
+        self.recs: list[dict] = []
+
+        def tool_done(tool, ms, nested=False, ok=True, t1=None, extra=None):
+            self.recs.append({"tool": tool, "ok": ok, **(extra or {})})
+
+        patcher = mock.patch.object(core.METRICS, "tool_done", tool_done)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_missed_hover_search_has_its_record(self):
+        self.command_works = False
+        self.button = {"over_at": (5, 5)}  # nowhere near FLEE_SEED: the search never finds it
+        with mock.patch.object(hoverclick, "PROBE_GAP_S", 0.0):
+            out = combat.flee()
+        self.assertIn("FAILED: couldn't click Flee (no cursor position over the button found)", out)
+        self.assertEqual(len(self.recs), 1, self.recs)
+        rec = self.recs[0]
+        self.assertEqual((rec["tool"], rec["ok"]), ("flee", False))
+        tries = rec["flee"]["hover"]["tries"]
+        self.assertEqual(rec["flee"]["hover"]["outcome"], "no cursor position over the button found")
+        self.assertEqual(rec["flee"]["ops"]["ui.flee_probe"][0], tries + 2)  # the first probe, hover's own, each spot
+        self.assertNotIn("tries", out)  # numbers for the record, not the agent's text
+        probes = [a for op, a in self.ops if op == "ui.flee_probe"]
+        self.assertEqual(probes[0], {"char": P1})  # commands, button and Claude's flee state
+        self.assertTrue(all(a == {"button_only": True} for a in probes[1:]))
+
+    def test_refused_early_return_has_its_record(self):
+        self.gob_m = 10.0
+        self.assertIn("REFUSED: enemy too close", combat.flee())
+        self.assertEqual([(r["tool"], r["ok"]) for r in self.recs], [("flee", False)])
+
+    def test_any_guarded_tool_writes_one_record(self):
+        from bg3ai.tools import reporting
+
+        @reporting._guard
+        def plain() -> str:
+            return "REFUSED: not now"
+
+        @reporting._guard
+        def finished() -> str:
+            return reporting._finish("finished", {}, "done", 0.0, events=False)
+
+        plain()
+        finished()
+        self.assertEqual([r["tool"] for r in self.recs], ["plain", "finished"])
+
+    def test_success_writes_one_record(self):
+        self.assertIn("fled: Claude", combat.flee())
+        self.assertEqual(len(self.recs), 1)
+        self.assertEqual(self.recs[0]["flee"]["ops"]["ui.flee_probe"][0], 1)
 
 
 if __name__ == "__main__":

@@ -161,7 +161,7 @@ class ServerTools(unittest.TestCase):
         moved = dict(MARKERS[0], pos=[-60.0, 0.0, 30.0], dist=66.8, dir="W")
         self.fake.markers = [moved, MARKERS[1], MARKERS[2]]
         self.assertEqual(travel_macro._objective_moved_note("o1", arrived_at),
-                         'o1 Escape the ship moved on: now 66.8m W: travel_to(objective="o1") again')
+                         'o1 Escape the ship moved on: now 66.8m W')
         self.fake.markers = [MARKERS[1], MARKERS[2]]
         self.assertIn("is gone now", travel_macro._objective_moved_note("o1", arrived_at))
 
@@ -209,7 +209,8 @@ class ServerTools(unittest.TestCase):
         reach = [a for op, a in self.fake.calls if op == "nav.reach_toward"][0]
         self.assertEqual(reach["dir"], "W")
         self.assertEqual(reach["char"], PARTY)
-        self.assertEqual(self.fake.jobs, [("act.move_to", {"char": PARTY, "pos": [-14.0, 0.0, 0.0], "run": True})])
+        self.assertEqual(self.fake.jobs, [("act.move_to", {"char": PARTY, "pos": [-14.0, 0.0, 0.0], "run": True,
+                                                           "picked": "toward W"})])
         self.assertTrue(out.startswith("heading W toward W: 14m (path 14.5m)"), out)
         self.assertIn("walk_toward: done", out)
 

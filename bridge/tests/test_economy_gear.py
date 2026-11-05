@@ -201,7 +201,7 @@ class GiveEquipped(unittest.TestCase):
                 calls.append((op, dict(args)))
                 return JobResult(status="done", result={"unequipped": True})
 
-        results = iter(["manage_inventory: FAILED — unequip it first", "manage_inventory: done — amount=1 to=e3"])
+        results = iter(["manage_inventory: FAILED — it is equipped", "manage_inventory: done — amount=1 to=e3"])
 
         def fake_act(tool, op, args, **kw):
             calls.append((op, dict(args)))
@@ -385,7 +385,7 @@ class ScrollUse(unittest.TestCase):
         out, calls, clicks = self._run("Gale", "Invisibility", owner=self.SH)
         self.assertTrue(out.startswith("ERR") or "FAILED" in out)
         self.assertIn("carries Scroll of Invisibility", out)
-        self.assertIn('who="Shadowheart"', out)
+        self.assertIn("e1 Shadowheart carries Scroll of Invisibility", out)
         self.assertEqual(calls, [])
 
     def test_a_book_opens_for_reading_and_nothing_is_clicked(self):

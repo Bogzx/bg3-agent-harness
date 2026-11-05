@@ -14,7 +14,7 @@ Nobody will answer questions while you play: decide yourself.
 `get_frontier`, `get_actions`, `get_dialogue`, `get_combat_state`, `get_journal`, `get_map`, `get_inventory`,
 `look_at`, `path_preview`, `route`.
 - `route(objective="o1")` (or `target=`/x,y,z) answers the way as text: floors above/below, the walk in legs with
-  climbs and jumps, the closest walkable spot, which ladder or door helps, and a NEXT step. `route(..., go=true)`
+  climbs and jumps, the closest walkable spot, which ladder or door helps. `route(..., go=true)`
   checks the way and starts the trip.
 - Observations are **deltas**: after the first call, `look`/`get_status`/`get_map` return only what changed since
   your last look (moves, HP, conditions, who appeared/left/turned hostile, items, mode, objectives). `look()` is the
@@ -24,19 +24,24 @@ Nobody will answer questions while you play: decide yourself.
 **Acting.** Anything the engine can do has an action tool: `move_to`, `walk_toward`, `interact`, `talk_to`, `loot`,
 `use_ability`, `end_turn`, `choose_dialogue`, `roll_check`, `react`, `fast_travel`, `manage_inventory`,
 `short_rest`/`long_rest`, `camp`, `level_up`, `trade`, and so on. For a screen no tool covers, `ui_action` acts on it.
-- **Movement is async.** `move_to` and `walk_toward` return at once with `started j12, ETA 3s`; `travel_to` (a
-  marker, objective or waypoint, as chained walks) returns at once with the trip as the first entry of the
-  character's queue. A `job_finished`/`queue_done` event in a later result says it arrived. A fast failure (no path,
-  a hazard ahead) still comes back in the first result. Out of combat the server ignores `wait=true` on walks and
-  says so. In combat a walk returns when it is over.
+- **A walk returns at its end.** `move_to`, `walk_toward` and `travel_to` (a marker, objective or waypoint, as
+  chained walks) return when the walk is over, arrived or stopped, with what changed and the minimap block:
+  `OBJECTIVES` (distance, direction, height), `WAYS` and the nearest unvisited `LEADS`. A prompt, a conversation or
+  a fight that starts ends the wait early and says so. A trip still going after ~90 s returns its progress, and
+  `wait_for` keeps waiting. Out of combat `wait=false` returns at once instead (`started j12, ETA 3s`, or the trip as
+  the first entry of the character's queue); a `job_finished`/`queue_done` event in a later result says it arrived.
+  In combat a walk returns when it is over, whatever `wait` says.
 - **`wait_for`** blocks until its target: `my_turn`, `idle`, a job (`j12`), `queue`, or an event kind. It returns
   early on a prompt. `wait()` passes game time.
-- **`queue_actions`** runs steps back to back with no round trip per step: walk → open → loot → walk on. Another
-  `queue_actions` call appends; right after a `move_to` it waits for that walk before its first step. The queue
+- **`queue_actions`** runs steps back to back with no round trip per step: open → loot → pick up → walk on. A walk
+  step (`move_to`, `walk_toward`, `travel_to`, `jump_to`) is the last step a batch takes: the steps after the first
+  one are not queued, and the result lists them (after one with an `"if"`/`"unless"` they are queued and run only if
+  it is skipped). Another `queue_actions` call appends; right after a `move_to` with `wait=false` it waits for that walk before its first step. The queue
   stops by itself on combat, a conversation, a reaction/roll prompt, a new hostile in view, low HP, or a failed step;
   the `queue_interrupted` event says why and what was left. `cancel_queue` stops it. Any direct action for the same
   character replaces the queue's current step. In combat `queue_actions` queues nothing.
-- **`do_actions`** is the blocking form: a short chain of steps in one call. Steps can carry `"if"`/`"unless"`
+- **`do_actions`** is the blocking form: a short chain of steps in one call, ending at its first walk step as
+  above. Steps can carry `"if"`/`"unless"`
   conditions (`in_combat`, `hp_below:50`, `item_present:e12`, `target_visible:e7`, `my_turn`, `in_dialogue`). The
   result ends with `CHANGES` (what moved, HP, items, who appeared). In combat `do_actions` runs no steps.
 - **In combat each call is one action**: `use_ability`, `move_to`, `walk_toward`, `jump_to` or `react`. It returns
@@ -127,29 +132,27 @@ what you leave in `memory/`, so your notes matter as much as your play.
 A skilled player clicks the next destination, then thinks while the character walks. Do the same:
 **issue the next steps, then observe and plan while they run.** Your character should never stand still while you
 think. The patterns that cover most of the game outside combat:
-1. **Go there, then act there:** `travel_to(objective="o1")` returns at once. Append what to do on arrival right
-   away: `queue_actions('[{"tool":"interact","target":"e15"},{"tool":"loot"}]')`. While it runs: `look`, read the
-   events, write your notes, plan the next batch.
-2. **A sweep in one call:** `queue_actions('[{"tool":"move_to","target":"e7"},{"tool":"interact","target":"e7"},{"tool":"loot"},{"tool":"pick_up","item":"e9"},{"tool":"walk_toward","direction":"W"}]')`.
+1. **Go there, then act there:** `travel_to(objective="o1", wait=false)` returns at once. Append what to do on
+   arrival right away: `queue_actions('[{"tool":"interact","target":"e15"},{"tool":"loot"}]')`. While it runs:
+   `look`, read the events, write your notes, plan the next batch.
+2. **A sweep in one call:** `queue_actions('[{"tool":"interact","target":"e7"},{"tool":"loot"},{"tool":"pick_up","item":"e9"},{"tool":"walk_toward","direction":"W"}]')`.
    Before it ends, append the next batch. Each result's EVENTS shows `queue_done`, or `queue_interrupted` with why
    and what was left: handle that first.
 3. **Needing the outcome is not a reason to block.** Even when the next decision depends on the arrival (what's
-   behind the door, did the route get through), issue the move async, **then do the work that doesn't depend on
-   it** (`note("…")` the last event, `path_preview`/`get_frontier` for the next leg, `look_at` something in view, a
-   `wiki_page` you'll need), and only then `wait_for("queue")` / `wait_for("j12")`. A fast failure comes back in the
+   behind the door, did the route get through), issue the move async (`wait=false`), **then do the work that
+   doesn't depend on it** (`note("…")` the last event, `path_preview`/`get_frontier` for the next leg, `look_at`
+   something in view, a `wiki_page` you'll need), and only then `wait_for("queue")` / `wait_for("j12")`. A fast failure comes back in the
    first result, so async costs you nothing.
 4. **Wiki lookups ride on a walk.** Before `wiki_search`/`wiki_page`, start a walk or queue (toward the lead you're
    checking, the next loot, a regroup), then read the wiki while it runs.
 
-**Never pass `wait=true` to `move_to`, `walk_toward` or `travel_to`**, not even after a failed or stopped walk, and
-not because an earlier call in this session did: one blocking walk invites the next, and the character stands still
-while you think. Also don't: call `wait()` to pass time (use `wait_for` with a target: `my_turn`, `idle`, a job, an
-event kind); write long notes between two actions instead of during a walk; call `interact`/`move_to` directly on a
+**Pass `wait=false` to `move_to`, `walk_toward` and `travel_to`** (they block by default), also after a failed or
+stopped walk: one blocking walk invites the next, and the character stands still while you think. Also don't: call
+`wait()` to pass time (use `wait_for` with a target: `my_turn`, `idle`, a job, an event kind); write long notes between two actions instead of during a walk; call `interact`/`move_to` directly on a
 character whose queue is running (a direct action supersedes the queue: append instead, or `cancel_queue` on
 purpose); make one tool call per step of a plan you already know. In dialogue, `dialogue_advance` for
-filler. Follow a result's `RUNNING …` (append, don't wait), `NEXT: …` and `PACE: …`.
-Results carry two pace hints: `NEXT: …` after a walk that still runs (what can be done while it runs) and `PACE: …`
-(a wait came before there was nothing else to do).
+filler. Follow a result's `RUNNING …` (append, don't wait) and `PACE: …`.
+`PACE: …` says a `wait_for` came right after issuing, with no other call in between.
 
 ## Efficiency (hard rule)
 - Read what the engine can tell you as text, and do what it can do with an action tool. For a screen no tool covers,

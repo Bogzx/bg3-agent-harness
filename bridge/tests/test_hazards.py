@@ -89,6 +89,20 @@ class TravelCrossing(Base):
         out = travel_macro.travel_to(x=50.0, y=0.0, z=0.0, wait=True, avoid_hazards="strict")
         self.assertNotIn("avoid", self.g.ops("nav.reach_toward")[0][1])
         self.assertIn("STOPPED: the way on crosses Fire 5m ahead", out)
+        self.assertIn("STOPPED: the way on crosses Fire 5m ahead @(5,0,0) (50m left)\n", out + "\n")  # REVIEW-13 3
+        self.assertNotIn("burns out", out)  # D630: no 'go around it ... or wait'; no duration claim either
+        self.assertNotIn("go around it", out)
+
+    def test_walk_toward_into_a_chasm_says_it_lasts(self):
+        self.g.reach = {"reachable": False, "hazard": {"surface": "Chasm", "pos": [5, 0, 0], "at_m": 5}}
+        out = observe.walk_toward(direction="E", max_m=20)
+        self.assertIn("FAILED: the way toward E crosses Chasm 5m ahead @(5,0,0) (it does not burn out).", out)  # D630
+
+    def test_walk_toward_into_web_claims_no_duration(self):  # REVIEW-13 item 3: Web doesn't burn out on its own
+        self.g.reach = {"reachable": False, "hazard": {"surface": "Web", "pos": [5, 0, 0], "at_m": 5}}
+        out = observe.walk_toward(direction="E", max_m=20)
+        self.assertIn("FAILED: the way toward E crosses Web 5m ahead @(5,0,0).", out)
+        self.assertNotIn("burns out", out)
 
     def test_detour_is_named(self):
         self.g.reach = lambda a: ({"reachable": True, "pos": [50.0, 0.0, -8.0], "detour": True, "dir": "SE",
@@ -217,14 +231,14 @@ class JumpLanding(Base):
                                    "land_off_m": 0, "jump_m": 3.5}}
         out = travel.jump_to(74.8, 22.8, 507.3)
         self.assertIn("jump_to: FAILED — too far to jump (9.6 m, this character can jump 4 m)", out)
-        self.assertIn("move_to (78.1,22.9,506) (walk 7.4m), then jump_to (74.8,22.8,507.3), a 3.5m jump", out)
+        self.assertIn("A walk to (78.1,22.9,506) (7.4m) then a 3.5m jump to (74.8,22.8,507.3) gets there.", out)
         self.assertEqual(self.g.ops("act.cast"), [])
 
     def test_too_far_but_walkable(self):
         self.g.landing = {"safe": True, "too_far": True, "dist_m": 9.0, "max_m": 4.0,
                           "plan": {"walk": True, "land": [-9.0, 0.0, 0.0], "land_off_m": 0, "path_m": 9.4}}
         out = travel.jump_to(-9.0, 0.0, 0.0)
-        self.assertIn("It is walkable: move_to (-9,0,0) (path 9.4m)", out)
+        self.assertIn("It is walkable to (-9,0,0) (path 9.4m)", out)
 
     def test_blocked_landing_plan_replaces_pick_another(self):
         self.g.landing = {"safe": False, "blocked": True, "dist_m": 4.4, "reliable_m": 4.0,
@@ -232,7 +246,7 @@ class JumpLanding(Base):
                                    "land_off_m": 1.0, "jump_m": 2.5}}
         out = travel.jump_to(-6.0, 35.0, 493.0)
         self.assertIn("is on a blocked tile (wall or hole)", out)
-        self.assertIn("then jump_to (-9.4,33.6,492.4) (1m from what you asked), a 2.5m jump", out)
+        self.assertIn("then a 2.5m jump to (-9.4,33.6,492.4) (1m from what you asked) gets there", out)
         self.assertNotIn("Pick another landing", out)
 
     def test_landing_in_the_air(self):
@@ -247,7 +261,8 @@ class WalkTowardAlternatives(Base):
                         "others": [{"dir": "SW", "m": 18.0, "path_m": 19.0}, {"dir": "NW", "m": 12.0, "winding": True}]}
         out = observe.walk_toward(direction="W", max_m=30)
         self.assertIn("no walkable ground toward W within 30m (7 spots checked). Walkable instead: SW 18m, "
-                      "NW 12m (winding) → walk_toward(direction=\"SW\").", out)
+                      "NW 12m (winding).", out)
+        self.assertNotIn("→ walk_toward", out)  # D630: the directions are facts, a suggested call is advice
         args = self.g.ops("nav.reach_toward")[0][1]
         self.assertTrue(args["loose"]); self.assertTrue(args["alts"])
 
@@ -271,7 +286,7 @@ class HazardLines(unittest.TestCase):
 
     def test_frontier_lists_hazards_after_leads(self):
         out = render.render_frontier({"leads": [], "hazards": PATCHES[:1]}, core.H)
-        self.assertEqual(out.splitlines(), ["No leads in view. Try another direction, a door, or get_map.",
+        self.assertEqual(out.splitlines(), ["No leads in view.",
                                             "HAZARD Fire 3m W (2x4m)"])
 
     def test_look_delta_shows_them_only_when_they_change(self):

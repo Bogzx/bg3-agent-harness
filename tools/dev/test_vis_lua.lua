@@ -54,12 +54,14 @@ Ext = {
     Utils = { MonotonicTime = function() return 1000 end, PrintWarning = function() end, Print = function() end },
     Osiris = { RegisterListener = function() end },
     Loca = { GetTranslatedString = function(h) return h end },
+    Stats = { Get = function(id) return id == "Target_Cloudkill" and { DisplayName = "Cloudkill" } or nil end },
     Events = { Tick = { Subscribe = function() end } },
     Entity = { Get = function(u)
         local d = ents[u]
         if not d then return nil end
         local e = { Uuid = { EntityUuid = u }, Transform = { Transform = { Translate = d.pos } } }
         e.CampPresence, e.HasExclamationDialog, e.Trader = d.CampPresence, d.HasExclamationDialog, d.Trader
+        e.Concentration = d.Concentration
         if d.item then e.ServerItem = d.item return e end
         e.ServerCharacter = {}
         if d.size then e.ObjectSize = { Size = d.size } end
@@ -394,6 +396,37 @@ test("get_nearby can_trade: a non-hostile trader (Trader tag or Trade offered), 
     end)
     BG3AI.Referee.traders = {}
     V.characters, ents[WITHERS].Trader, ents[GOB].pos = realChars, nil, gobPos
+    if not ok then error(err, 0) end
+end)
+
+test("get_nearby: a visible creature's concentration (act2 Balthazar's Cloudkill), none unseen", function()
+    local realChars, gobPos = V.characters, ents[GOB].pos
+    ents[GOB].pos = { -1419.0, 8.4, -2590.0 }
+    ents[GOB].Concentration = { SpellId = { Prototype = "Target_Cloudkill" } }
+    V.characters = function() return { { V.entity(WITHERS), ents[WITHERS].pos }, { V.entity(GOB), ents[GOB].pos } } end
+    local ok, err = pcall(function()
+        sees[WITHERS], sees[GOB] = true, true
+        local function conc()
+            local out = {}
+            for _, o in ipairs(S.nearby(ctx(), { kinds = { "characters" } }).characters) do
+                out[#out + 1] = o.uuid:sub(-3) .. "=" .. tostring(o.concentration)
+            end
+            table.sort(out)
+            return table.concat(out, ",")
+        end
+        pushed = {}
+        eq(conc(), "009=Cloudkill,352=nil", "the caster's spell, by its shown name")
+        -- act2-fights-analysis fix 4: its first sight in this fight gives the spell's tooltip, once
+        conc()
+        local infos = {}
+        for _, p in ipairs(pushed) do if p.kind == "spell_info" then infos[#infos + 1] = p.data end end
+        eq(#infos, 1, "one spell_info for two reads")
+        eq(infos[1] and infos[1]:sub(1, 10), "Cloudkill:", "its name first")
+        onStage[GOB] = false
+        eq(conc(), "352=nil", "not visible: no row, so no concentration")
+    end)
+    sees[GOB], onStage[GOB] = nil, nil
+    V.characters, ents[GOB].pos, ents[GOB].Concentration = realChars, gobPos, nil
     if not ok then error(err, 0) end
 end)
 

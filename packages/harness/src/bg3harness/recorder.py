@@ -80,6 +80,42 @@ ENCODER_ARGS: dict[str, tuple[str, ...]] = {
     "h264_nvenc": ("-preset", "p4", "-rc", "vbr", "-cq", "28", "-b:v", "0"),
     "libx264": ("-preset", "ultrafast", "-crf", "28"),
 }
+ENCODER_ENV = "BG3AI_BENCH_RECORD_ENCODER"  # this run's encoder; else the machine's setting (encoder_file)
+
+
+def encoder_file(env: Mapping[str, str], home: Path | None = None) -> Path:
+    """This machine's bench recording encoder setting, written once by bg3harness.doctor from its test encode:
+    $BG3AI_CONFIG_DIR (default $XDG_CONFIG_HOME/bg3ai, else ~/.config/bg3ai) / record-encoder, the encoder's name."""
+    if base := env.get("BG3AI_CONFIG_DIR"):
+        return Path(base) / "record-encoder"
+    xdg = env.get("XDG_CONFIG_HOME")
+    root = Path(xdg) if xdg else (home or Path.home()) / ".config"
+    return root / "bg3ai" / "record-encoder"
+
+
+def machine_encoder(env: Mapping[str, str], home: Path | None = None) -> tuple[str | None, str]:
+    """(the bench recording's encoder, where it was set): $BG3AI_BENCH_RECORD_ENCODER, else encoder_file's name;
+    (None, the file's path) with neither. No default: an encoder this machine can't run kills every recorded run."""
+    if encoder := env.get(ENCODER_ENV):
+        return encoder, ENCODER_ENV
+    path = encoder_file(env, home)
+    try:
+        return path.read_text().strip() or None, str(path)
+    except FileNotFoundError:
+        return None, str(path)
+
+
+def bench_encoder(env: Mapping[str, str], home: Path | None = None) -> str:
+    """machine_encoder's encoder; none, or one ENCODER_ARGS lacks, is refused (with the fix) before any run."""
+    encoder, where = machine_encoder(env, home)
+    if encoder is None:
+        raise ValueError(
+            f"no bench recording encoder set: run `uv run python -m bg3harness.doctor` (it writes {where} from its "
+            f"test encode), or set {ENCODER_ENV}=libx264 (CPU) or h264_nvenc (NVIDIA), or BG3AI_BENCH_RECORD=0"
+        )
+    if encoder not in ENCODER_ARGS:
+        raise ValueError(f"{where}={encoder!r}: one of {sorted(ENCODER_ARGS)}")
+    return encoder
 
 
 def sized(spec: RecordSpec, fps: int, height: int) -> RecordSpec:

@@ -585,12 +585,12 @@ class ToolCheck(unittest.TestCase):
         r = clicker.run_click_action(g, None, "act.lockpick", {"char": "U1", "target": "D"})
         self.assertEqual(r.status, "failed")
         self.assertIn("nobody in the party carries Thieves' Tools", r.error)
-        self.assertIn("force it", r.error)
+        self.assertIn("an attack on the lock or door", r.error)
         self.assertEqual(g.jobs, [])  # never walked up or clicked
 
     def test_other_member_has_tools(self):
         g = self.Inv([{"name": "Thieves' Tools", "owner": "U2", "in": "Pouch"}])
-        self.assertIn("Claude carries no Thieves' Tools; Shadowheart does: run it again with who=Shadowheart",
+        self.assertIn("Claude carries no Thieves' Tools; Shadowheart does (who=Shadowheart)",
                       clicker.tool_check(g, "act.lockpick", "U1"))
         r = clicker.run_click_action(g, None, "act.lockpick", {"char": "U1", "target": "D"})
         self.assertEqual(g.jobs, ["act.lockpick"])  # the holder picks it instead
@@ -606,6 +606,16 @@ class ToolCheck(unittest.TestCase):
             r = clicker.run_click_action(g, object(), "act.disarm", {"char": "U1", "target": "T"})
         self.assertEqual(r.status, "failed")
         self.assertIn("the trap is still armed after Disarm", r.error)
+
+    def test_covered_says_which_screen_and_the_key_that_closes_it(self):
+        g = self.Inv([{"name": "Trap Disarm Toolkit", "owner": "U1"}])
+        g.run_job = lambda op, args, wait_s=40.0: clicker.JobResult(
+            "done", {"needs_click": "T", "expect": "roll", "button": "R", "menu": "Disarm"})
+        with mock.patch.object(clicker, "finish_needs_click", lambda game, inp, res: {
+                "expect": "roll", "click": {"ok": False, "reason": "covered", "screen": "book"}}):
+            r = clicker.run_click_action(g, object(), "act.disarm", {"char": "U1", "target": "T"})
+        self.assertEqual(r.status, "failed")
+        self.assertEqual(r.error, "the book screen covers the world (press_key ESCAPE closes it)")  # D630: a fact
 
     def test_actor_has_tools_runs_the_job(self):
         g = self.Inv([{"name": "Thieves' Tools", "owner": "U1", "count": 2}])

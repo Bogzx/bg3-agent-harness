@@ -59,6 +59,7 @@ test("cast: a projectile's late hit is in the result, not no_damage (acceptance 
 end)
 
 test("cast: an order the engine silently drops fails after CAST_NO_START_MS (S035 jump_to 25 s x3)", function()
+    cast_seen = "none" -- a dropped order: the game makes no cast entity (its SpellCastState would be a start)
     spell("Target_Thing", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
     local j = job(op("cast", { char = P1, spell = "Target_Thing", pos = { 5, 0, 0 } }))
     tick(100) -- 6 s: still waiting
@@ -78,6 +79,7 @@ test("cast: an order the engine silently drops fails after CAST_NO_START_MS (S03
 end)
 
 test("cast in combat (ACT-11): a dropped order fails after CAST_NO_START_COMBAT_MS, not 8 s", function()
+    cast_seen = "none" -- a dropped order: the game makes no cast entity (its SpellCastState would be a start)
     combat_setup(9)
     spell("Target_Thing", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
     local j = job(op("cast", { char = P1, spell = "Target_Thing", target = NPC }))
@@ -95,6 +97,7 @@ test("cast in combat (ACT-11): a dropped order fails after CAST_NO_START_COMBAT_
 end)
 
 test("cast in combat while Stunned is refused; a dropped order while Fearful names the fear (S066/S067)", function()
+    cast_seen = "none" -- a dropped order: the game makes no cast entity (its SpellCastState would be a start)
     combat_setup(9)
     spell("Projectile_EB", { TargetRadius = "18", SpellType = "Projectile", UseCosts = "ActionPoint:1", Level = 0 })
     spell("STUNNED", { StatusType = "INCAPACITATED" })
@@ -142,7 +145,8 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
         StatusGroups = { "SG_Unconscious", "SG_Condition", "SG_Sleeping", "SG_Sleeping_Magical" } })
     spell("HOLD_PERSON", { StatusType = "INCAPACITATED", RemoveEvents = { "OnTurn" },
         RemoveConditions = "SavingThrow(Ability.Wisdom, SourceSpellDC())" })
-    spell("PRONE", { StatusType = "KNOCKED_DOWN", RemoveEvents = { "OnTurn" } })
+    spell("PRONE", { StatusType = "KNOCKED_DOWN", RemoveEvents = { "OnTurn" },
+        RemoveConditions = "(HasActionResource('Movement', 50, 0, true) and not HasPassive('Athlete_StandUp'))" })
     spell("FRIGHTENED", { StatusType = "BOOST", StatusGroups = { "SG_Frightened", "SG_Condition" },
         Boosts = "Disadvantage(AllAbilities);Disadvantage(AttackRoll);ActionResourceBlock(Movement)" })
     spell("HASTE_LETHARGY", { StatusType = "INCAPACITATED" })
@@ -168,12 +172,12 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
     eq(d[3].fix, "an adjacent ally's Help (an action) ends it", "prone fix")
     eq(d[4].effect, "cannot move"); eq(d[4].fix, nil, "fear: no fix")
     eq(d[5].name, "Lethargic")
-    eq(d[5].effect, "cannot move; its turn passes once the rest of its turn group has ended (act with it first)",
+    eq(d[5].effect, "cannot move; its turn passes once the rest of its turn group has ended",
         "lethargic: acts (S072) but never walks, its turn goes with the group's (S074/S089/S091)")
     -- the movement figure / walk guard: whatever "cannot act" or "cannot move"
     eq(G.move_blocked(P1), "Sleeping", "move_blocked: the first that stops a walk")
     on = { { id = "PRONE", name = "Prone" }, { id = "BLEEDING", name = "Bleeding" } }
-    eq(G.move_blocked(P1), nil, "prone stands up and walks")
+    eq(G.move_blocked(P1), "Prone", "prone in its own turn: down until its next turn start")
     on = { { id = "HASTE_LETHARGY", name = "Lethargic" } }
     eq(G.move_blocked(P1), "Lethargic", "lethargic")
     -- S065 11:51: Claude's FEARED turn: the game moved him and ended it while end_turn said "now e4's turn"
@@ -188,12 +192,13 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
     on = { { id = "SLEEPING_EYEBITE", name = "Sleeping" } }
     local j = job(op("cast", { char = P1, spell = "Projectile_SR", target = NPC }))
     eq(j.status, "failed", "asleep")
-    eq(j.error, "cannot act while Sleeping (it takes the whole turn): end its turn; an adjacent ally's Help "
+    eq(j.error, "cannot act while Sleeping (it takes the whole turn); an adjacent ally's Help "
         .. "(an action) ends it; any damage ends it")
     BG3AI.Visibility = savedV
 end)
 
 test("cast in combat: a dropped order right after a hit on the caster is ordered once more (S066-S069 x6)", function()
+    cast_seen = "none" -- a dropped order: the game makes no cast entity (its SpellCastState would be a start)
     combat_setup(9)
     spell("Target_Swing", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
     world[NPC].pos = { 1.5, 0, 0 }
@@ -203,6 +208,7 @@ test("cast in combat: a dropped order right after a hit on the caster is ordered
     clock = clock + 1000
     local j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
     eq(#called("UseSpell"), 1, "first order")
+    cast_seen = "state" -- the second order starts
     tick(52) -- 3.1 s, no CastSpell, no step
     eq(j.status, "running", "ordered again " .. tostring(j.error))
     eq(#called("UseSpell"), 2, "second order"); eq(#called("PurgeOsirisQueue"), 1, "the dropped one purged first")
@@ -214,6 +220,7 @@ test("cast in combat: a dropped order right after a hit on the caster is ordered
     world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
     A.dispatch("AttackedBy", { P1, NPC, NPC, "Slashing", 2, "", 0 }) -- a Bleeding tick at the turn start
     clock = clock + 500
+    cast_seen = "none"
     j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
     tick(52)
     eq(j.status, "running", "second order")
@@ -259,6 +266,7 @@ test("cast in combat: a dropped order right after a hit on the caster is ordered
 end)
 
 test("cast in combat: an enemy's reaction cast holds the no-start, then the order goes once more (A30, S094)", function()
+    cast_seen = "none" -- a dropped order: the game makes no cast entity (its SpellCastState would be a start)
     combat_setup(9)
     A.react_seen = nil
     spell("Target_Keene", { TargetRadius = "18", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
@@ -272,6 +280,7 @@ test("cast in combat: an enemy's reaction cast holds the no-start, then the orde
     -- nothing spent; the same call later worked. The reaction plays past 3 s: no purge while it does.
     local j = job(op("cast", { char = P1, spell = "Target_Keene", pos = { 3, 0, 0 } }))
     eq(#called("UseSpellAtPosition"), 1, "first order")
+    cast_seen = "state" -- the second order starts
     tick(8)
     A.dispatch("CastSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
     tick(44) -- 3.1 s after the order, the enemy's cast not over
@@ -290,6 +299,7 @@ test("cast in combat: an enemy's reaction cast holds the no-start, then the orde
     eq(j.status, "done", "the second order cast " .. tostring(j.error))
     -- dropped twice: names the reaction as a player sees it (an unseen caster unnamed)
     AP.Amount = 1
+    cast_seen = "none"
     j = job(op("cast", { char = P1, spell = "Target_Keene", pos = { 3, 0, 0 } }))
     A.dispatch("CastedSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
     tick(60)
@@ -579,7 +589,7 @@ test("cast out of range in combat (or a point target): refused as before, no wal
     world[NPC].pos = { 6, 0, 0 }
     combat_setup(9)
     local j = job(op("cast", { char = P1, spell = "Target_Help", target = NPC }))
-    eq(j.status, "failed", "status"); assert(j.error:find("move closer first"), j.error)
+    eq(j.status, "failed", "status"); assert(j.error:find("out of range %(") and not j.error:find("closer"), j.error)
     eq(#called("CharacterMoveToPosition"), 0, "no walk")
 end)
 
@@ -661,7 +671,7 @@ test("equip: a failed equip says why (S025: two-handed Sword of Justice; the Moo
     eq(A.equip_why(P1, SHIELD), "cannot equip that", "live: a shield goes on beside the Moonlantern")
     osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = SWORD
     local why = A.equip_why(P1, SHIELD)
-    assert(why:find("two%-handed") and why:find("one%-handed weapon first"), why)
+    assert(why:find("two%-handed") and not why:find("first", 1, true), why)
     osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = nil
 end)
 
@@ -784,7 +794,7 @@ test("cast: a harmful area spell says where it bursts and who is in the blast be
         eq(j.status, "failed", "S085 status")
         assert(j.error:find("the way to that point is blocked: it would burst at %(%-24%.5,27%.0,742%.0%)"), j.error)
         assert(j.error:find(NPC:gsub("%-", "%%-") .. " Lady Croup %(neutral, 3%.4 m%)"), j.error)
-        assert(j.error:find("blast %(4 m%)"), j.error); assert(j.error:find("force=true to cast anyway"), j.error)
+        assert(j.error:find("blast %(4 m%)"), j.error); assert(j.error:find("force=true casts"), j.error)
         assert(not j.error:find(GOB, 1, true), "the hostile below is out of that blast: " .. j.error)
         eq(#called("UseSpellAtPosition"), 0, "nothing cast")
         local r = rays[#rays]
@@ -845,20 +855,66 @@ test("cast: a harmful area spell says where it bursts and who is in the blast be
     if not ok then error(err, 0) end
 end)
 
-test("cast: melee reach is edge to edge (weapon 1.5 m + AIBounds.Stand radii)", function()
+test("cast: melee reach is edge to edge (weapon 1.5 m + AIBounds.Move radii; G.radius: Stand)", function()
     combat_setup(9) -- the range refusal (out of combat the cast walks into range first)
     eq(G.radius(P1), 0.5, "fallback radius")
     world[GOB].comps.Bound = { Bound = { AIBounds = { Move = { Radius = 0.4 }, Hit = { Radius = 1.28 }, Stand = { Radius = 0.7 } } } }
     eq(G.radius(GOB), 0.7, "Stand radius")
     world[GOB].comps.Bound = { Bound = { AIBounds = { Move = { Radius = 0.25 } } } }
     eq(G.radius(GOB), 0.25, "Move fallback")
-    world[GOB].comps.Bound = nil
+    world[GOB].comps.Bound = { Bound = { AIBounds = { Move = { Radius = 0.7 }, Stand = { Radius = 0.9 } } } }
+    local warned, pw = {}, Ext.Utils.PrintWarning
+    Ext.Utils.PrintWarning = function(m) warned[#warned + 1] = m end
+    G.hit_fallback, G.hit_fallback_n = {}, 0
+    eq(G.reach_radius(GOB), 0.7, "Move radius"); eq(G.reach_radius(P1), 0.25, "Move fallback")
+    eq(G.reach_radius(P1), 0.25, "again"); eq(G.reach_radius(GOB), 0.7, "read")
+    Ext.Utils.PrintWarning = pw
+    eq(#warned, 1, "the fallback warned once per entity"); eq(G.hit_fallback_n, 1, "counted for the mem metrics")
+    assert(warned[1]:find("no AIBounds.Move radius for", 1, true) and warned[1]:find("0.25 m assumed", 1, true),
+        warned[1])
     spell("Target_Slash", { TargetRadius = "MeleeMainWeaponRange", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
-    local j = job(op("cast", { char = P1, spell = "Target_Slash", target = GOB })) -- 2.4 m
+    local j = job(op("cast", { char = P1, spell = "Target_Slash", target = GOB })) -- 2.4 m < 1.5 + 0.25 + 0.7
     eq(j.status, "running", "status " .. tostring(j.error))
     world[GOB].pos = { 2.7, 0, 0 }
     j = job(op("cast", { char = P1, spell = "Target_Slash", target = GOB }))
     eq(j.status, "failed", "status"); assert(j.error:find("out of range"), j.error)
+end)
+
+test("melee reach, window 8 live: 2.1 m is out (guard and move_to agree), 1.4 m is in", function()
+    -- Karlach, greataxe (WeaponRange 150), on an Apostate Destroyer, both checks dropped: the engine refused the swing
+    -- from 2.1 m centres (InvalidTarget, 10/10) while the guard allowed it (Stand radii: 1.5 + 0.5 + 0.5 = 2.5) and
+    -- move_to said already_there; from 1.4 m it cast. By the Move radii (medium 0.25) the reach is 2.0 m.
+    combat_setup(30)
+    osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = "AXE"
+    osiv[key("GetStatString", "AXE")] = "WPN_Greataxe"
+    stats.WPN_Greataxe = { WeaponRange = 150 }
+    spell("Target_MainHandAttack", { TargetRadius = "MeleeMainWeaponRange", Range = 0, SpellType = "Target",
+        UseCosts = "ActionPoint:1", Level = 0 })
+    local bound = { Bound = { AIBounds = { Move = { Radius = 0.25 }, Hit = { Radius = 0.2 },
+        Stand = { Radius = 0.5 } } } }
+    world[P1].comps.Bound, world[GOB].comps.Bound = bound, bound
+    osiv[key("IsCharacter", GOB)] = 1
+    world[GOB].pos = { 2.1, 0, 0 }
+    local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "failed", "2.1 m swing"); assert(j.error:find("out of range (2.1 m, range 1.5 m)", 1, true), j.error)
+    j = job(op("move_to", { char = P1, target = GOB }))
+    eq(j.result and j.result.already_there, nil, "2.1 m is not 'already there'")
+    eq(#called("CharacterMoveToPosition"), 1, "it closes in")
+    reset()
+    combat_setup(30)
+    osiv[key("GetEquippedItem", P1, "Melee Main Weapon")] = "AXE"
+    osiv[key("GetStatString", "AXE")] = "WPN_Greataxe"
+    stats.WPN_Greataxe = { WeaponRange = 150 }
+    spell("Target_MainHandAttack", { TargetRadius = "MeleeMainWeaponRange", Range = 0, SpellType = "Target",
+        UseCosts = "ActionPoint:1", Level = 0 })
+    world[P1].comps.Bound, world[GOB].comps.Bound = bound, bound
+    osiv[key("IsCharacter", GOB)] = 1
+    world[GOB].pos = { 1.4, 0, 0 }
+    j = job(op("move_to", { char = P1, target = GOB }))
+    eq(j.status, "done", "status " .. tostring(j.error)); eq(j.result.already_there, true, "already there")
+    eq(j.result.in_reach, true, "in reach")
+    j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
+    eq(j.status, "running", "1.4 m swing " .. tostring(j.error))
 end)
 
 test("cast: ranged weapon range from the equipped weapon's stats", function()
@@ -894,4 +950,51 @@ test("sneak: UseSpell with the full 5 arguments", function()
     spell("Shout_Hide", { SpellType = "Shout", UseCosts = "BonusActionPoint:1", Level = 0 })
     job(op("sneak", { char = P1, on = true }))
     eq(called("UseSpell")[1].n, 5, "arity")
+end)
+
+test("cast: a container's variant list must read as spells (fights-v09 Balthazar: a mesh name as the list)", function()
+    local LOH = "Target_LayOnHands"
+    local ids = { "Target_LayOnHands_SmallHeal", "Target_LayOnHands_BigHeal", "Target_LayOnHands_Cure" }
+    for _, id in ipairs(ids) do
+        spell(id, { ModifierList = "SpellData", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
+    end
+    local reads, lists = 0, {}
+    spell(LOH, setmetatable({ ModifierList = "SpellData", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 },
+        { __index = function(_, k)
+            if k ~= "ContainerSpells" then return nil end
+            reads = reads + 1
+            return lists[reads] or lists[#lists]
+        end }))
+    local function cast_error(...)
+        reads, lists = 0, { ... }
+        local j = job(op("cast", { char = P1, spell = LOH, target = P1 }))
+        eq(j.status, "failed", "a container is refused")
+        return j.error
+    end
+    local good = table.concat(ids, ";")
+    local err = cast_error(good)
+    assert(err:find("choose a variant: Target_LayOnHands_SmallHeal, Target_LayOnHands_BigHeal, Target_LayOnHands_Cure",
+        1, true), err)
+    local mesh = "BLD_GEN_Crane_Elevator_B.BLD_GEN_Crane_Elevator_B_Mesh.0"
+    err = cast_error(mesh, good)
+    assert(err:find("choose a variant: Target_LayOnHands_SmallHeal", 1, true), "a second read: " .. err)
+    eq(reads, 2, "read twice")
+    err = cast_error(mesh)
+    assert(not err:find("BLD_GEN", 1, true), "the raw string is never shown: " .. err)
+    assert(err:find("variant list did not read as spell names", 1, true), err)
+    stats.Target_Wall = { ModifierList = "Wall" } -- a stats entry that is not a spell
+    err = cast_error("Target_LayOnHands_SmallHeal;Target_Wall")
+    -- one bad entry hides only itself (arena-bridge review 2026-11-03 finding 3)
+    assert(err:find("choose a variant: Target_LayOnHands_SmallHeal (1 more entry of its variant list did not read"
+        .. " as spell names)", 1, true), err)
+    assert(not err:find("Target_Wall", 1, true), err)
+    eq(reads, 2, "a list with a bad entry is read twice")
+    err = cast_error("Target_LayOnHands_SmallHeal;Target_Wall", good)
+    assert(err:find("choose a variant: Target_LayOnHands_SmallHeal, Target_LayOnHands_BigHeal, "
+        .. "Target_LayOnHands_Cure", 1, true) and not err:find("did not read", 1, true),
+        "the second read wins: " .. err)
+    err = cast_error("Target_Wall;" .. mesh)
+    assert(err:find("choose a variant (this action's variant list did not read as spell names)", 1, true), err)
+    assert(not err:find("Target_Wall", 1, true) and not err:find("BLD_GEN", 1, true), err)
+    stats.Target_Wall = nil
 end)

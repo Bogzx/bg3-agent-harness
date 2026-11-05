@@ -72,7 +72,7 @@ GOAL_POLL_S = 10.0  # how often GoalWatch asks the verdict: the stop comes one p
 FOREIGN_SAVE = "foreign_save"  # until_hit's id when SaveWatch saw the game load a save that isn't the run's
 LOAD_GRACE_S = 60.0  # SaveWatch: a load_game logged this long after its new server boot was seen still explains it
 RECORD_ENV = "BG3AI_BENCH_RECORD"  # 0: play.py bench records no run (bench_recording)
-RECORD_ENCODER_ENV = "BG3AI_BENCH_RECORD_ENCODER"  # the recording's encoder (default h264_nvenc; libx264 on the CPU)
+RECORD_ENCODER_ENV = hrec.ENCODER_ENV  # the recording's encoder (else the machine's: recorder.machine_encoder)
 NO_MEMORY = "memory"  # the bridge's memory tool group (bg3ai.capabilities.GROUPS): off in every bench run
 Json = dict[str, Any]
 
@@ -449,19 +449,13 @@ def machine_pins(env: Mapping[str, str]) -> Json:
 
 def bench_recording(env: Mapping[str, str]) -> Callable[[Path], hrec.RunRecording] | None:
     """play.py bench records every run (recorder.run_recording, the game's window on env's DISPLAY);
-    BG3AI_BENCH_RECORD=0 turns it off. BG3AI_BENCH_RECORD_ENCODER picks the encoder (a machine without NVENC sets
-    libx264; bg3harness.doctor checks the one set); an unknown one is refused here, before any run."""
+    BG3AI_BENCH_RECORD=0 turns it off. The encoder is BG3AI_BENCH_RECORD_ENCODER, else the machine's setting that
+    bg3harness.doctor writes once from its test encode (recorder.machine_encoder); none, or an unknown one, is
+    refused here, before any run."""
     if env.get(RECORD_ENV, "1") == "0":
         return None
-    encoder = bench_encoder(env)
+    encoder = hrec.bench_encoder(env)
     return lambda out: hrec.run_recording(out, env, renv.RUNTIME, encoder)
-
-
-def bench_encoder(env: Mapping[str, str]) -> str:
-    encoder = env.get(RECORD_ENCODER_ENV) or "h264_nvenc"
-    if encoder not in hrec.ENCODER_ARGS:
-        raise ValueError(f"{RECORD_ENCODER_ENV}={encoder!r}: one of {sorted(hrec.ENCODER_ARGS)}")
-    return encoder
 
 
 def owner_of(sc: Json) -> str:
@@ -657,6 +651,7 @@ def run_failures(
     why: str,
     cap: str | None = None,
     session_minutes: float | None = None,
+    start: tuple[float, str | None] = (0.0, None),
 ) -> list[Json]:
     """Every failure of a bench run, tagged harness/agent/unknown as the legacy series tags them (runs.classify_run
     over the run's runner_events.jsonl, its play streams and the agent's reloads; its one session as the history),
@@ -664,10 +659,11 @@ def run_failures(
     A harness failure makes the run invalid (bg3bench results.validity): it doesn't score the model. name: the
     outcome to classify ("stopped" for an operator stop: listed apart, not a failure). A `timeout` whose agent ended
     its turn with more than EARLY_EXIT_MINUTES of the session_minutes left (no stop resume left) says so, not that the
-    time ran out (fixlive D4: "the run's time ran out" at 7.9 of 240 min)."""
+    time ran out (fixlive D4: "the run's time ran out" at 7.9 of 240 min). `start`: (run_start, start save): a launch
+    recovered before it is the run's note, not a failure (runs.recovered_launch)."""
     res = outcome.result
     logged: list[Json] = runs.read_jsonl(state_dir / "runner_events.jsonl")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    events = [e for e in logged if e.get("t", 0) >= t0 - 1]
+    events = [e for e in logged if e.get("t", 0) >= t0 - 1 and not runs.recovered_launch(e, *start)]  # pyright: ignore[reportUnknownMemberType]
     session = {"kind": "play", "session": SID, "started": outcome.started, "ended": res.ended}
     tools: list[Json] = rpolicy.read_actions_since(t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     actions = [a for a in tools if a.get("t", res.ended) <= res.ended + 1]
@@ -925,6 +921,7 @@ class LiveRunHost:
             w.stop()
         foreign: str | None = None
         reloads = 0
+        encoder = rec.rec.spec.encoder if (rec := self.recordings.get(run_dir)) else None  # the one the run used
         if (sw := self.saves.pop(run_dir, None)) is not None:
             sw.stop()
             sw.check(final=True)  # with the game up: a load seen since the last poll is decided now
@@ -956,9 +953,11 @@ class LiveRunHost:
         t_zero = cast(float, r.facts_writer().t0)  # _begin's facts_writer() wrote run_start before the kickoff
         totals: Json = runs.claude_totals(r.state.dir, t0)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         why, cap = foreign or getattr(res, "detail", ""), (r.cap_hit or {}).get("cap")
+        start = (t_zero, r.opt.start_save)
         failures = run_failures(
-            r.state.dir, t0, outcome, "stopped" if stopped else name, why, cap, r.opt.session_minutes
+            r.state.dir, t0, outcome, "stopped" if stopped else name, why, cap, r.opt.session_minutes, start
         )
+        relaunched: list[Json] = runs.recovered_launches(r.state.dir / "runner_events.jsonl", t0, *start)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         counts = {cls: sum(int(f.get("n") or 1) for f in failures if f["class"] == cls) for cls in runs.CLASSES}
         return (
             {
@@ -985,6 +984,8 @@ class LiveRunHost:
                 "agent_failures": counts[runs.AGENT],
                 "unknown_failures": counts[runs.UNKNOWN],
                 "failures": failures,
+                "recovered_launches": relaunched,  # launches relaunched before run_start: noted, not failures
+                "record_encoder": encoder,  # the manifest's: what the recording encoded with (None: not recorded)
             }
             | ({"verdict": goal["verdict"]} if goal else {})
             | ({FOREIGN_SAVE: foreign} if foreign else {})

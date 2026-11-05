@@ -21,6 +21,7 @@ from test_submission_pack import mp4
 
 from bg3bench import behaviour, facts, saves
 from bg3bench.submission import bundle, codes, consistency, pack, validate
+from bg3bench.submission.release import defs_digest
 
 FIXTURES = Path(__file__).parent / "fixtures" / "submission"
 GOLD, FIGHT = "act3_gold_max", "fight_act2_balthazar"
@@ -73,6 +74,9 @@ def good_run(tmp: Path, name: str, start_snapshot: bool = True) -> Path:
         "repo": {"commit": "c" * 40, "dirty": False, "diff": None},
     }
     man["scenario"]["start_save_sha1"] = sc["start"]["save_sha1"]
+    # the fixtures are DeepSeek runs whose profile said "medium" while pi served "high" (its thinking_level_map has no
+    # medium for this model): a run that declares what it was served, as C04 requires
+    man["model"]["reasoning_effort"] = "high"
     if start_snapshot:
         rows = jsonl((d / "facts.jsonl").read_text())
         i = next(i for i, r in enumerate(rows) if r["kind"] == "snapshot")
@@ -98,7 +102,8 @@ def good_run(tmp: Path, name: str, start_snapshot: bool = True) -> Path:
 
 def release_for(d: Path) -> validate.Release:
     man = json.loads((d / "manifest.json").read_text())
-    names = sorted({t["name"] for t in json.loads((d / "bg3-tools.json").read_text())} - OFF)
+    tools = json.loads((d / "bg3-tools.json").read_text())
+    names = sorted({t["name"] for t in tools} - OFF)
     sc = pack.load_scenarios()[man["scenario"]["name"]]
     return validate.Release(
         suite=man["versions"]["suite"],
@@ -107,13 +112,18 @@ def release_for(d: Path) -> validate.Release:
         scenarios={
             sc["name"]: {
                 "digest": man["scenario"]["digest"],  # the suite the pilot played (files edited since)
+                "save": sc["start"]["save"],
                 "save_sha1": sc["start"]["save_sha1"],
                 "fingerprint": consistency.fingerprint(facts.load(d / "facts.jsonl")),
             }
         },
         conditions={
             "rules": {
-                "tools": {"allowlist_sha256": man["tools"]["allowlist_sha256"], "names": names},
+                "tools": {
+                    "allowlist_sha256": man["tools"]["allowlist_sha256"],
+                    "names": names,
+                    "defs_sha256": defs_digest(tools, names),
+                },
                 "prompts": {"pi": {"sha256": man["prompt"]["sha256"]}},
             }
         },
@@ -276,6 +286,19 @@ def edit_json(bdir: Path, name: str, fn: Callable[[dict], None]) -> None:
     (bdir / name).write_text(json.dumps(doc, indent=1, sort_keys=True))
 
 
+def declare(bdir: Path, **model) -> None:
+    """Change the declared model fields in the manifest and bundle.json alike (F03 checks they agree)."""
+    edit_json(bdir, "manifest.json", lambda m: m["model"].update(model))
+    edit_json(bdir, bundle.ENVELOPE, lambda e: e["model"].update(model))
+    if "slug" in model:  # the cell names the slug too (F03)
+        edit_json(bdir, bundle.ENVELOPE, lambda e: e["attempt"].update(cell=_with_slug(e, model["slug"])))
+
+
+def _with_slug(env: dict, slug: str) -> str:
+    sc, _, cond = env["attempt"]["cell"].split("/")
+    return f"{sc}/{slug}/{cond}"
+
+
 def edit_facts(bdir: Path, fn: Callable[[list[dict]], None]) -> None:
     rows = jsonl((bdir / "facts.jsonl").read_text())
     fn(rows)
@@ -299,6 +322,11 @@ def more_gold(rows: list[dict]) -> None:
 def bad_start(rows: list[dict]) -> None:
     snap = next(r for r in rows if r["kind"] == "snapshot")
     snap["party"][0]["level"] += 1
+
+
+def foreign_start(rows: list[dict]) -> None:
+    # REVIEW-4 2.5: foreign_save was the runner's own flag; the facts' first load mark names the save that was loaded
+    next(r for r in rows if r.get("mark") == "load")["detail"] = "Tav-1__SCN-another_run"
 
 
 def pins(m: dict) -> None:
@@ -326,9 +354,12 @@ TAMPERS: dict[str, tuple[str, Callable[[Path], None]]] = {
     "wrong prompt hash": ("C01", lambda b: edit_json(b, "manifest.json", prompt)),
     "duplicate run id": ("D01", lambda b: None),
     "bad start snapshot": ("X01", lambda b: edit_facts(b, bad_start)),
+    "foreign start save": ("X03", lambda b: edit_facts(b, foreign_start)),
     "extra tool": ("A02", lambda b: add_event(b, kind="tool_call", tool="teleport", args={}, call_id="x")),
     "reload without the condition": ("A02", lambda b: add_event(b, kind="tool_call", tool="load_game", args={})),
     "hidden reasoning": ("S02", lambda b: add_event(b, kind="thinking", text="secret plan")),
+    "undeclared effort": ("C04", lambda b: declare(b, reasoning_effort="low")),
+    "another model": ("C04", lambda b: declare(b, slug="deepseek-v4-pro")),
     "oversize": ("F01", oversize),
     "bad schema": ("F03", lambda b: edit_json(b, "result.json", schema)),
 }
@@ -346,8 +377,26 @@ def test_tampered_copies_are_rejected_by_their_code(tmp_path, what):
     v = run(bdir, release_for(d), duplicate="an accepted submission has this run id" if code == "D01" else None)
     assert not v.accepted
     assert code in v.failed, v.failed
-    if what in ("edited gold", "wrong pins", "duplicate run id", "bad start snapshot", "extra tool"):
+    if what in (
+        "edited gold",
+        "wrong pins",
+        "duplicate run id",
+        "bad start snapshot",
+        "extra tool",
+        "undeclared effort",
+        "foreign start save",
+    ):
         assert v.failed == [code]
+
+
+def test_attempt_cell_of_another_cell_fails_f03(good):
+    """X07 picks its reference set by attempt.cell, so a cell naming another scenario/model/condition is refused."""
+    bdir, release = good
+    edit_json(bdir, bundle.ENVELOPE, lambda e: e["attempt"].update(cell="act1_gold_1000/deepseek-v4-pro/default"))
+    rehash(bdir)
+    v = run(bdir, release)
+    assert v.failed == ["F03"]
+    assert "attempt.cell" in next(r.detail for r in v.checks if r.code == "F03")
 
 
 def test_render_for_another_run_fails_e03(good):
@@ -626,6 +675,27 @@ def cond(fn: Callable[[dict], dict]) -> Callable[[validate.Release], dict]:
     return lambda r: {"rules": fn(dict(r.conditions["rules"]))}
 
 
+def edit_tool(bdir: Path, key: str, value: object) -> None:
+    """One served tool's definition changed in bg3-tools.json (the first allowed one: names stay the same)."""
+    tools = json.loads((bdir / "bg3-tools.json").read_text())
+    tool = next(t for t in tools if t["name"] not in OFF)
+    tool[key] = value
+    (bdir / "bg3-tools.json").write_text(json.dumps(tools))
+
+
+def test_a_release_without_defs_sha256_does_not_check_the_definitions(tmp_path):
+    """bench-v0.8/v0.9's releases pin names only: their bundles re-validate unchanged, an edited description too."""
+    d = good_run(tmp_path, FIGHT)
+    wall = json.loads((d / "result.json").read_text())["wall_s"]
+    bdir = pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1), video=VIDEO | {"duration_s": wall}).bundle_dir
+    edit_tool(bdir, "description", "a description of another build")
+    rehash(bdir)
+    names_only = cond(lambda c: {**c, "tools": {k: v for k, v in c["tools"].items() if k != "defs_sha256"}})
+    release = rel(conditions=names_only)(release_for(d))
+    v = validate.validate(bdir, release, where="job", ctx=ctx_for(env_of(bdir)))
+    assert "C02" not in v.failed, [(r.code, r.detail) for r in v.checks if r.ok is False]
+
+
 def unlinked(name: str) -> Callable[[Path], None]:
     return lambda b: (b / name).unlink()
 
@@ -714,6 +784,15 @@ ERRORS: dict[str, tuple] = {
         None,
         {},
     ),
+    "a tool's description edited": (
+        "C02",
+        lambda b: edit_tool(b, "description", "a description of another build"),
+        True,
+        None,
+        {},
+    ),
+    "a tool's parameters edited": ("C02", lambda b: edit_tool(b, "inputSchema", {"type": "object"}), True, None, {}),
+    "a tool's client hint edited": ("C02", lambda b: edit_tool(b, "_meta", {}), True, None, {}),
     "instructions missing": ("C02", unlinked("bg3-instructions.txt"), True, None, {}),
     "instructions edited": ("C02", lambda b: (b / "bg3-instructions.txt").write_text("other"), True, None, {}),
     "caps differ": (
@@ -868,3 +947,40 @@ def test_a_bad_fight_log_fails_f03(tmp_path, rows, name):
     d, bdir = packed_with_fights(tmp_path, rows, name)
     v = run(bdir, release_for(d))
     assert not v.accepted and v.failed == ["F03"], [(r.code, r.detail) for r in v.checks if r.ok is False]
+
+
+def test_p02_holds_a_run_to_the_releases_code_pin():
+    # REVIEW-4 2.1: a committed local bridge patch kept the repo clean and passed P02; from bench-v0.10 the release
+    # pins the code (code_sha1) and the run's repo pin must cite it
+    game = {"game_build": "1", "bg3le_sha256": "b" * 64, "mod_sha1": "c" * 40}
+    man = {
+        "pins": {
+            "game_build": "1",
+            "bg3le": {"sha256": "b" * 64},
+            "mod": {"sha1": "c" * 40},
+            "repo": {"commit": "abc", "dirty": False, "code_sha1": "d" * 40},
+        }
+    }
+
+    def rel(pins: dict) -> validate.Release:
+        return validate.Release("bench-v0.10", {}, pins, {}, {})
+
+    assert validate.p02_pins(man, rel({**game, "code_sha1": "d" * 40})) == (True, "")
+    ok, why = validate.p02_pins(man, rel({**game, "code_sha1": "e" * 40}))
+    assert not ok and "the code differs from the release's" in why
+    old = {**man, "pins": {**man["pins"], "repo": {"commit": "abc", "dirty": False}}}
+    assert not validate.p02_pins(old, rel({**game, "code_sha1": "d" * 40}))[0]  # a run that cites no code pin
+    assert validate.p02_pins(old, rel(game)) == (True, "")  # bench-v0.8/v0.9 releases have no code pin
+
+
+def test_c04_names_the_model_or_effort_the_events_contradict(good):
+    # REVIEW-4 2.2: nothing compared the declared model and effort with what the events say played. launch-v1's 36
+    # DeepSeek runs declared reasoning_effort "medium" and pi served "high" in every one (profiles/deepseek-flash.toml
+    # thinking_level_map: medium = false)
+    bdir, release = good
+    assert "C04" not in run(bdir, release).failed
+    declare(bdir, reasoning_effort="medium")
+    rehash(bdir)
+    v = run(bdir, release)
+    assert v.failed == ["C04"]
+    assert next(r.detail for r in v.checks if r.code == "C04") == "served effort high, declared medium"

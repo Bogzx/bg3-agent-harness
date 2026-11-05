@@ -35,8 +35,8 @@ BG3AI.Actions = A
 A.active = {}   -- char guid -> running job
 
 local TICK_MS = 50   -- post-condition polling; cheap queries, keeps chaining fast
-A.MOVE_REACH = 2.2   -- move_to {target}: stop within this of the entity (centres; melee reach is
-                     -- weapon 1.5 + both radii, >= 2.2 m even for a tiny target, see G.check_cast)
+A.MOVE_REACH = 2.2   -- move_to {target}: stop at most this far (centres); nearer when the mover's melee reach
+                     -- (G.melee_reach, Move radii: 2.0 m for a 1.5 m weapon between medium creatures) is shorter
 -- end_turn in a shared group (others still to act): report the request as done after this. 1500 until 2026-10-16:
 -- the outcome at 1.5 s was always the same "requested" (the game ends the group only when the others end too), so
 -- the hold only waited (naut series: 12 shared ends x 1.6 s). 400 ms leaves a few frames for the game to set
@@ -66,6 +66,20 @@ A.hit_ms = A.hit_ms or {} -- char guid -> {t, why}: when it was last hit (Attack
 A.CAST_REACT_HOLD_MS = 8000
 A.CAST_REACT_SETTLE_MS = 500
 A.react_seen = nil -- {t, done?, caster, spell}: the last cast by a character outside the party
+-- Window 8 seed 7 m1 (arena-fight-analysis.md, S2): move_to answered "done, hp 20/20" 0.6 s before the opportunity
+-- attack its own walk provoked landed (Birch, critical 13); the agent read it a call later as an ordinary enemy cast.
+-- A move in combat (move_to, walk_toward, a jump) answers only once the casts of the mover's foes that began during
+-- it have resolved (their CastedSpell + CAST_REACT_SETTLE_MS for its damage), at most MOVE_REACT_HOLD_MS after the
+-- move ended, and names them in its result as reactions (who, what, the damage it did to the mover).
+A.MOVE_REACT_HOLD_MS = 8000
+-- Window 9 MR1 (live.md): an opportunity attack's CastSpell starts only after the walk arrived (+0.33 s, +0.93 s),
+-- so a cast alone never held the move; the reactor's ReactionInterruptUsed fired before the arrival (-0.63 s,
+-- -1.30 s). A foe's interrupt during the move holds it until that foe's cast starts, at most this long after the
+-- interrupt (live: 0.97 s and 2.23 s), then the cast holds it as above.
+A.MOVE_INTERRUPT_WAIT_MS = 4000
+A.interrupts = A.interrupts or {} -- reactor guid -> when it last used a reaction (ReactionInterruptUsed)
+A.casts = A.casts or {} -- caster guid -> {t, done?, spell}: its last cast (CastSpell, its CastedSpell)
+A.hits = A.hits or {} -- defender guid -> {{t, by, amount, type}...}: the damage it took (AttackedBy), the last 20
 -- act.cast {ui=true} (audit ACT-8, the hotbar N-target route): the bridge clicks the hotbar cell and each target as a
 -- player does, after this job started; the job only checks the cast and watches CastSpell/CastedSpell. The clicks
 -- take ~1 s + 0.5 s per target (hotbar.py budget, hard cap 3x + 4 s): no start this long = failed (the bridge cancels
@@ -97,17 +111,22 @@ A.PICKUP_REORDER_MS = 1500 -- pickup: an order gone from the task queue (nothing
 
 -- The engine's CastSpellFailed carries no reason. S024-S041: ~12 "the action failed — purged_tasks=1" in
 -- combat_turn (Toll the Dead, Ranged Attack extra attacks, Spiritual Weapon attacks), each read as a mystery.
--- Say what a player would see at that moment: the target gone, no line of sight, or the projectile's blocked path.
-function A.cast_failed_why(char, target, spell)
-    local why = "the game refused the cast (no reason given)"
+-- Say the game's own reason when its cast entity has one (A.engine_refusal, job given) and what a player would see
+-- at that moment: the target gone or out of sight. Only facts: window 8 m2, a Sneak Attack refused InvalidTarget
+-- at 1.0 m was told "probably just outside the engine's reach: step closer", and stepped and swung into the same
+-- refusal twice (its TargetConditions want advantage or an ally near the target).
+function A.cast_failed_why(char, target, spell, job)
+    local eng, code = A.engine_refusal(job)
+    local why = eng and ("the game refused the cast: " .. eng) or "the game refused the cast (no reason given)"
     -- S059 08:57-08:59: Dimension Door refused x3 with "the shot's path is blocked". It is a two-step teleport:
     -- the one who goes (the caster or an ally beside them), then the spot they land on.
+    local shown = spell and G.spell_facts(spell)
+    shown = shown and shown.name or tostring(spell)
     if A.two_step_spell(spell) and not A.revive_spell(spell) then
-        return why .. ": " .. tostring(spell) .. " is a two-step teleport (who goes, then the landing spot"
-            .. (A.last_place_why and (", which could not be given: " .. A.last_place_why) or "") .. "). The landing"
-            .. " must be a spot the caster can SEE and stand on: a floor above you (behind its own ceiling/ledge) or"
-            .. " behind a wall is out of sight; stand where you can see the landing (e.g. at the foot of an open"
-            .. " drop, or on the far side of a gap), or climb/walk (route)"
+        return why .. ": " .. shown .. " is a two-step teleport (who goes, then the landing spot"
+            .. (A.last_place_why and (", which could not be given: " .. A.last_place_why) or "") .. "). The game"
+            .. " takes only a landing the caster can see and stand on: a floor above the caster (behind its own"
+            .. " ceiling or ledge) or a spot behind a wall is out of its sight"
     end
     if not target or G.same(char, target) then return why end
     -- S043/S057/S058: Revivify 0 of 14 live. The game data makes it a two-step cast (Teleportation_Revivify:
@@ -115,11 +134,11 @@ function A.cast_failed_why(char, target, spell)
     -- UseSpell can't express. Party members CAN be revived: say so, and what the cast lacked.
     if A.two_step_spell(spell) then
         local playable = G.b(G.q("IsTagged", target, "PLAYABLE_25bf5042-5bf6-4360-8df8-ab107ccb0d37"))
-        return why .. ": " .. tostring(spell) .. " is a two-step cast (the body, then the spot they stand up on)"
+        return why .. ": " .. shown .. " is a two-step cast (the body, then the spot they stand up on)"
             .. (A.last_place_why and (" and the spot could not be given (" .. A.last_place_why .. ")") or "")
             .. (playable and "" or "; this one is not a party member: only party members come back")
-            .. ". Read a Scroll of Revivify by name (use_ability ability=\"Scroll of Revivify\" target=<the body>:"
-            .. " it clicks the body, then the ground beside it), or Withers at camp"
+            .. "; a Scroll of Revivify through use_ability (ability=\"Scroll of Revivify\", target=<the body>) gives"
+            .. " both picks (the body, then the ground beside it); Withers revives at camp"
     end
     local ok, txt = pcall(function()
         if G.is_dead(target) then return "the target was already dead when it fired" end
@@ -130,20 +149,22 @@ function A.cast_failed_why(char, target, spell)
         return nil
     end)
     if ok and txt then return why .. ": " .. txt end
-    -- ACT-3 (S065 x9): the first melee swing right after combat_turn's move was refused here and read as "the
-    -- shot's path is blocked". A swing has no path: say how far it swung from and the reach our guard allowed
-    -- (the engine's own melee reach is unmeasured: tools/dev/acceptance.py "melee reach probe").
+    -- InvalidTarget at a creature: the guard's reading of the spell's target conditions (what is unmet or unread)
+    if code == "InvalidTarget" and not job.cast_at_pos then
+        local okt, tc = pcall(G.explain_target, char, spell, target)
+        if okt and tc then return why .. "; " .. tc end
+    end
+    if eng then return why end
+    -- ACT-3 (S065 x9): a refused swing with no reason from the game: how far it swung from and our reach
     local okm, mel = pcall(function()
         local range, melee = G.spell_range(spell and Ext.Stats.Get(spell), char)
         local p, q = G.pos(char), G.pos(target)
         if not (range and melee and p and q) then return nil end
         return string.format("a melee swing from %.1f m centre to centre (our reach %.1f m: range %.1f m + both"
-            .. " bounding radii), probably just outside the engine's reach: step closer (within 1 m) and swing again",
-            U.dist(p, q), G.melee_reach(char, target, range), range)
+            .. " bounding radii)", U.dist(p, q), G.melee_reach(char, target, range), range)
     end)
     if okm and mel then return why .. ": " .. mel end
-    return why .. ": usually the shot's path is blocked (cover, a ledge, a creature in the way) though the target"
-        .. " is in sight; try another target or step to a clearer spot"
+    return why
 end
 
 ------------------------------------------------------------------------
@@ -294,7 +315,7 @@ function A.loop_watch(char, item)
     RPC.push("loop_stopped", { uuid = char, item = item, uses = s.n, job = job and job.id or nil })
     if job and job.status == "running" then
         interrupt(job, "stuck: the character kept using the same item (" .. s.n
-            .. " times, e.g. re-climbing a ladder); try another route or a jump")
+            .. " times, e.g. re-climbing a ladder)")
     else
         pcall(G.osi, "PurgeOsirisQueue", char)
     end
@@ -308,6 +329,142 @@ function A.stirred(u, why)
         if A.hit_n > 500 then A.hit_ms, A.hit_n = {}, 1 end
     end
     A.hit_ms[g] = { t = G.now_ms(), why = why }
+end
+
+-- Every cast's start and end (A.casts) and every hit's damage (A.hits), for a move's reactions (A.reaction_hold).
+function A.track_cast(event, caster, spell)
+    local g = G.guid(caster)
+    if not g then return end
+    local now, c = G.now_ms(), A.casts[g]
+    if event == "CastedSpell" and c and not c.done and c.spell == tostring(spell) then
+        c.done = now
+        return
+    end
+    if not c then
+        A.cast_n = (A.cast_n or 0) + 1
+        if A.cast_n > 500 then A.casts, A.cast_n = {}, 1 end
+    end
+    A.casts[g] = { t = now, done = event == "CastedSpell" and now or nil, spell = tostring(spell) }
+end
+
+function A.note_interrupt(reactor)
+    local g = G.guid(reactor)
+    if not g then return end
+    if not A.interrupts[g] then
+        A.interrupt_n = (A.interrupt_n or 0) + 1
+        if A.interrupt_n > 500 then A.interrupts, A.interrupt_n = {}, 1 end
+    end
+    A.interrupts[g] = G.now_ms()
+end
+
+function A.note_hit(defender, owner, attacker, dtype, amount)
+    local d = G.guid(defender)
+    if not d then return end
+    if not A.hits[d] then
+        A.hit_rows = (A.hit_rows or 0) + 1
+        if A.hit_rows > 500 then A.hits, A.hit_rows = {}, 1 end
+        A.hits[d] = {}
+    end
+    local list = A.hits[d]
+    list[#list + 1] = { t = G.now_ms(), by = G.guid(owner) or G.guid(attacker), amount = tonumber(amount) or 0,
+        type = tostring(dtype or "") }
+    if #list > 20 then table.remove(list, 1) end
+end
+
+-- Is caster on the other side from char: in a match the other team, else anyone outside the party.
+local function foe_of(char, caster)
+    local Ar = BG3AI.Arena
+    if Ar and Ar.active and Ar.active() and Ar.side_of then
+        local a, b = Ar.side_of(char), Ar.side_of(caster)
+        if a and b then return a ~= b end
+    end
+    return not G.is_party(caster)
+end
+
+-- The mover's foes whose cast began during the job: {guid -> cast}.
+local function move_reactions(job)
+    local out, me = {}, G.guid(job.char)
+    for g, c in pairs(A.casts) do
+        if g ~= me and c.t >= job.started and foe_of(me, g) then out[g] = c end
+    end
+    return out
+end
+
+-- RPC job hold for a move in combat: true while a foe's cast that began during it is unresolved or just resolved, or
+-- a foe that used a reaction during it hasn't started its cast yet (up to MOVE_INTERRUPT_WAIT_MS after the interrupt).
+function A.reaction_hold(job)
+    if not (job.char and G.in_combat(job.char)) then return false end
+    local now = G.now_ms()
+    job.hold_from = job.hold_from or now
+    if now - job.hold_from >= A.MOVE_REACT_HOLD_MS then
+        job.react_cut = true
+        return false
+    end
+    for _, c in pairs(move_reactions(job)) do
+        if not c.done or now - c.done < A.CAST_REACT_SETTLE_MS then return true end
+    end
+    local me = G.guid(job.char)
+    for g, t in pairs(A.interrupts) do
+        if g ~= me and t >= job.started and now - t < A.MOVE_INTERRUPT_WAIT_MS and foe_of(me, g) then
+            local c = A.casts[g]
+            if not (c and c.t >= t) then return true end
+        end
+    end
+    return false
+end
+
+-- Window 11 J1/J1b (live.md L4, L7 (e)): a jump ordered out of a foe's reach drew its opportunity attack, and the
+-- engine's CastSpellFailed for the jump came in the same ms as that foe's ReactionInterruptUsed (dispatched after
+-- it), outcome Canceled: the caster stayed, movement and bonus action unspent, the attack still came.
+A.JUMP_AOO_CANCELLED = "the jump didn't happen: the game cancelled it when it drew the attack of opportunity;"
+    .. " movement and bonus action not spent"
+-- REVIEW-17 F6: the interrupt may be dispatched before or after the CastSpellFailed, and an earlier one (a walk-to
+-- phase's) is not the jump's. A Canceled jump is decided this long after its failure, from the foes' interrupts
+-- within this long of it.
+A.JUMP_CANCEL_WINDOW_MS = 50
+function A.foe_interrupted(job, at)
+    local me = G.guid(job.char)
+    for g, t in pairs(A.interrupts) do
+        if g ~= me and t >= job.started and math.abs(t - at) <= A.JUMP_CANCEL_WINDOW_MS and foe_of(me, g) then
+            return true
+        end
+    end
+    return false
+end
+
+-- The move's result with its reactions: {by = {uuid, name}, name = the spell's shown name, damage = what it did to
+-- the mover (AttackedBy since the move began), type, resolved = false when the hold ran out first}. Only casters the
+-- mover's side can see (the party always) are named; one it can't see is {unseen = true, damage, type} when it
+-- did damage, else left out; an unnamed (technical) spell is left out, as the event log does.
+function A.reaction_annotate(job, result)
+    local V = BG3AI.Visibility
+    local me = G.guid(job.char)
+    local list = {}
+    local ctx = V and V.context and V.context()
+    for g, c in pairs(move_reactions(job)) do
+        local seen = ctx and (ctx.is_party[g] or V.characterVisible(ctx, g, V.entity(g)))
+        local dmg, dtype = 0, nil
+        for _, h in ipairs(A.hits[me] or {}) do
+            if h.by == g and h.t >= job.started then dmg, dtype = dmg + h.amount, dtype or h.type end
+        end
+        if seen then
+            local st = Ext.Stats.Get(c.spell)
+            local name = st and U.loca(st.DisplayName)
+            if name then
+                list[#list + 1] = { by = { uuid = g, name = V.name(g) }, name = name, damage = dmg, type = dtype,
+                    resolved = c.done ~= nil or nil, t = c.t }
+            end
+        elseif dmg > 0 then
+            -- a reactor the side can't see: not who or what, only the damage it felt (the event log's "Someone")
+            list[#list + 1] = { unseen = true, damage = dmg, type = dtype, resolved = c.done ~= nil or nil, t = c.t }
+        end
+    end
+    if #list == 0 then return result end
+    table.sort(list, function(a, b) return a.t < b.t end)
+    for _, r in ipairs(list) do r.t = nil end
+    if type(result) ~= "table" then result = {} end
+    result.reactions = list
+    return result
 end
 
 -- CastSpell / CastedSpell by a character outside the party (A30): its start, and its end on the same caster's
@@ -333,10 +490,14 @@ function A.dispatch(event, args)
         G.note_turn_started(args[1])
     elseif event == "AttackedBy" and args[1] then
         A.stirred(args[1], "a hit on the caster")
+        A.note_hit(args[1], args[2], args[3], args[4], args[5])
     elseif (event == "CastSpell" or event == "CastedSpell") and args[1] then
         A.foe_cast(event, args[1], args[2])
+        A.track_cast(event, args[1], args[2])
         A.scroll_cast(event, args[1])
         A.note_cast(args[1]) -- the idle teleport watch: a jump right after it is the caster's spell (ActionsMove)
+    elseif event == "ReactionInterruptUsed" and args[1] then
+        A.note_interrupt(args[1])
     elseif (event == "Unlocked" or event == "Opened") and args[1] then
         A.unlock_seen(args[1])
     elseif event == "StatusRemoved" and args[1] then
@@ -385,7 +546,7 @@ for event, arity in pairs({
     UseFinished = 3, Opened = 1, Closed = 1, Unlocked = 3,
     DialogStarted = 2, DialogActorJoined = 4, DialogRequestFailed = 2,
     CastSpell = 5, CastedSpell = 5, CastSpellFailed = 5,
-    AttackedBy = 7, EnteredCombat = 2, TurnEnded = 1, TurnStarted = 1,
+    AttackedBy = 7, ReactionInterruptUsed = 3, EnteredCombat = 2, TurnEnded = 1, TurnStarted = 1,
     PickupFailed = 2, AddedTo = 3,
     Equipped = 2, EquipFailed = 2, Unequipped = 2, UnequipFailed = 2,
     CharacterSelectedForUser = 2, AttachedToPartyGroup = 1, DetachedFromPartyGroup = 1,
@@ -531,6 +692,9 @@ local function start(kind, char, spec)
     end
     spec.act = true
     spec.char = char
+    if kind == "move_to" or spec.react_hold then
+        spec.hold, spec.annotate = A.reaction_hold, A.reaction_annotate
+    end
     spec.interrupt = spec.interrupt or {}
     local user_tick = spec.on_tick
     local last = 0
@@ -619,7 +783,7 @@ function A.tb_gate(kind, args)
     local char = args.char and G.guid(args.char) or G.host()
     if not char or G.in_combat(char) then return end
     if G.b(G.q("IsInForceTurnBasedMode", char)) then
-        G.refuse(A.TB_REFUSAL .. " (the game switched it on): a walk gets only the turn's movement; leave it first")
+        G.refuse(A.TB_REFUSAL .. " (the game switched it on): a walk gets only the turn's movement")
     end
 end
 
@@ -655,7 +819,8 @@ A.inner = { interrupt = interrupt, osi_tasks = osi_tasks, listen = listen, pos_v
 
 -- The rest of the module, in this order (split for the 1000-line cap). Each part reads A and the
 -- helpers in A.inner.
-for _, part in ipairs({ "Server/ActionsMove.lua", "Server/ActionsInteract.lua", "Server/ActionsCast.lua",
+for _, part in ipairs({ "Server/ActionsMove.lua", "Server/ActionsInteract.lua", "Server/ActionsRolls.lua",
+    "Server/ActionsCast.lua",
     "Server/ActionsParty.lua", "Server/ActionsClick.lua" }) do
     Ext.Require(part)
 end

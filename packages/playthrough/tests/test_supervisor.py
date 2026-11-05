@@ -210,7 +210,7 @@ def test_profile_agent(tmp_path: Path):
 def test_pi_profile_runs_from_its_file_with_a_cost_cap():
     repo_profiles = Path(__file__).resolve().parents[3] / "profiles"
     agent = legacy_cli.profile_agent(repo_profiles, "deepseek-flash")
-    assert (agent.client, agent.model, agent.effort) == ("pi", "deepseek-flash", "medium")
+    assert (agent.client, agent.model, agent.effort) == ("pi", "deepseek-flash", "high")
     with pytest.raises(SupervisorError, match="cost cap"):
         legacy_cli.play_args("py", Path("/r"), req(), agent, repo_profiles)
     a = legacy_cli.play_args(

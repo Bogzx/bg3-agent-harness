@@ -197,7 +197,8 @@ end)
 test("lockpick: a party member carries the key -> refused, points to interact", function()
     keyed_door(P1)
     local j = job(op("lockpick", { char = P1, target = DOOR }))
-    eq(j.status, "failed", "status"); assert(j.error:find("use interact"), j.error)
+    eq(j.status, "failed", "status")
+    assert(j.error:find("carries its key (interact opens it with the key)", 1, true), j.error)
 end)
 
 -- The click's own request (NETMSG_CHARACTER_LOCKPICK -> LockpickingSystem.PickLockRequests).
@@ -484,6 +485,7 @@ test("interact on a pulled-up ladder from below: says it hangs out of reach (S05
     BG3AI.Visibility, BG3AI.Nav.ladderRaised = savedV, savedR
     eq(ok, false, "refused")
     eq(tostring(err):find("pulled up: its foot hangs 5.7m", 1, true) ~= nil, true, "names the raised foot: " .. tostring(err))
+    assert(tostring(err):find("route connectors=true and get_frontier list the other ways up", 1, true), tostring(err))
     eq(ok2, false, "door refused too"); eq(tostring(err2):find("pulled up", 1, true), nil, "the door: no ladder text")
     eq(ok3, true, "from above: no refusal")
 end)
@@ -810,8 +812,8 @@ test("A27 Gather Your Allies alone is refused before any cost, listing the group
         undo()
         eq(j.status, "failed", where .. " status")
         -- the usable ones first: combat_turn's quick pick (_WHICH_VARIANTS) takes Keene's, not the used Watch
-        assert(j.error:find("Gather Your Allies casts nothing by itself: use_ability which=<one of Guildmaster Keene's"
-            .. " Fixers, Gur Huntwardens, The Watch [already called]>", 1, true), j.error)
+        assert(j.error:find("Gather Your Allies casts nothing by itself: its variants (which=) are Guildmaster Keene's"
+            .. " Fixers, Gur Huntwardens, The Watch [already called]", 1, true), j.error)
         assert(j.error:find("x,y,z = the ground where they appear", 1, true), j.error)
         no_ids(j.error)
         eq(#called("UseSpell"), 0, where .. " no cast")
@@ -842,7 +844,7 @@ test("A27 which: an unknown or used group is refused with the list; no point = '
         "no variant 'Harpers' in Gather Your Allies: The Watch, Guildmaster Keene's Fixers, Gur Huntwardens")
     osiv[key("HasActiveStatus", P1, "END_ALLYABILITIES_GURALLIESCONSUMED")] = 1
     fails({ char = P1, spell = GYA, which = "Gur", pos = { 5, 0, 0 } },
-        "Gur Huntwardens was already called: pick another of The Watch, Guildmaster Keene's Fixers, Gur Huntwardens"
+        "Gur Huntwardens was already called; its variants: The Watch, Guildmaster Keene's Fixers, Gur Huntwardens"
         .. " [already called]")
     -- S093 09:38 (fairness leak): the Watch called and consumed; every refusal and the all-used one, names only
     osiv[key("HasActiveStatus", P1, "END_ALLYABILITIES_WATCHALLIESCONSUMED")] = 1
@@ -908,10 +910,10 @@ test("A27 a linked container with no variants (Shout_Shield_Wizard shape) still 
 end)
 
 test("spell_reach: a touch spell reaches edge to edge, a ranged one centre to centre (live N9 step 3)", function()
-    stats.Target_Longstrider = { TargetRadius = "1.5" } -- touch: 1.5 m + both bounding radii (0.5 each, stub)
+    stats.Target_Longstrider = { TargetRadius = "1.5" } -- touch: 1.5 m + both Move radii (0.25 each, unread)
     world[NPC].pos = { 9.47, 0, 0 }                     -- N9: Wyll 9.47 m from Claude
     local r = RPC.ops["act.spell_reach"]({ char = P1, spell = "Target_Longstrider", target = NPC })
-    eq(r.range_m, 1.5, "range"); eq(r.melee, true, "touch"); eq(r.reach_m, 2.5, "reach"); eq(r.dist_m, 9.47, "dist")
+    eq(r.range_m, 1.5, "range"); eq(r.melee, true, "touch"); eq(r.reach_m, 2.0, "reach"); eq(r.dist_m, 9.47, "dist")
     stats.Target_Bless = { TargetRadius = "9" }
     r = RPC.ops["act.spell_reach"]({ char = P1, spell = "Target_Bless", target = NPC })
     eq(r.melee, false, "ranged"); eq(r.reach_m, 9, "reach")

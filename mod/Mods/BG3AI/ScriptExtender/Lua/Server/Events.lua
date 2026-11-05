@@ -169,6 +169,231 @@ listen("StatusRemoved", 4, function(obj, status, _, _)
     if u then RPC.push("status_removed", { target = ref(u), name = V.statusInfo(status).name }) end
 end)
 
+------------------------------------------------------------------------
+-- An enemy's spell on first sight (act2-fights-analysis fix 4): what a player reads by hovering it, from the game's
+-- own data: its shown name and description with the description's numbers filled in (DescriptionParams), the extra
+-- description, then level / concentration, range, area, the save or attack, its damage (TooltipDamageList) and how
+-- long its status lasts (TooltipStatusApply). Facts only, the tooltip's own text. One spell_info event per spell per
+-- fight (E.spellSeen per combat), when an enemy casts it in view or a row shows it concentrating on it.
+------------------------------------------------------------------------
+
+local function splitTop(s) -- "DealDamage(5d8,Poison);Distance(3)" -> its top-level parts (commas inside parens kept)
+    local out, depth, cur = {}, 0, ""
+    for ch in tostring(s or ""):gmatch(".") do
+        if ch == "(" then depth = depth + 1 elseif ch == ")" then depth = depth - 1 end
+        if (ch == ";" or ch == ",") and depth == 0 then
+            if cur ~= "" then out[#out + 1] = cur end
+            cur = ""
+        else
+            cur = cur .. ch
+        end
+    end
+    if cur ~= "" then out[#out + 1] = cur end
+    return out
+end
+
+-- The caster's numbers in a damage formula, as the tooltip shows them (w10 L2: "MainMeleeWeapon
+-- MainMeleeWeaponDamageType damage" and "LevelMapValue(D8Cantrip) Cold damage" reached the agent raw).
+-- LevelMapValue(name): the game's level map (Ext.StaticData "LevelMap", by its Name) at the caster's level.
+-- <Slot>Weapon tokens are not resolved (REVIEW-13 item 1): the tooltip's number also depends on the off-hand rule,
+-- a versatile weapon held in two hands and the caster's own damage boosts (Rage, Dueling, ...), so any number built
+-- here could be wrong; the part is left out like any other formula and the combat log shows the real roll.
+local DAMAGE_TYPES = { Acid = true, Bludgeoning = true, Cold = true, Fire = true, Force = true, Lightning = true,
+    Necrotic = true, Piercing = true, Poison = true, Psychic = true, Radiant = true, Slashing = true, Thunder = true }
+local DICE = { "4", "6", "8", "10", "12", "20", "100" } -- bg3se DiceSizeId D4 .. D100, in its order
+
+local function field(o, k) local ok, v = pcall(function() return o[k] end) if ok then return v end return nil end
+
+E.levelMaps = E.levelMaps or nil -- level map Name -> its resource (one scan of the bank; static data doesn't change)
+local function levelMap(name)
+    if not E.levelMaps then
+        local all = osi(Ext.StaticData.GetAll, "LevelMap")
+        local maps = {}
+        for _, g in ipairs(type(all) == "table" and all or {}) do
+            local r = osi(Ext.StaticData.Get, g, "LevelMap")
+            local n = r and field(r, "Name")
+            if n then maps[tostring(n)] = r end
+        end
+        E.levelMaps = maps
+    end
+    return E.levelMaps[name]
+end
+
+local function levelMapValue(name, lvl)
+    local r = levelMap(name)
+    if not (r and lvl) then return nil end
+    local v = field(field(r, "LevelMaps") or {}, lvl)
+    if v == nil then v = field(r, "FallbackValue") end
+    if type(v) == "number" then return tostring(math.floor(v)) end
+    if v == nil then return nil end
+    local n, d = tonumber(field(v, "AmountOfDices")), field(v, "DiceValue")
+    local die = type(d) == "number" and DICE[d + 1] or tostring(d or ""):match("^D(%d+)$")
+    return n and die and (n .. "d" .. die) or nil
+end
+
+-- A damage/heal amount with the caster's numbers, or nil (the part is left out) when anything stays a formula.
+local function amount(x, c)
+    local out = tostring(x or ""):gsub("LevelMapValue%(%s*([%w_]+)%s*%)", function(n)
+        return levelMapValue(n, c.level) or "?"
+    end)
+    out = out:gsub("%s+", "")
+    return (out:find("%d") and out:match("^[%dd%+%-]+$")) and out or nil
+end
+
+local function damageType(x)
+    x = tostring(x or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    return DAMAGE_TYPES[x] and x or nil
+end
+
+-- One tooltip parameter as the tooltip shows it: DealDamage(5d8,Poison) "5d8 Poison damage", Distance(3) "3m",
+-- RegainHitPoints(2d4) "2d4 hit points", a bare number or dice as written; nil for anything that stays a formula
+-- (its token goes to c.left, which E.spell_info logs once).
+local function param(p, c)
+    local raw = tostring(p):gsub("^%s+", ""):gsub("%s+$", "")
+    local fn, args = raw:match("^([%w_]+)%((.*)%)$")
+    local out
+    if not fn then
+        out = raw:match("^[%d%.%%d%+%-]+$") and raw or nil
+    else
+        local a = {}
+        for x in (args .. ","):gmatch("([^,]*),") do a[#a + 1] = (x:gsub("^%s+", ""):gsub("%s+$", "")) end
+        if fn == "DealDamage" then
+            local n = amount(a[1], c)
+            local t = (a[2] == nil or a[2] == "") and "" or damageType(a[2])
+            out = n and t and (n .. (t ~= "" and (" " .. t) or "") .. " damage") or nil
+        elseif fn == "Distance" then
+            out = tonumber(a[1]) and (a[1] .. "m") or nil
+        elseif fn == "RegainHitPoints" then
+            local n = amount(a[1], c)
+            out = n and (n .. " hit points") or nil
+        end
+    end
+    if not out then c.left[#c.left + 1] = raw end
+    return out
+end
+
+-- The description with its [n] filled in; nil when a parameter stays a formula (the sentence would be cut).
+local function tooltipText(handle, params, c)
+    local t = U.loca(handle)
+    if not t then return nil end
+    local ps, whole = splitTop(params), true
+    t = t:gsub("%[(%d+)%]", function(i)
+        local x = ps[tonumber(i)] and param(ps[tonumber(i)], c)
+        if not x then whole = false end
+        return x or ""
+    end)
+    if not whole then return nil end
+    t = t:gsub("<br%s*/?>", " "):gsub("<[^>]+>", ""):gsub("%s+", " ")
+    return (t:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local SAVES = { Strength = true, Dexterity = true, Constitution = true, Intelligence = true, Wisdom = true,
+    Charisma = true }
+
+local function hasFlag(st, flag)
+    local yes = false
+    pcall(function() for _, fl in ipairs(st.SpellFlags) do if fl == flag then yes = true end end end)
+    return yes
+end
+
+-- An action every party member has in its own spellbook, and not a spell (w10 L2: Main Hand Attack, Ranged Attack,
+-- Jump; Dash): the player reads that tooltip on each hotbar, so an enemy's use of it brings nothing new.
+-- Summons are left out (they have their own short spellbooks: a party with a summon would show every common action).
+local function everyoneHas(id, st)
+    if hasFlag(st, "IsSpell") then return false end
+    local n = 0
+    for _, u in ipairs(ctx().party or {}) do
+        local e, has = V.entity(u), false
+        if not (U.comp(e, "IsSummon") or truthy(osi(Osi.IsSummon, u))) then
+            n = n + 1
+            pcall(function()
+                for _, sp in ipairs(e.SpellBook.Spells) do
+                    if sp.Id.Prototype == id or sp.Id.OriginatorPrototype == id then has = true break end
+                end
+            end)
+            if not has then return false end
+        end
+    end
+    return n > 0
+end
+
+local function casterLevel(u)
+    local e = u and V.entity(u)
+    local ok, l = pcall(function() return e.EocLevel.Level end)
+    return ok and tonumber(l) or nil
+end
+
+E.spellInfo = E.spellInfo or {} -- spell id .. "|" .. caster -> its text, or false (nothing to show)
+function E.spell_info(id, caster)
+    local key = tostring(id) .. "|" .. tostring(caster)
+    local c = E.spellInfo[key]
+    if c ~= nil then return c or nil end
+    c = false
+    local st = osi(Ext.Stats.Get, id)
+    -- a field the entry's type lacks (Shout_Dash: no TargetRadius) raises; it reads as absent (w10 L2's
+    -- "bad argument #1 to 'tonumber'" on every Dash)
+    local function f(k) local v = st and field(st, k) if v ~= nil and v ~= "" then return v end return nil end
+    local name = st and U.loca(f("DisplayName"))
+    if name and not everyoneHas(id, st) then
+        local cx = { uuid = caster, level = casterLevel(caster), left = {} }
+        local text = { name .. ":" }
+        local d = tooltipText(f("Description"), f("DescriptionParams"), cx)
+        if d then text[#text + 1] = d end
+        local x = tooltipText(f("ExtraDescription"), f("ExtraDescriptionParams"), cx)
+        if x then text[#text + 1] = x end
+        local facts = {}
+        local lvl = tonumber(f("Level"))
+        if lvl and lvl > 0 then facts[#facts + 1] = "level " .. lvl end
+        if hasFlag(st, "IsConcentration") then facts[#facts + 1] = "concentration" end
+        local range, area = tonumber(f("TargetRadius")), tonumber(f("AreaRadius"))
+        local function m(v)
+            v = U.round(v, 1)
+            return (v == math.floor(v) and string.format("%d", v) or tostring(v)) .. "m"
+        end
+        if range and range > 0 then facts[#facts + 1] = "range " .. m(range) end
+        if area and area > 0 then facts[#facts + 1] = "area " .. m(area) end
+        -- a ';' list (Ray of Sickness "RangedSpellAttack;Constitution"): each roll as the tooltip names it, in the
+        -- data's order, joined by "; " (the data says nothing about which comes first in play)
+        local rolls = {}
+        for sv in tostring(f("TooltipAttackSave") or ""):gmatch("[^;]+") do
+            sv = sv:match("^%s*(.-)%s*$")
+            if sv ~= "" then
+                rolls[#rolls + 1] = SAVES[sv] and (sv .. " save") or (sv:gsub("(%l)(%u)", "%1 %2"):lower())
+            end
+        end
+        if #rolls > 0 then facts[#facts + 1] = table.concat(rolls, "; ") end
+        for _, dmg in ipairs(splitTop(f("TooltipDamageList"))) do facts[#facts + 1] = param(dmg, cx) end
+        for _, a in ipairs(splitTop(f("TooltipStatusApply"))) do
+            local turns = tonumber(tostring(a):match("^%s*ApplyStatus%([^,]*,[^,]*,%s*(-?%d+)"))
+            if turns and turns > 0 then
+                facts[#facts + 1] = "lasts " .. turns .. (turns == 1 and " turn" or " turns")
+            end
+        end
+        if #facts > 0 then text[#text + 1] = "(" .. table.concat(facts, ", ") .. ")" end
+        c = table.concat(text, " ")
+        if #cx.left > 0 then
+            Ext.Utils.Print("[BG3AI] spell_info " .. tostring(id) .. ": left out (unresolved): "
+                .. table.concat(cx.left, "; "))
+        end
+    end
+    E.spellInfo[key] = c
+    return c or nil
+end
+
+-- The first sight of a spell in a fight (keyed by the caster's combat; out of combat, "none"): push spell_info.
+E.spellSeen = E.spellSeen or {}
+function E.note_spell(caster, id)
+    if not id or id == "" then return end
+    local combat = tostring(osi(Osi.CombatGetGuidFor, caster) or "none")
+    local seen = E.spellSeen[combat] or {}
+    E.spellSeen[combat] = seen
+    if seen[id] then return end
+    local text = E.spell_info(id, caster)
+    if not text then return end
+    seen[id] = true
+    RPC.push("spell_info", text)
+end
+
 -- CastedSpell(caster, spell, spellType, spellElement, storyActionID)
 listen("CastedSpell", 5, function(caster, spell, _, _, _)
     local u = visibleChar(caster)
@@ -186,6 +411,7 @@ listen("CastedSpell", 5, function(caster, spell, _, _, _)
     -- spell: the engine id, only for our own casters (the hotbar's spell, what a plan names). An enemy's cast shows
     -- a player only its display name; its id can carry hints the name doesn't (audit ACT-14, as for status ids).
     RPC.push("cast", { caster = ref(u), spell = ctx().is_party[u] and spell or nil, name = name, roll = roll })
+    if not ctx().is_party[u] then E.note_spell(u, spell) end
 end)
 
 ------------------------------------------------------------------------
@@ -269,10 +495,24 @@ local function questTitle(questId)
     return nil
 end
 
+-- The game fires QuestAccepted / QuestUpdateUnlocked once per party member, all in the same tick (w12 L1a: a party
+-- of 4 put one quest_update 4 times in a talk_to's EVENTS). The journal shows one entry: one row per quest (and
+-- step) per tick. E.tickN counts ticks (the Tick handler below).
+local function firstThisTick(key)
+    local seen = E.questSeen
+    if not seen or seen.tick ~= E.tickN then
+        seen = { tick = E.tickN, keys = {} }
+        E.questSeen = seen
+    end
+    if seen.keys[key] then return false end
+    seen.keys[key] = true
+    return true
+end
+
 listen("QuestAccepted", 2, function(char, quest)
     if not ctx().is_party[V.uuid(char) or ""] then return end
     local title = questTitle(quest)
-    if title then RPC.push("quest_added", { title = title }) end
+    if title and firstThisTick("accepted|" .. tostring(quest)) then RPC.push("quest_added", { title = title }) end
 end)
 
 -- Only a step whose text the journal shows (State.journal skips the others).
@@ -282,7 +522,12 @@ listen("QuestUpdateUnlocked", 3, function(char, quest, step)
     if not title then return end
     for _, st in ipairs(q.steps) do
         local text = st.id == step and U.loca(st.desc)
-        if text then return RPC.push("quest_update", { title = title, text = text }) end
+        if text then
+            if firstThisTick("update|" .. tostring(quest) .. "|" .. tostring(step)) then
+                RPC.push("quest_update", { title = title, text = text })
+            end
+            return
+        end
     end
 end)
 
@@ -325,10 +570,13 @@ end)
 -- Items, containers, use
 ------------------------------------------------------------------------
 
--- AddedTo(item, holder, addType)
+-- AddedTo(item, holder, addType). Not for a gold stack: its count is the whole stack after the merge, and a
+-- payment adds the split-off coins to the payer first (w11 L1: a +52 g sale gave "item_added Gold count=402", paying
+-- 48 g "item_added Gold count=48"). GoldChanged below reports gold.
 listen("AddedTo", 3, function(item, holder, _)
     local h = V.uuid(holder)
     if not ctx().is_party[h or ""] then return end
+    if type(item) == "string" and item:find("^LOOT_Gold") then return end
     local u = V.uuid(item)
     local data = { owner = ref(h), item = ref(u) }
     local n = osi(Osi.GetStackAmount, u)
@@ -445,10 +693,28 @@ listen("ShortRested", 1, function(char)
 end)
 
 ------------------------------------------------------------------------
--- Polled facts: gold, newly spotted traps near the party.
+-- Gold: the game's GoldChanged(holder, delta), one event per change of the party's total (a move between party
+-- members nets out), pushed as it happens so the action's own result has it (the old 1 Hz poll of PartyGetGold
+-- was never seen in a result: w11 L1 trades showed only the gold stack's item_added).
 ------------------------------------------------------------------------
 
 E.lastGold = E.lastGold or nil
+
+listen("GoldChanged", 2, function(holder, delta)
+    local d = math.floor(tonumber(delta) or 0)
+    if d == 0 or not ctx().is_party[V.uuid(holder) or ""] then return end
+    local total = tonumber(osi(Osi.PartyGetGold, ctx().party[1]))
+    if not total then return end
+    total = math.floor(total)
+    local before = E.lastGold or (total - d)
+    E.lastGold = total
+    if total ~= before then RPC.push("gold_changed", { gold = total, delta = total - before }) end
+end)
+
+------------------------------------------------------------------------
+-- Polled facts: newly spotted traps near the party.
+------------------------------------------------------------------------
+
 E.knownTraps = E.knownTraps or {}
 E.lastPoll = 0
 
@@ -461,11 +727,6 @@ local function poll()
     ctxCache, ctxTime = c, t
     local host = c.party[1]
     if not host then return end
-    local gold = osi(Osi.PartyGetGold, host)
-    if gold and E.lastGold and gold ~= E.lastGold then
-        RPC.push("gold_changed", { gold = gold, delta = gold - E.lastGold })
-    end
-    E.lastGold = gold
     E.seedApproval(c)
     -- A trap became discovered near the party (the orange outline appears).
     local center = c.observers[1] and c.observers[1].pos
@@ -492,6 +753,7 @@ end
 if not E.tickSubscribed then
     E.tickSubscribed = true
     Ext.Events.Tick:Subscribe(function()
+        E.tickN = (E.tickN or 0) + 1
         local ok, err = pcall(poll)
         if not ok then Ext.Utils.PrintWarning("[BG3AI] events poll: " .. tostring(err)) end
     end)
@@ -517,14 +779,21 @@ local function flagList(f)
 end
 E.flagList = flagList
 
+-- The short-rest side (REVIEW-13 item 12): CanDoRest.ShortRestErrorFlags per member and the GlobalShortRestDisabled
+-- component, what the HUD's greyed Short Rest button shows. short_read is false when any member's field didn't read.
 function E.canRest()
-    local blocked = {}
+    local blocked, shortBlocked, shortRead = {}, {}, true
     for _, u in ipairs(V.context().party) do
         local e = V.entity(u)
         local c = e and U.comp(e, "CanDoRest")
         local flags = c and flagList(c.LongRestErrorFlags) or {}
         if #flags > 0 then blocked[#blocked + 1] = { name = V.name(u), uuid = u, flags = flags } end
+        local okS, sf = pcall(function() return c.ShortRestErrorFlags end)
+        if not (c and okS and sf ~= nil) then shortRead = false end
+        local sflags = (c and okS) and flagList(sf) or {}
+        if #sflags > 0 then shortBlocked[#shortBlocked + 1] = { name = V.name(u), uuid = u, flags = sflags } end
     end
+    local okG, gs = pcall(Ext.Entity.GetAllEntitiesWithComponent, "GlobalShortRestDisabled")
     local ok, g = pcall(Ext.Entity.GetAllEntitiesWithComponent, "GlobalLongRestDisabled")
     local states = {}
     local ok2, ls = pcall(Ext.Entity.GetAllEntitiesWithComponent, "LongRestState")
@@ -534,15 +803,39 @@ function E.canRest()
                 MaxDepth = 2, IterateUserdata = true, AvoidRecursion = true }):sub(1, 300) end)
         end
     end
-    return { blocked = blocked, global_disabled = ok and #g or -1, long_rest_state = states }
+    return { blocked = blocked, global_disabled = ok and #g or -1, long_rest_state = states,
+        short_read = shortRead, short_blocked = shortBlocked, short_global_disabled = okG and #gs or -1 }
 end
 
--- camp.can_rest -> {blocked=[{name, flags}], global_disabled, long_rest_state}: asked before the rest button press.
+-- camp.can_rest -> {blocked=[{name, flags}], global_disabled, long_rest_state, short_read, short_blocked,
+-- short_global_disabled}: asked before the rest button press, and by a blocked camp trip (short rest's state).
 RPC.register("camp.can_rest", function() return E.canRest() end)
 
--- camp.rest_flow {since_ms?} -> {steps=[...], step_ms=[...], story={...}, can_rest={...}}: the End-the-Day
--- handshake steps seen recently (step_ms: how long ago each one fired), the camp story flags and the engine's
--- rest validation (diagnostics for the bridge's metrics log; can_rest's reasons are shown to the agent).
+-- Who the camp story still wants a talk with before the night can end (GLO_Camp.txt "Required talks":
+-- DB_Camp_RequiredTalks(character, dialog); the story shows the "!" over each). At night the sleep press runs
+-- PROC_Camp_TryLeaveNightMode_CampNightCheck: while any row is left it only opens the "talks left" message box and
+-- the night goes on; a row clears when that character joins a conversation (DialogActorJoined). launch-v1 haiku
+-- act3_gold_max: 46 long_rest "the night at camp didn't end" until the agent happened to talk to Shadowheart (r2,
+-- r4) or Withers (r5). -> {{uuid, name} | {} per character}: named when in the party or perceived (the "!" is on
+-- screen), else an empty row (counted, not named). nil when the DB can't be read.
+function E.requiredTalks()
+    local ok, rows = pcall(function() return Osi.DB_Camp_RequiredTalks:Get(nil, nil) end)
+    if not ok or type(rows) ~= "table" then return nil end
+    local out, seen = {}, {}
+    for _, r in ipairs(rows) do
+        local u = V.uuid(r[1])
+        if u and not seen[u] then
+            seen[u] = true
+            out[#out + 1] = visibleChar(u) and ref(u) or {}
+        end
+    end
+    return out
+end
+
+-- camp.rest_flow {since_ms?} -> {steps=[...], step_ms=[...], story={...}, can_rest={...}, required_talks}: the
+-- End-the-Day handshake steps seen recently (step_ms: how long ago each one fired), the camp story flags and the
+-- engine's rest validation (diagnostics for the bridge's metrics log; can_rest's reasons are shown to the agent),
+-- and E.requiredTalks (shown: travel.py night_talks_left).
 RPC.register("camp.rest_flow", function(args)
     local now = Ext.Utils.MonotonicTime()
     local since = now - (tonumber(args and args.since_ms) or 30000)
@@ -557,7 +850,8 @@ RPC.register("camp.rest_flow", function(args)
         story[n] = ok and rows and #rows or -1
     end
     local okc, can = pcall(E.canRest)
-    return { steps = steps, step_ms = stepMs, story = story, can_rest = okc and can or nil }
+    return { steps = steps, step_ms = stepMs, story = story, can_rest = okc and can or nil,
+             required_talks = E.requiredTalks() }
 end)
 
 return E

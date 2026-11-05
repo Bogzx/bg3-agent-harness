@@ -232,6 +232,19 @@ ok(not okr and tostring(er):find("conversation is open", 1, true) and #commands 
     "dialogue on screen -> refused, no CampTravel: " .. tostring(er))
 widgets = {}
 
+-- the game menu open when long_rest is called (launch-v1 haiku r1: two sleep presses under it, 30 s each, the
+-- night never ended): refused at once, CampTravel never pressed; sleep_only (camp leave, fast travel) too
+for _, args in ipairs({ {}, { sleep_only = true } }) do
+    clock = clock + 60000
+    widgets = {}
+    W("GameMenu", {}, { { "Resume", "ResumeBtn", function() end } })
+    nCamp = #commands
+    okr, er = pcall(ops["ui.long_rest"], args)
+    ok(not okr and tostring(er):find("the game menu is open", 1, true) and #commands == nCamp,
+        "game menu on screen -> refused, no CampTravel: " .. tostring(er))
+end
+widgets = {}
+
 -- ui.confirm on a dead box: still_open + needs_click
 widgets = {}
 W("Dialog_box", { "[ForceUpdate]" }, { { "Yes", nil, function() end }, { "No", nil, function() end } })
@@ -337,6 +350,38 @@ do
     ok(not okf and tostring(ef):find("SaveGame page is open"), "any command on the Save page refused: " .. tostring(ef))
     okf, ef = pcall(ops["ui.command"], { widget = "SaveGame", command = "CloseCommand" })
     ok(okf, "Close on the Save page passes: " .. tostring(ef))
+    -- REVIEW-5 F8: difficulty, its settings (Karmic Dice) and the game options are refused, every attempt sent to the
+    -- referee ring (the RuleChangeRefused message), and the refusal is not swallowed by the confirm-box fallback
+    local sent = {}
+    local _net = Ext.Net
+    Ext.Net = { CreateChannel = function(m, c)
+        return { SendToServer = function(_, msg) sent[#sent + 1] = { m .. "/" .. c, msg } end }
+    end }
+    widgets = {}
+    executed = {}
+    for _, a in ipairs({ { command = "UpdateDifficultyCommand" }, { command = "UpdateCustomDifficultyCommand" },
+        { command = "ValueChanged", param = "KarmicDice" }, { command = "ResetOptionsToDefaultCommand" },
+        { command = "EditSessionSettings" }, { command = "Toggle", target = "Ruleset.Modifiers.3" } }) do
+        a.widget = "*"
+        okf, ef = pcall(ops["ui.command"], a)
+        ok(not okf and tostring(ef):find("refused: it changes") and tostring(ef):find("the scenario fixes"),
+            "ui.command " .. a.command .. " refused: " .. tostring(ef))
+    end
+    ok(#executed == 0 and #sent == 6 and sent[1][1] == "65734c81-edd1-4b6f-b10e-663fec0e768e/RuleChangeRefused"
+        and sent[1][2].command == "UpdateDifficultyCommand" and sent[1][2].what == "difficulty",
+        "nothing executed, each attempt sent to the ring: " .. #sent)
+    W("NewGameSettings", {}, {})
+    okf, ef = pcall(ops["ui.command"], { widget = "NewGameSettings", command = "ValueChanged" })
+    ok(not okf and tostring(ef):find("a setting on the NewGameSettings page"), "any command on the settings page: "
+        .. tostring(ef))
+    okf, ef = pcall(ops["ui.command"], { widget = "NewGameSettings", command = "CloseCommand" })
+    ok(okf, "Close on the settings page passes: " .. tostring(ef))
+    widgets = {}
+    W("Dialog_box", { "[ForceUpdate]" }, { { "Yes", nil, function() pressed = "rule-yes" end } })
+    pressed = nil
+    okf = pcall(ops["ui.command"], { widget = "*", command = "UpdateDifficultyCommand", param = "Yes" })
+    ok(not okf and pressed == nil, "a refused difficulty change doesn't press the box's Yes")
+    Ext.Net = _net
     widgets = {}
     okf, ef = pcall(ops["ui.command"], { widget = "*", command = "EndTurn" })
     ok(okf and executed[#executed] == "EndTurn", "an ordinary command passes: " .. tostring(ef))

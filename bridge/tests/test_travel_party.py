@@ -10,7 +10,6 @@ Run: cd bridge && uv run python -m unittest tests.test_travel_party
 
 from __future__ import annotations
 
-import json
 import sys
 import time
 import unittest
@@ -146,10 +145,9 @@ class FastTravelSplitParty(Case):
         self.assertIn("Claude already stands at the Temple of Bhaal waypoint (2.9m)", out)
         for who in ("Karlach 136m, 64m above, unchained", "Wyll 137m", "Shadowheart 138m"):
             self.assertIn(who, out)
-        steps = json.loads(out.split("do_actions ", 1)[1].split(" (S064", 1)[0])
-        self.assertEqual(steps[:2], [{"tool": "set_party", "action": "select", "who": "Karlach"},
-                                     {"tool": "travel_to", "waypoint": "Temple of Bhaal"}])
-        self.assertEqual(len(steps), 6)
+        self.assertNotIn("do_actions", out)  # D630: who is where; no 'travel each one: do_actions [...]'
+        self.assertNotIn("regroup", out)
+        self.assertTrue(out.endswith("Shadowheart 138m, 63m above, unchained."), out)
         self.assertEqual(reporting._batch.get("last"), "failed")
 
     def test_at_the_waypoint_with_everyone_there_is_nothing_to_travel(self):
@@ -179,7 +177,8 @@ class FastTravelSplitParty(Case):
         self.assertIn("fast_travel: done", out)
         self.assertIn("LEFT BEHIND by the trip: ", out)
         self.assertIn("Wyll", out.split("LEFT BEHIND", 1)[1])
-        self.assertIn('{"tool": "set_party", "action": "select", "who": "Wyll"}', out)
+        self.assertNotIn("set_party", out)  # D630: who stayed and where, no 'travel each one ... or regroup()'
+        self.assertNotIn("regroup", out)
 
     def test_unchained_near_member_is_chained_before_the_trip(self):
         st = s064_status()
@@ -246,7 +245,8 @@ class CampLeftBehind(Case):
         tail = out.split("LEFT BEHIND: ", 1)[1]
         self.assertIn("Wyll", tail)
         self.assertNotIn("Karlach", tail)
-        self.assertIn("set_party select Wyll, then camp()", tail)
+        self.assertTrue(tail.rstrip().endswith("long_rest fails until everyone is here."), tail)  # D630: no fix line
+        self.assertNotIn("set_party", tail)
 
     def test_a_member_arriving_a_moment_later_is_not_reported(self):
         calls = {"n": 0}
@@ -276,7 +276,7 @@ class LongRestNotAtCamp(Case):
         self.assertNotIn("ui.long_rest", fake.ops())
         self.assertIn("long_rest: FAILED — not pressed: not everyone is at camp: ", out)
         self.assertIn("Wyll", out)
-        self.assertIn("set_party select Wyll, then camp()", out)
+        self.assertIn("(S065 12:02: selecting Wyll, then camp(), brought him)", out)
 
     def test_location_flag_on_a_member_at_camp_doesnt_refuse(self):
         fake = self.use(s065_camp_status(wyll_at_camp=True))
@@ -285,6 +285,26 @@ class LongRestNotAtCamp(Case):
 
 
 class StoryAreaBlock(Case):
+    def test_short_rest_state_only_as_read(self):  # REVIEW-13 item 12: GlobalDisabled made the old claim false
+        cases = [
+            ({"short_read": True, "short_global_disabled": 0, "short_blocked": []}, "fast travel is blocked too; "
+             "short_rest is open here."),
+            ({"short_read": True, "short_global_disabled": 1, "short_blocked": []}, "fast travel is blocked too; "
+             "short rest is disabled here too."),
+            ({"short_read": True, "short_global_disabled": 0, "short_blocked": [
+                {"name": "Karlach", "flags": ["NotEnoughResources"]}]},
+             "fast travel is blocked too; short rest is blocked too (Karlach: NotEnoughResources)."),
+            ({"short_read": False, "short_global_disabled": 0, "short_blocked": []}, "fast travel is blocked too."),
+            ({"short_read": True, "short_global_disabled": -1, "short_blocked": []}, "fast travel is blocked too."),
+        ]
+        for can, want in cases:
+            fake = self.s065()
+            fake.can = can
+            out = travel.camp()
+            self.assertIn(want, out, can)
+            self.assertNotIn("potions", out)
+
+
     def s065(self) -> Fake:
         fake = self.use(s064_status())
         for r in fake.status["party"][1:]:
@@ -300,12 +320,16 @@ class StoryAreaBlock(Case):
         self.assertIn("(Location): this area does not let the party go to camp", out)
         self.assertIn("fast travel is blocked too", out)
         self.assertNotIn("fast_travel to a waypoint", out)  # the S065 text sent the agent to fast_travel
-        self.assertIn("Way out: walk out the way you came, e.g. toward the Temple of Bhaal waypoint", out)
+        self.assertIn("fast travel is blocked too.", out)  # REVIEW-13 item 12: camp.can_rest gave no short side: no claim
+        self.assertNotIn("potions", out)
+        self.assertIn(" The nearest waypoint is Temple of Bhaal at ", out)  # D630: the exit as a fact
+        self.assertNotIn("Way out", out)
         self.assertNotIn("Same story-area block", out)
         out = travel.fast_travel("Temple of Bhaal")
         self.assertIn("can't fast travel now (Location)", out)
         self.assertIn("Same story-area block as camp at ", out)
-        self.assertIn("camp, fast_travel and travel_to(waypoint) are all refused here", out)
+        self.assertIn("camp, fast_travel and travel_to(waypoint) are all refused here.", out)
+        self.assertNotIn("don't try the others", out)  # D630: the refusals are facts, what to try is advice
         out = travel_macro.travel_to(waypoint="Temple of Bhaal")
         self.assertIn("Same story-area block as camp", out)
         self.assertNotIn("act.go_to_camp", fake.ops())
@@ -325,7 +349,7 @@ class StoryAreaBlock(Case):
             self.assertIsNone(left)                                               # the walk goes on from here
             self.assertTrue(line.startswith("fast travel to Undercity Ruins: can't fast travel now (Location): this "
                                             "area does not allow travel"), line)
-            self.assertIn("Way out: walk out the way you came, e.g. toward the Temple of Bhaal waypoint", line)
+            self.assertIn("The nearest waypoint is Temple of Bhaal at ", line)  # D630
             self.assertTrue(line.endswith("Walking instead."), line)
             self.assertIsNotNone(travel.AREA.current(LVL))                      # the ALERTS line has it now
             n = fake.ops().count("ui.fast_travel")
@@ -346,7 +370,7 @@ class StoryAreaBlock(Case):
         fake.status["party"][0]["pos"] = [21.0, -49.0, 1001.0]
         fake.block = {"hud": True, "error": "Location"}
         out = travel.camp()
-        self.assertIn("Way out: walk to (-45,-46,1006) 66m W (travel_to x,y,z), where travel last worked", out)
+        self.assertIn(" Travel last worked at (-45,-46,1006) 66m W.", out)  # D630: the exit as a fact
 
     def test_alert_until_the_party_walks_out(self):
         fake = self.s065()
@@ -354,7 +378,7 @@ class StoryAreaBlock(Case):
         st = fake.status
         alert = overview._area_alert(st)
         self.assertTrue(alert.startswith("travel blocked here (story area, Location): no camp, fast_travel and "
-                                         "travel_to(waypoint); way out: "), alert)
+                                         "travel_to(waypoint); the nearest waypoint is "), alert)  # D630
         st["party"][0]["pos"] = [16.0, -49.0, 1001.0]  # 5 m on: no re-read, the same phrase (no reprint)
         n = fake.calls.count("ui.travel_block")
         self.assertEqual(overview._area_alert(st), alert)
@@ -404,7 +428,8 @@ class Stay(Case):
         fake, out = self.stay(JobResult("failed", None, "timeout"))
         self.assertEqual(fake.ops(), ["act.unchain"])
         self.assertIn("stay: FAILED — e3 Wyll is still chained to the group (timeout): it follows the next walk", out)
-        self.assertIn("set_party unchain who=<them>", out)
+        self.assertNotIn("set_party", out)  # REVIEW-13 item 11: the fact only, no tool how-to
+
         self.assertNotIn(WYLL, overview._stay)
 
     def test_unchain_taken_stays(self):
@@ -425,6 +450,17 @@ class PartyPure(unittest.TestCase):
         st["party"][2]["dead"] = True
         st["party"].append(row("bbbbbbbb-0000-4000-8000-000000000009", "Spiritual Weapon", [0, 0, 0], summon=True))
         self.assertEqual(party.camp_behind(st), [])
+
+
+
+class TravelBlockText(unittest.TestCase):
+    def test_states_the_block_without_advice(self):
+        # D630: facts about the game and the tools stay, advice on what to do goes
+        txt = travel._travel_block_text({"error": "Condition", "screen": "a camp scene"})
+        self.assertEqual(txt, " The game blocks travel here (Condition): the camp and map travel buttons are greyed out."
+                              " On screen: a camp scene.")
+        self.assertEqual(travel._travel_block_text({"dialogue": True}),
+                         " A conversation is open (choose_dialogue answers it): the game doesn't travel during one.")
 
 
 if __name__ == "__main__":

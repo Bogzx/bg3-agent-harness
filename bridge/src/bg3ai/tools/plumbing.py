@@ -34,7 +34,7 @@ def _objective_ref(ref: str) -> str:
         return _uuid(label)
     except ValueError:
         raise ValueError(f"{ref} is the objective marker '{label}', not something in view by that name: "
-                         f"route(objective='{ref}', go=true) to get there, then use the eN from get_nearby") from None
+                         f"route(objective='{ref}', go=true) walks there") from None
 
 
 TELEPORT_SCROLLS = {"misty step": 18.0, "dimension door": 18.0}  # BG3 ranges (m, 3D)
@@ -68,7 +68,7 @@ def _teleport_hint(res: Any) -> str:
         if d3 <= rng(best):
             lines.append(f"TELEPORT: {core.H.get(best['uuid'], best.get('name'))} {best.get('name')} ({render.num(rng(best))}m)"
                          f" reaches the floor {lo.get('dir') or ''} from the edge {render.pos(lo['from'])}"
-                         f" ({render.num(round(d3, 1))}m): move_to the edge, then use the scroll at {render.pos(lo['to'])}")
+                         f" ({render.num(round(d3, 1))}m), landing at {render.pos(lo['to'])}")
         else:
             lines.append(f"TELEPORT: the carried {best.get('name')} reaches {render.num(rng(best))}m; the floor "
                          f"{lo.get('dir') or ''} is {render.num(round(d3, 1))}m from the edge: too far")
@@ -333,16 +333,45 @@ def _trim_after(res: Any, tool: str = "", char: str | None = None) -> Any:
     return out
 
 
+def _reactions_text(reactions: list, char: str | None) -> str:
+    """A move's reactions (Actions.lua reaction_annotate): the casts of the mover's foes its move set off, each as
+    "reaction <who>: <what> -> <mover> <damage> <type>", as the event log names a cast (window 8 seed 7 m1: the
+    opportunity attack landed after move_to had answered)."""
+    who = queueing._label(char) if char else "the mover"
+    lines = []
+    for x in reactions:
+        if not isinstance(x, dict):
+            continue
+        by = x.get("by") or {}
+        dmg = x.get("damage") or 0
+        hit = f" -> {who} {render.num(dmg)}" + (f" {x['type']}" if dmg and x.get("type") else "") if dmg else ""
+        open_ = "" if x.get("resolved") else " (still resolving when this answered)"
+        if x.get("unseen"):  # a reactor the side can't see: only the damage it felt (Actions.lua)
+            lines.append(f"reaction by someone unseen{hit}{open_}")
+            continue
+        lines.append(f"reaction {queueing._label(str(by.get('uuid') or by.get('name') or '?'))}: "
+                     f"{x.get('name') or '?'}{hit}{open_}")
+    return ("REACTIONS to the move\n  " + "\n  ".join(lines)) if lines else ""
+
+
 def _job_text(name: str, r: JobResult, char: str | None = None) -> str:
     res = r.result
     if isinstance(res, dict) and "phases" in res:  # ui.roll's state timeline: metrics only (_roll_step)
         res = {k: v for k, v in res.items() if k != "phases"}
+    reactions = res.get("reactions") if isinstance(res, dict) else None
+    if reactions:
+        res = {k: v for k, v in res.items() if k != "reactions"}
+        tail = _reactions_text(reactions, char)
+        text = _job_text(name, JobResult(r.status, res, r.error, r.events, r.elapsed_ms), char)
+        return text + ("\n" + tail if tail else "")
     r = JobResult(r.status, _trim_after(res, name, char), r.error, r.events, r.elapsed_ms)
     if isinstance(r.result, dict) and r.result.get("by_game"):
         return _game_moved_text(name, r.result, char)
     if isinstance(r.result, dict) and r.result.get("by_trip") and r.status == "done":
         return party.trip_moved_text(name, r.result, char or _active(), queueing._label)
-    if name == "trade" and isinstance(r.result, dict) and ("wares" in r.result or "offer" in r.result):
+    # a confirmed deal too: the screen that closed during the finish returns no offer/wares (REVIEW-17 F2)
+    if name == "trade" and isinstance(r.result, dict) and ("wares" in r.result or "offer" in r.result
+                                                           or r.result.get("confirmed")):
         head = f"trade: done" if r.status == "done" else f"trade: {r.status.upper()}" + (f" — {r.error}" if r.error else "")
         return head + "\n" + economy.trade_text(r.result, progression._item_handle, **progression._trade_view)
     if r.status == "done":
@@ -350,7 +379,7 @@ def _job_text(name: str, r: JobResult, char: str | None = None) -> str:
         if r.result not in (None, {}, []):
             s += " — " + render.compact(r.result, core.H)
     elif r.status == "still_running":
-        s = f"{name}: still running (use wait to keep watching)"
+        s = f"{name}: still running"
     else:
         s = f"{name}: {r.status.upper()}"
         if r.error:
@@ -429,9 +458,9 @@ def _leave_turn_based_for_walk() -> str:
     ok, how = _set_turn_based(False)
     if ok:
         return (f"(the game had put the party in turn-based mode outside combat; left it first: {how}. In the "
-                "Shadow-Cursed Lands it comes back while anyone is cursed: keep everyone in the light)")
+                "Shadow-Cursed Lands it comes back while anyone is cursed)")
     return (f"STILL IN TURN-BASED MODE outside combat ({how}): walks get only the turn's movement; "
-            "click the Exit TB button (bottom right of the hotbar) or end_turn to get movement back")
+            "the Exit TB button (bottom right of the hotbar) or end_turn gives movement back")
 
 
 def _log_stage_ms(op: str, r: JobResult) -> None:
@@ -482,16 +511,20 @@ def _input_exclusive(fn):
 
 
 def _act(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server",
-         wait: bool = True, note: str = "", post=None, on_start=None, redo=None) -> str:
+         wait: bool = True, note: str = "", post=None, on_start=None, redo=None, block: bool = False,
+         t0: float | None = None) -> str:
+    """block (with wait=False): an out-of-combat walk that returns at its end (_start_async, _walk_wait).
+    t0: the tool call's start (a walk's 90 s budget and the call deadline count from it), else now."""
     if op in _INPUT_OPS or (context == "client" and op.startswith("ui.")):
         with _InputHeld():
-            return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo)
-    return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo)
+            return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo, block, t0)
+    return _act_run(tool, op, args, wait_s, context, wait, note, post, on_start, redo, block, t0)
 
 
 def _act_run(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str = "server",
-             wait: bool = True, note: str = "", post=None, on_start=None, redo=None) -> str:
-    t0 = time.monotonic()
+             wait: bool = True, note: str = "", post=None, on_start=None, redo=None, block: bool = False,
+             t0: float | None = None) -> str:
+    t0 = time.monotonic() if t0 is None else t0
     if core._session_over():
         return reporting._finish(tool, args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
     if op in _WALK_OPS and context == "server" and _tb_wanted["on"]:
@@ -502,7 +535,7 @@ def _act_run(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str 
         held = batch._hold_for_early_walks(args.get("char"))
         note = "\n".join(x for x in (held, note) if x)
     if not wait and not reporting._batch["active"] and context == "server":
-        return _start_async(tool, op, args, t0, note)
+        return _start_async(tool, op, args, t0, note, block=block)
     ex = reporting._batch["exec"]
     if reporting._batch["active"]:
         wait_s = max(wait_s, 120.0)  # a batch/queue step runs to completion (interrupts cancel it)
@@ -551,9 +584,23 @@ def _act_run(tool: str, op: str, args: dict, wait_s: float = 25.0, context: str 
         r = JobResult(r.status, {k: v for k, v in r.result.items() if k != "after"}, r.error, r.events, r.elapsed_ms)
     if post is not None:  # a line from after the job (use_ability: did the opener start a fight?)
         note = "\n".join(x for x in (post(r), note) if x)
-    changes = _combat_changes(tool)
+    changes = _combat_changes(tool, ended=r.status != "still_running")
     body = "\n".join(x for x in (_job_text(tool, r, args.get("char")), note, changes) if x)
     return reporting._finish(tool, args, body, t0)
+
+
+POLL_S = 0.05  # a wait whose end the game shows is read this often, its old fixed sleep or loop the cap (naming.py)
+
+
+def poll_until(read, done, cap_s: float, every: float = POLL_S):
+    """read() until done(value) or cap_s passes (latency survey 2026-11-04 §5.5: 0.2-0.5 s sleeps between reads of
+    a readable condition). -> the last value read."""
+    end = time.monotonic() + cap_s
+    v = read()
+    while not done(v) and time.monotonic() < end:
+        time.sleep(every)
+        v = read()
+    return v
 
 
 def _close_left_trade(wait_s: float = 2.0) -> bool:
@@ -562,12 +609,11 @@ def _close_left_trade(wait_s: float = 2.0) -> bool:
     if uitools._ui_screen()[0] != "trade":
         return False
     core.game.try_rpc("ui.key", {"key": "ESCAPE"}, context="client")
-    end = time.monotonic() + wait_s
-    while time.monotonic() < end:
-        time.sleep(0.2)
-        if uitools._ui_screen()[0] not in ("trade", "dialogue"):
-            return True
-    return False
+
+    def gone(screen: str) -> bool:
+        return screen not in ("trade", "dialogue")
+
+    return gone(poll_until(lambda: uitools._ui_screen()[0], gone, wait_s))
 
 
 # Async jobs started with wait=false: handle (j12) -> what the agent needs to follow them up.
@@ -590,13 +636,15 @@ def _follow_on(tool: str, r: JobResult, args: dict) -> tuple[JobResult, str]:
     _async[h] = {"ctx": "server", "id": jid, "tool": tool, "t0": time.monotonic(), "eta": None,
                  "char": args.get("char")}
     core.METRICS.bg_start(h, None)
-    return r, (f"it goes on as {h}: its end shows as job_finished in a later result; wait_for('{h}') waits for it "
+    return r, (f"it goes on as {h}: its end shows as job_finished in a later result "
                f"(sending {tool} again would supersede it)")
 
 
-def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "") -> str:
+def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "", block: bool = False) -> str:
     """Start a mod job and return at once: "move_to: started j12, ETA 3.4s (14m)". The mod announces the
-    end with a job_finished event (notify), so any later tool result shows it; wait_for('j12') blocks."""
+    end with a job_finished event (notify), so any later tool result shows it; wait_for('j12') blocks.
+    block: wait for its end here instead (batch._wait, what wait_for('j12') returns), until WALK_BUDGET_S after t0;
+    a walk still going then returns its progress and id."""
     started = core.game.rpc(op, dict(args, notify=True))
     if op in _WALK_OPS and isinstance(started, dict) and _tb_refused(started.get("status"), started.get("error")):
         tb = _leave_turn_based_for_walk()
@@ -622,18 +670,26 @@ def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "") -> s
         r = JobResult(view["status"], view.get("result"), view.get("error"), elapsed_ms=view.get("elapsed_ms", 0))
         _remember_names(r.result)
         reporting._batch["last"] = r.status
-        return reporting._finish(tool, args, _job_text(tool, r, args.get("char")) + ("\n" + note if note else ""), t0)
+        tail = batch.walk_end_tail() if tool in batch.ARRIVAL_LEAD_TOOLS else ""
+        return reporting._finish(tool, args, _job_text(tool, r, args.get("char")) + ("\n" + note if note else "") + tail, t0)
     body = f"{tool}: started {h}"
     if started.get("eta_s") is not None:
         body += f", ETA {render.num(float(started['eta_s']))}s"
     if started.get("route_m") is not None:
         body += f" ({render.num(float(started['route_m']))}m)"
+    if block:
+        waited, _ = batch._wait(h, t0 + WALK_BUDGET_S, t0=t0)
+        if h not in _async:  # it ended: the walk's own result, as wait_for(h) returns it
+            return reporting._finish(tool, args, waited + ("\n" + note if note else ""), t0)
+        # the wait stopped on a screen it saw before the job's end (the walker's own conversation ends its walk:
+        # Actions.lua DialogActorJoined): poll once more before saying it goes on (review-v010-final #6)
+        ended = _ended_job_text(tool, h, args.get("char"))
+        if ended:
+            return reporting._finish(tool, args, ended + "\n" + waited + ("\n" + note if note else ""), t0)
+        return reporting._finish(tool, args, f"{body}\n{waited}\nwait_for('{h}') keeps waiting for it"
+                                 + ("\n" + note if note else ""), t0)
     if note:
         body += "\n" + note
-    if tool in _WALKS:
-        hint = reporting._next_walk_hint()
-        if hint:
-            body += "\n" + hint
     reporting._batch["last"] = "done"
     return reporting._finish(tool, args, body, t0, issued=True)
 
@@ -643,6 +699,21 @@ def _start_async(tool: str, op: str, args: dict, t0: float, note: str = "") -> s
 # 2026-10-10); a later failure still arrives as a job_finished event on the next result.
 SETTLE_S = 0.3
 _WALKS = ("move_to", "walk_toward", "travel_to")
+# A blocking walk (out of combat, wait=true) returns by this long after its call started, arrived or not: the MCP
+# clients give up on a request after 110 s (clients.py; actq.BATCH_BUDGET_S is the same budget for do_actions).
+WALK_BUDGET_S = 90.0
+
+
+def _ended_job_text(tool: str, h: str, char: str | None) -> str | None:
+    """The job's own result line when async job `h` has ended (as wait_for(h) shows it), else None (still running)."""
+    jv = core.game.rpc("job.poll", {"id": int(h[1:])})
+    if not isinstance(jv, dict) or jv.get("status") == "running":
+        return None
+    _async.pop(h, None)
+    core.METRICS.bg_end(h)
+    r = JobResult(jv["status"], jv.get("result"), jv.get("error"), elapsed_ms=jv.get("elapsed_ms", 0))
+    _remember_names(r.result)
+    return _job_text(tool, r, char)
 
 
 def _settle(poll, limit: float | None = None) -> dict | None:
@@ -657,25 +728,21 @@ def _settle(poll, limit: float | None = None) -> dict | None:
         time.sleep(0.1)
 
 
-PACE_GUARD_NOTE = ("(pace guard: wait=true ignored outside combat: the walk runs while you plan. Do something that "
-                   "doesn't depend on the arrival (notes, look, the next leg), then wait_for(\"queue\" | job id) only "
-                   "if you still need the outcome. Don't pass wait=true to walks.)")
-
-
-def _walk_wait(wait: bool) -> tuple[bool, str]:
-    """The pace guard (move_to, walk_toward; travel_to never blocks). In combat a walk always blocks: a combat call
-    is one action, returned when it is over (owner 2026-11-02: one action, observe, then the next). Outside it the
-    walk runs while the agent plans: S001 learned wait=true from its own results and pipelined 0% (impl-setup part
-    5). Until 2026-10-13 a client PreToolUse hook (pace_guard.py) also rewrote the call; the server's check is the one
-    that holds for any client."""
+def _walk_wait(wait: bool) -> tuple[bool, bool]:
+    """How a walk (move_to, walk_toward) waits: (wait, block) for _act. In combat a walk always blocks: a combat call
+    is one action, returned when it is over (owner 2026-11-02: one action, observe, then the next). Out of combat
+    wait=true (the default) blocks too, through the async job (block): the result is the walk's own, as wait_for
+    returns it, with the same early stops (a prompt, a dialogue, a fight starting ends the walk); wait=false starts it
+    and returns, for pipelining. Human-gap research 2026-11-02: 74-89% of launch-v1's out-of-combat walks were
+    followed at once by wait_for (2,866 calls); until then out of combat wait=true was ignored (the pace guard)."""
     if reporting._batch["active"]:
-        return wait, ""
+        return wait, False
     w = core.game.try_rpc("act.watch")
     if not isinstance(w, dict):
-        return wait, ""  # unknown: as asked
+        return wait, False  # unknown: as asked (waited on by the job's own wait)
     if w.get("combat"):
-        return True, ""
-    return False, PACE_GUARD_NOTE if wait else ""
+        return True, False
+    return False, wait
 
 
 # In combat each of these returns what changed (other combatants' HP, positions, deaths, who came into view) with
@@ -683,14 +750,18 @@ def _walk_wait(wait: bool) -> tuple[bool, str]:
 COMBAT_CHANGES_TOOLS = ("use_ability", "move_to", "walk_toward", "jump_to", "react")
 
 
-def _combat_changes(tool: str) -> str:
-    """The CHANGES block after a combat action of COMBAT_CHANGES_TOOLS, '' otherwise (or nothing changed)."""
+def _combat_changes(tool: str, ended: bool = True) -> str:
+    """The CHANGES block after a combat action of COMBAT_CHANGES_TOOLS, '' otherwise (or nothing changed). Out of
+    combat, a walk that ended (jump_to, a blocking move_to/walk_toward) gets CHANGES + the minimap block instead."""
     if tool not in COMBAT_CHANGES_TOOLS or reporting._batch["active"]:
         return ""
     w = core.game.try_rpc("act.watch")
     if not (isinstance(w, dict) and w.get("combat")):
-        return ""
-    return delta.changes_text(core.game, core.H)
+        return batch.walk_end_tail().lstrip("\n") if ended and tool in batch.ARRIVAL_LEAD_TOOLS else ""
+    got: dict = {}  # the clouds and surfaces in view ride in the same read: HAZARD lines when they changed
+    # events=True: the result's EVENTS drain (_finish) rides in this read's evals, not one more tick after it
+    changes = delta.changes_text(core.game, core.H, (*delta.ACTION_PARTS, "hazards"), got=got, events=True)
+    return "\n".join([x for x in (changes,) if x] + overview._hazard_lines(got.get("hazards")))
 
 
 # The next module (and so the rest, in file order) loads after this one; later ones used here.

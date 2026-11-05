@@ -147,6 +147,45 @@ local function refuseSaveLoad(what)
     error(what .. A.SAVELOAD_HINT, 0)
 end
 
+-- REVIEW-5 F8: the escape hatch (ui_action -> ui.command) reached any command on any open DataContext, so mid-run the
+-- agent could change what the scenario pins (Scenario.lua): the difficulty (NewGameSettings.xaml
+-- UpdateDifficultyCommand / UpdateCustomDifficultyCommand), its custom settings such as Karmic Dice (the page's
+-- ValueChanged, ChangeDisplayCustomSettingsCommand; the page opens in a run through EditSessionSettings) and the game
+-- options (GameOptions: ResetOptionsToDefaultCommand, ConfirmSettings ...). Refused by name or by the page that is
+-- open, the attempt written to the referee ring (Server/Referee.lua "rule_change"). Internal jobs call UI.command
+-- directly and are not affected.
+A.RULE_WORDS = { "difficulty", "karmic", "ruleset", "sessionsettings", "customsettings", "gameoption",
+    "resetoptions", "confirmsettings", "startnewgame", "startnewcustomgame" }
+A.RULE_PAGES = { NewGameSettings = true, NewGameSettings_c = true, GameOptions = true, GameOptions_c = true }
+A.RULE_HINT = "; the scenario fixes the difficulty, its settings (Karmic Dice ...) and the game options for the run"
+A.RULE_NET = { "65734c81-edd1-4b6f-b10e-663fec0e768e", "RuleChangeRefused" }
+
+-- the first rule word in any of the names (case, spaces, _ - . ignored), or nil. Pure.
+function A.ruleWord(...)
+    for k = 1, select("#", ...) do
+        local s = tostring(select(k, ...) or ""):lower():gsub("[%s_%-%.]", "")
+        for _, w in ipairs(A.RULE_WORDS) do if s:find(w, 1, true) then return w end end
+    end
+    return nil
+end
+
+-- the open settings page's widget name, or nil
+function A.rulePage()
+    for n in pairs(A.RULE_PAGES) do
+        local w = UI.widget(n)
+        if w and UI.isVisible(w) then return n end
+    end
+    return nil
+end
+
+local function refuseRule(args, what)
+    pcall(function()
+        Ext.Net.CreateChannel(A.RULE_NET[1], A.RULE_NET[2]):SendToServer({ command = tostring(args.command),
+            widget = args.widget, target = args.target, param = args.param, what = what })
+    end)
+    error(("ui_action %s refused: it changes %s"):format(tostring(args.command), what) .. A.RULE_HINT, 0)
+end
+
 ------------------------------------------------------------------------
 -- ui.key {key, mods?, hold_ms?}
 --   key: a key name as a player would say it ("ESCAPE", "Delete", "1",
@@ -245,6 +284,10 @@ local function dcOf(widget)
 end
 
 local function commandOp(args)
+    local rw = A.ruleWord(args.command, args.target, args.param)
+    if rw then refuseRule(args, rw) end
+    local rp = A.RULE_PAGES[tostring(args.widget)] and args.widget or A.rulePage()
+    if rp and not A.leaveName(args.command) then refuseRule(args, "a setting on the " .. rp .. " page") end
     if not args.dry then
         local w = A.saveLoadName(args.command)
         if w then refuseSaveLoad("ui.command " .. tostring(args.command) .. " refused (" .. w .. ")") end
@@ -268,7 +311,13 @@ end
 RPC.register("ui.command", function(args)
     local ok, res = pcall(commandOp, args)
     if ok then return res end
-    if tostring(res):find(A.SAVELOAD_HINT, 1, true) then error(res, 0) end
+    if tostring(res):find(A.SAVELOAD_HINT, 1, true) or tostring(res):find(A.RULE_HINT, 1, true) then
+        error(res, 0)
+    end
+    -- A busy refusal stands as it is: reading for a box now would be a second refused UI call, and RPC.lua would
+    -- answer "met it after a UI call ran" for a press refused at its gate, so the bridge didn't ask it again (v09
+    -- moonrise: end_turn's HUD End Turn "failed too: bg3le: UI busy")
+    if UI.BUSY_ERR and tostring(res):find(UI.BUSY_ERR, 1, true) then error(res, 0) end
     -- With a confirmation box open, "Yes"/"OK"/"No" (as command or param) means
     -- its button (live S005: ui_action Yes -> "no command 'Yes' on ls.Widget").
     if A.confirmBox and A.confirmBox() then
@@ -623,17 +672,92 @@ local function sig(d)
         d.options and d.options[1] and d.options[1].text or "", tostring(d.continue) }, "|")
 end
 
+-- Is dialogue snapshot a the same decision point as b? Speaker, line, continue prompt, the list's whole length
+-- (rows shown + more above/below) and the text of every answer number both show. Not the rows shown: v010 live
+-- window 3 (bg3le 174328.79-174329.26): the bridge's ui.answer_list wheeled the list during a choose, the first row
+-- changed, and the job ended "done" on the unanswered node (the old sig compared options[1].text). Pure.
+local function sameNode(a, b)
+    if not a or not b then return a == b end
+    if a.speaker ~= b.speaker or a.text ~= b.text or a.continue ~= b.continue then return false end
+    local function total(d)
+        return (d.options and #d.options or 0) + (d.more_above or 0) + (d.more_below or 0)
+    end
+    if total(a) ~= total(b) then return false end
+    local seen = {}
+    for _, o in ipairs(b.options or {}) do seen[o.i] = A.answerKey(o.text) end
+    for _, o in ipairs(a.options or {}) do
+        if seen[o.i] and seen[o.i] ~= A.answerKey(o.text) then return false end
+    end
+    return true
+end
+A.sameNode = sameNode
+
+-- The key the game binds to an answer: BoundEvent UISelectSlot<n> -> number key n (the default bindings, assumed:
+-- keybindings are not read). nil for any other binding. Pure.
+function A.answerSlotKey(bound)
+    local n = tonumber(tostring(bound or ""):match("^UISelectSlot(%d)$"))
+    return n and ("NUM_" .. n) or nil
+end
+-- The number key for an answer's shown number (1-9), what a player presses when the binding isn't readable (window 4:
+-- BoundEvent nil on Lae'zel's rows; key 4 by hand took answer 4 both times). Pure.
+function A.numberKey(num)
+    num = tonumber(num)
+    return num and num >= 1 and num <= 9 and num % 1 == 0 and ("NUM_" .. math.floor(num)) or nil
+end
+A.CONFIRM_MS = 3000
+
 -- Waits until the dialogue reaches a decision point after an action:
 --   options present (and different from before), a continue prompt, another
 --   modal (roll/trade/reaction/popup...), or the dialogue ended.
+-- before: the dialogue snapshot taken before the action (S.dialogue), nil when none.
 -- opts.skip: press SPACE to skip voiced lines while waiting (untested).
+-- opts.confirm = {via, key?, bound?, diag?}: the action was an answer command. If after A.CONFIRM_MS (and 10 frames)
+--   the same node still shows its answers, the game ignored it (v010 live windows 1 and 3, launch-v1: Lae'zel's cage
+--   "Get rid of them." 33 of 40 choices, Gimblebock 18 of 19; the number key took the same answer at once): press the
+--   answer's bound key once (confirm.key), logged, and the result says so (note); with no key the note says so.
 local function settleDialogue(kind, before, opts)
     opts = opts or {}
+    local confirm = opts.confirm
+    local function result(r)
+        if confirm and confirm.note then r.note = confirm.note end
+        return r
+    end
     return waitJob(kind, opts.timeout_ms or 45000, function(job)
         -- Don't touch the dialogue until the chosen node has been processed
         -- and re-rendered (see S.dialogueAnswers SAFETY note).
         if RPC.now_ms() - job.started < 250 or UI.frame - (job.frame0 or UI.frame) < 3 then return nil end
         local screen, d = dialogueSnapshot()
+        local function taken(scr, dd)
+            return scr ~= "dialogue" or not dd or dd.changing or not dd.options or not sameNode(dd, before)
+        end
+        if confirm and not confirm.taken then
+            if taken(screen, d) then
+                confirm.taken = true
+            elseif not confirm.pressed and RPC.now_ms() - job.started >= A.CONFIRM_MS
+                and UI.frame - job.frame0 >= 10 then
+                -- Read again right before the press, in this tick: a late command that moved the node since the read
+                -- above must not make key n answer the NEXT node. Not atomic: the game takes the injected key on a
+                -- later frame, so a node change inside that frame can still meet it.
+                if taken(dialogueSnapshot()) then
+                    confirm.taken = true
+                else
+                    confirm.pressed = true
+                    local ms = RPC.now_ms() - job.started
+                    Ext.Utils.PrintWarning(("[BG3AI] %s: the %s was ignored for %d ms (%s, BoundEvent %s); %s"):format(
+                        kind, confirm.via, ms, tostring(confirm.diag), tostring(confirm.bound),
+                        confirm.key and ("pressing " .. confirm.key) or "no key bound"))
+                    if confirm.key then
+                        pcall(Ext.Input.InjectKeyPress, confirm.key)
+                        confirm.note = ("the game ignored the answer's %s for %.1f s (same answers still shown): "
+                            .. "pressed its key %s instead"):format(confirm.via, ms / 1000,
+                            (confirm.key:gsub("^NUM_", "")))
+                    else
+                        confirm.note = ("the game has not taken the answer's %s for %.1f s (same answers still "
+                            .. "shown; no number key is bound to it)"):format(confirm.via, ms / 1000)
+                    end
+                end
+            end
+        end
         if d and d.changing then return nil end
         local s = sig(d)
         if d and d.text and s ~= job.last_sig then
@@ -644,21 +768,23 @@ local function settleDialogue(kind, before, opts)
                 job.lines[#job.lines + 1] = { speaker = d.speaker, text = d.text }
             end
         end
-        job.partial = { screen = screen, lines = job.lines, dialogue = d }
+        job.partial = result({ screen = screen, lines = job.lines, dialogue = d })
         -- Still on the page we are leaving (e.g. the roll panel closing).
         if opts.leaving and screen == opts.leaving then return nil end
         if screen ~= "dialogue" then
-            if not d then return "done", { screen = screen, ended = screen == "game" or nil, lines = job.lines } end
-            return "done", { screen = screen, lines = job.lines, dialogue = d }
+            if not d then
+                return "done", result({ screen = screen, ended = screen == "game" or nil, lines = job.lines })
+            end
+            return "done", result({ screen = screen, lines = job.lines, dialogue = d })
         end
         -- Settle on a new decision point only: fresh options, or a continue
         -- prompt on a line we haven't seen before the action (the old line
         -- lingers for a frame or two while the answer is processed).
-        if d and s ~= before and d.options and d.text then
-            return "done", { screen = "dialogue", lines = job.lines, dialogue = d }
+        if d and d.options and d.text and not sameNode(d, before) then
+            return "done", result({ screen = "dialogue", lines = job.lines, dialogue = d })
         end
         if d and d.continue and d.text and d.text ~= job.before_text then
-            return "done", { screen = "dialogue", lines = job.lines, dialogue = d }
+            return "done", result({ screen = "dialogue", lines = job.lines, dialogue = d })
         end
         if opts.skip and d and d.listening and RPC.now_ms() > (job.next_skip or 0) then
             job.next_skip = RPC.now_ms() + 700
@@ -667,7 +793,7 @@ local function settleDialogue(kind, before, opts)
     end, function(job)
         -- Snapshot taken by the caller BEFORE executing (no reads after it).
         job.lines = {}
-        job.last_sig = before
+        job.last_sig = sig(before)
         job.frame0 = UI.frame
         job.before_text = opts.before_text
         if opts.before_text then job.last_line = (opts.before_speaker or "") .. "|" .. opts.before_text end
@@ -690,7 +816,7 @@ RPC.register("ui.dialogue_choose", function(args)
     local w = wmap.Dialogue or error("no dialogue on screen")
     local dc = try(function() return w.el.DataContext end)
     local cur0 = S.dialogue(wmap)
-    local before = sig(cur0)
+    local confirm
     local i = args.i
     if i == 0 or i == "continue" then
         local cur = S.dialogue(wmap)
@@ -722,7 +848,12 @@ RPC.register("ui.dialogue_choose", function(args)
         if #answers == 0 then first = 1 end
         local below, above = counts and counts.below or 0, counts and counts.above or 0
         local hidden = not a and ((i > last and i <= last + below) or (i < first and i >= first - above))
-        if hidden and counts.by_position then
+        if hidden and counts.by_number then
+            -- below or above the rows on screen: the live VM the game numbers i (AnswerIdx + 1)
+            local vms = UI.prop(S.activeDialogue(dc), "Answers")
+            local vm = vms and S.vmsByNumber(vms, UI.count(vms))[i]
+            if vm then a = { i = i, vm = vm, num = i, off = UI.prop(vm, "Enabled") == false } end
+        elseif hidden and counts.by_position then
             -- An answer outside the visible rows of a long list (companion menus): the live VM at that
             -- position in Answers. Only when the list's scroll extent counts exactly the VMs (by_position):
             -- with a hidden text-less VM (S015: 7 VMs, 6 shown) or rows-only answers, the i-th VM is not
@@ -745,7 +876,13 @@ RPC.register("ui.dialogue_choose", function(args)
                 i, tostring(a.text), tostring(args.text)), 0)
         end
         local ok, err = false, "no answer VM (rendered row only)"
-        if a.vm then ok, err = UI.command(dc, "SelectAnswerCommand", a.vm, args.dry) end
+        confirm = { via = "command", diag = ("%s, %d rows shown, %s more"):format(
+            counts and (counts.by_position and "by_position" or counts.rows_only and "rows_only") or "paired",
+            #answers, tostring(counts and ((counts.above or 0) + (counts.below or 0)) or 0)) }
+        if a.vm then
+            confirm.bound = UI.prop(a.vm, "BoundEvent")
+            ok, err = UI.command(dc, "SelectAnswerCommand", a.vm, args.dry)
+        end
         if not ok then
             -- Fallback: the answer's own button (same command and parameter); a.row = its row in the window.
             local item = UI.findAll(UI.byName(w.el, "answerList") or w.el, function(e)
@@ -753,15 +890,19 @@ RPC.register("ui.dialogue_choose", function(args)
             end, { prune = true })[a.row or i]
             local btn = item and UI.find(item, UI.isButton)
             check(btn and UI.press(btn, args.dry), err)
+            confirm.via = "button press"
+            confirm.bound = confirm.bound or UI.get(btn, "BoundEvent")
         end
+        confirm.bound = confirm.bound ~= nil and tostring(confirm.bound) or nil
+        confirm.key = A.answerSlotKey(confirm.bound) or A.numberKey(a.num)
     end
     if args.dry then return { can = true } end
-    return settleDialogue("ui.dialogue_choose", before, { skip = args.skip, timeout_ms = args.timeout_ms,
-        before_text = cur0 and cur0.text, before_speaker = cur0 and cur0.speaker })
+    return settleDialogue("ui.dialogue_choose", cur0, { skip = args.skip, timeout_ms = args.timeout_ms,
+        before_text = cur0 and cur0.text, before_speaker = cur0 and cur0.speaker, confirm = confirm })
 end)
 
 -- File-local helpers the other parts use.
-A.inner = { try = try, check = check, waitJob = waitJob, dialogueSnapshot = dialogueSnapshot, sig = sig,
+A.inner = { try = try, check = check, waitJob = waitJob, dialogueSnapshot = dialogueSnapshot,
     settleDialogue = settleDialogue }
 
 -- The rest of the module, in this order (split for the 1000-line cap). Each part reads A and the

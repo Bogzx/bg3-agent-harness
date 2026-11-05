@@ -159,7 +159,8 @@ def _mode(s: dict, ui: dict | None, H: Handles) -> str:
 def _char_rec(c: dict) -> dict:
     return {"name": c.get("name", "?"), "pos": c.get("pos") if _is_pos(c.get("pos")) else None,
             "hp": _hp_tuple(c), "st": _status_names(c), "rel": c.get("relation"),
-            "flags": tuple(f for f in ("dead", "downed", "in_combat") if c.get(f)), "dist": c.get("dist")}
+            "flags": tuple(f for f in ("dead", "downed", "in_combat") if c.get(f)), "dist": c.get("dist"),
+            "conc": c.get("concentration")}
 
 
 # open/closed: a door's state now (State.lua; "opened" = a container ever opened); armed: a discovered trap's
@@ -345,6 +346,8 @@ def _appeared(H: Handles, u: str, n: dict) -> str:
         bits += [f for f in n["flags"] if f != "in_combat"]
         if n["st"]:
             bits.append("[" + ",".join(n["st"]) + "]")
+        if n.get("conc"):
+            bits.append(f"concentrating on {n['conc']}")
     else:
         bits.append(f"<{n['kind']}>")
         bits += list(n["flags"])
@@ -383,6 +386,10 @@ def _ent_lines(old: dict, new: dict, H: Handles) -> list[str]:
             if hp and "dead" not in n["flags"]:
                 bits.append(hp)
             bits += _status_bits(o["st"], n["st"])
+            # the concentration icon (act2-fights-analysis: Balthazar's Cloudkill ends when his concentration does)
+            if n.get("conc") != o.get("conc") and "dead" not in n["flags"]:
+                bits.append(f"concentrating on {n['conc']}" if n.get("conc")
+                            else f"no longer concentrating on {o['conc']}")
             bits += _flag_bits(o["flags"], n["flags"], ("dead", "downed", "in_combat"))
             if (o["pos"] and n["pos"] and "dead" not in n["flags"]
                     and (n.get("rel") == "hostile" or "in_combat" in n["flags"])
@@ -577,7 +584,10 @@ TRACKER = Tracker()
 
 _OPS = {"status": ("state.status", {}), "nearby": ("state.nearby", {"radius": 25}),
         "markers": ("nav.markers", {}), "inventory": ("state.inventory", {}), "journal": ("state.journal", {}),
-        "map": ("state.map", {}), "hazards": ("nav.hazards", {})}
+        "map": ("state.map", {}), "hazards": ("nav.hazards", {}),
+        # the minimap block's leads + WAYS (minimap.py): at a walk's end only the warm-up's answers, never a cold
+        # path search (NAV-6: the S038 freeze moment was a cold frontier right where a walk ended)
+        "frontier": ("nav.frontier", {"ways_cached": True})}
 
 
 def _bracket(payload: str) -> str:
@@ -680,12 +690,18 @@ def snapshot_of(H: Handles, got: dict) -> dict:
                     map_=got.get("map"))
 
 
-def changes_text(game: Any, H: Handles, parts: tuple = ACTION_PARTS, tracker: Tracker | None = None) -> str:
+def changes_text(game: Any, H: Handles, parts: tuple = ACTION_PARTS, tracker: Tracker | None = None,
+                 got: dict | None = None, events: bool = False) -> str:
     """For action tools: "CHANGES\\n  <lines>" since the agent's last look, or "" if nothing changed.
+    got: filled with what was fetched (the minimap block reads its parts from the same read).
+    events: drain both contexts' events in the same evals (fetch), for the result's EVENTS section that follows.
     Never raises (an action result must not fail because the observation did)."""
     tr = tracker or TRACKER.bind(H)
     try:
-        lines = tr.observe(snapshot_of(H, fetch(game, parts)))
+        fetched = fetch(game, parts, events=events)
+        if got is not None:
+            got.update(fetched)
+        lines = tr.observe(snapshot_of(H, fetched))
     except Exception:  # noqa: BLE001 - the game may be mid-load; the action result still stands
         return ""
     if not lines:

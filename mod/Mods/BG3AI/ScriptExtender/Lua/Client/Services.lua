@@ -307,11 +307,19 @@ end
 
 SV.trader = SV.trader or nil      -- uuid of the trader the agent named last
 SV.offered = SV.offered or {}     -- tostring(VMItem) -> {uuid, name} for items we moved
+-- Parts of stacks we moved (count=N of a bigger stack): the game puts the part on the table as a new VMItem, so its
+-- key isn't the moved one's. {uuid, name, side, count, price, at, props} until offerView finds the part (w15 a2:
+-- Muddy Red Dye x2 of x8 read as a nameless table item next to its moved record: 'BOUGHT (no id) ? x2 12 g | e127 ...
+-- x2 12 g'). `at` is the trade session (splitSession): REVIEW-18k, a part left from a trade abandoned at one trader
+-- named a similar part at the next trader ('BOUGHT e127 Muddy Red Dye' for another item).
+SV.splits = SV.splits or {}
 
 local function tradeWidget()
     local w = visibleWidget("Trade")
     return w, w and try(function() return w.DataContext end) or nil
 end
+
+local function splitSession(dc) return tostring(dc) .. "|" .. tostring(SV.trader) end
 
 -- Candidate ECS inventories for the trader: the named trader's, else any
 -- non-party inventory owner (matched by fingerprint).
@@ -390,11 +398,40 @@ local function itemView(slotRec, inv)
     return v
 end
 
-local function offerView(vmOffer)
+-- The stack props a part keeps from its stack: a split matches only a part that has the same.
+local SPLIT_PROPS = { "Rarity", "IsStolen", "IsStoryItem", "ItemType" }
+
+local function sameProps(a, b)
+    for _, k in ipairs(SPLIT_PROPS) do
+        if a[k] ~= b[k] then return false end
+    end
+    return true
+end
+
+-- A table item we don't know on `side` of the trade screen `dc` that is a stack part we moved in this trade session
+-- (SV.splits: same count and stack props, the price its share +-1 g when both are known: pro rata vs the game's
+-- per-unit rounding, 2 of 3 at 10 g is 7 here and 6 or 8 there, REVIEW-18n): it is that item now (SV.offered), and
+-- the part leaves SV.splits.
+local function claimSplit(key, p, side, dc)
+    if p.ItemType == "Gold" or not SV.splits[1] then return nil end
+    local n, price, at = tonumber(p.Count) or 1, tonumber(p.TradePrice), splitSession(dc)
+    for i, sp in ipairs(SV.splits) do
+        if sp.at == at and sp.side == side and sp.count == n and sameProps(sp.props, p)
+            and (not sp.price or not price or math.abs(sp.price - price) <= 1) then
+            table.remove(SV.splits, i)
+            SV.offered[key] = { uuid = sp.uuid, name = sp.name }
+            return SV.offered[key]
+        end
+    end
+    return nil
+end
+
+local function offerView(vmOffer, side, dc)
     local out = {}
     for _, s in ipairs(vmSlots(vmOffer, 60)) do
         local p = UI.pick(s.item, ITEM_PROPS)
-        local known = SV.offered[tostring(s.item)] or {}
+        local key = tostring(s.item)
+        local known = SV.offered[key] or (side and claimSplit(key, p, side, dc)) or {}
         out[#out + 1] = {
             uuid = known.uuid, name = known.name,
             count = (tonumber(p.Count) or 1) > 1 and tonumber(p.Count) or nil,
@@ -405,11 +442,24 @@ local function offerView(vmOffer)
     return out
 end
 
-local function sumPrices(items)
+-- What a side of the table is worth: TradePrice is the whole stack's price (live 10:50 Talli: Supply Pack x3 = 156,
+-- Potion of Healing x5 = 40); a gold stack is worth its count (w11 L7: the trader's Balance stack read TradePrice 0,
+-- {price 0, count 52, gold true}, so every sale was refused "you would give 52g more").
+function SV.tableValue(items)
     local t = 0
-    -- TradePrice is the whole stack's price (live 10:50 Talli: Supply Pack x3 = 156, Potion of Healing x5 = 40)
-    for _, it in ipairs(items) do t = t + (it.price or 0) end
+    for _, it in ipairs(items) do t = t + (it.gold and (it.count or 1) or it.price or 0) end
     return t
+end
+local sumPrices = SV.tableValue
+
+-- The names of the items on a side whose price could not be read (no TradePrice >= 0): tableValue counts them 0, so a
+-- confirm on such a table would trade them for nothing (a player sees a price).
+function SV.unpriced(items)
+    local out = {}
+    for _, it in ipairs(items) do
+        if not it.gold and not it.price then out[#out + 1] = it.name or it.uuid or "?" end
+    end
+    return out
 end
 
 local function goldOn(items)
@@ -457,8 +507,8 @@ function tradeStateRaw(dc, layout, max)
     end
     local party, partyMore = listOf(layout.party, true)
     local wares, waresMore = listOf(layout.trader, false)
-    local yours = offerView(p.CharacterOffer)
-    local theirs = offerView(p.TraderOffer)
+    local yours = offerView(p.CharacterOffer, "you", dc)
+    local theirs = offerView(p.TraderOffer, "trader", dc)
     local w = UI.widget("Trade")
     local fb = w and UI.cachedByName("Trade", "TraderFeedbackText")
     return {
@@ -498,6 +548,29 @@ local function findVMItem(uuid, groups)
         end
     end
     return nil, "item " .. (nameOf(e) or uuid) .. " isn't on this side of the trade screen"
+end
+
+-- An item this trade already moved onto `side`'s table ("you": CharacterOffer, "trader": TraderOffer): {uuid, name},
+-- else nil. launch-v1 haiku act3_gold_max r2 seq 16-21 (67 times in 19 runs): trade(offer=...) put the items on the
+-- table, trade(offer=<the same ids>, confirm=true) looked for them in the inventories again, found them "not on
+-- this side of the trade screen" and refused the confirm.
+local function onTable(dc, uuid, side)
+    for _, s in ipairs(vmSlots(UI.prop(dc, side == "trader" and "TraderOffer" or "CharacterOffer"), 60)) do
+        local key = tostring(s.item)
+        local k = SV.offered[key] or claimSplit(key, UI.pick(s.item, ITEM_PROPS), side, dc) -- a moved part
+        if k and k.uuid == uuid then return k end
+    end
+    return nil
+end
+
+-- The item a MoveTradeItem just moved ({key = tostring(VMItem), side}) shows on that side's table: the next move
+-- needn't wait out its tick (the 200 ms stays the cap; latency survey 2026-11-04: >= 5 s of fixed ticks per 25 items).
+local function landed(dc, p)
+    if not p then return false end
+    for _, s in ipairs(vmSlots(UI.prop(dc, p.side == "trader" and "TraderOffer" or "CharacterOffer"), 60)) do
+        if tostring(s.item) == p.key then return true end
+    end
+    return false
 end
 
 -- The game's quantity box (SplitItem.xaml) for a stack moved on the trade screen: DataContext
@@ -545,6 +618,7 @@ RPC.register("ui.trade", function(args)
     local w, dc = tradeWidget()
     if args.npc then SV.trader = args.npc end
     if not w then
+        SV.splits = {}
         if args.npc then
             error("no trade screen is open. Trading starts from dialogue: talk to the trader (talk_to) and "
                 .. "pick the trade option in the conversation, then call trade again", 0)
@@ -552,32 +626,45 @@ RPC.register("ui.trade", function(args)
         error("no trade screen is open", 0)
     end
     dc = dc or error("trade screen has no DataContext")
+    for i = #SV.splits, 1, -1 do  -- another trade session's parts (screen reopened, another trader)
+        if SV.splits[i].at ~= splitSession(dc) then table.remove(SV.splits, i) end
+    end
     local offer, request = args.offer or {}, args.request or {}
     local wantsChange = #offer > 0 or #request > 0 or args.confirm
 
     if args.dry then
         local layout = tradeLayout(dc)
-        local problems = {}
-        for _, u in ipairs(offer) do
-            local it, err = findVMItem(u, layout.party)
-            if not it then problems[#problems + 1] = err end
-        end
-        for _, u in ipairs(request) do
-            local it, err = findVMItem(u, layout.trader)
-            if not it then problems[#problems + 1] = err end
+        local problems, already = {}, {}
+        for _, q in ipairs({ { offer, layout.party, "you" }, { request, layout.trader, "trader" } }) do
+            for _, u in ipairs(q[1]) do
+                local k = onTable(dc, u, q[3]) -- first: a second MoveTradeItem would take it back off
+                local it, err
+                if not k then it, err = findVMItem(u, q[2]) end
+                if k then
+                    already[#already + 1] = { uuid = u, name = k.name, side = q[3] }
+                elseif not it then
+                    problems[#problems + 1] = err
+                end
+            end
         end
         local st = SV.tradeState(dc, layout)
         st.can = #problems == 0
         st.problems = #problems > 0 and problems or nil
+        st.already = #already > 0 and already or nil
         return st
     end
     -- max: items listed per side (default 60); sell=junk reads every slot (S026: 55 junk items + the rest).
     if not wantsChange then return SV.tradeState(dc, nil, tonumber(args.max)) end
 
     -- Barter mode shows both offers and keeps the deal explicit until confirm.
-    local phase, waitUntil, balanceTries, lastTable = "mode", 0, 0, nil
+    local phase, waitUntil, balanceTries, lastTable, lastMove = "mode", 0, 0, nil, nil
     SV.splitTries, SV.splitApplied, SV.splitCount = 0, nil, nil
-    local moved, problems, confirmed, queue = {}, {}, false, {}
+    local moved, problems, confirmed, queue, already = {}, {}, false, {}, {}
+    local movedProps = {} -- moved[i]'s stack props (SPLIT_PROPS), for its split record
+    -- deal: the table as FinishBarter took it ({you = {items}, trader = {items}}, offerView rows: uuid/name of what
+    -- this trade moved, count, price as shown, gold): what the bridge names SOLD/BOUGHT at (REVIEW-17 F3: it read
+    -- the whole screen before every confirm for the prices, and items past the first 60 slots had none).
+    local deal
     if UI.prop(dc, "Mode") ~= "Barter" then
         check(UI.command(dc, "SetTradeMode", nil, false))
     end
@@ -587,13 +674,16 @@ RPC.register("ui.trade", function(args)
     return waitJob("ui.trade", 15000 + 350 * (#offer + #request), function()
         local _, live = tradeWidget()
         if not live then
+            SV.splits = {}
             if phase == "finishing" then
                 return "done", { confirmed = true, moved = moved, problems = #problems > 0 and problems or nil,
+                                 already = already[1] and already or nil, deal = deal,
                                  note = "trade screen closed" }
             end
             return "failed", nil, "the trade screen closed"
         end
-        if RPC.now_ms() < waitUntil then return nil end
+        if RPC.now_ms() < waitUntil and not (phase == "moving" and landed(live, lastMove)) then return nil end
+        lastMove = nil
         if phase == "mode" then
             if UI.prop(live, "Mode") ~= "Barter" then return nil end
             local layout = tradeLayout(live)
@@ -614,7 +704,19 @@ RPC.register("ui.trade", function(args)
                 return nil
             end
             if SV.splitCount then  -- the box closed after its Confirm: that many of the last stack moved
-                if moved[#moved] then moved[#moved].count = SV.splitCount end
+                local m = moved[#moved]
+                if m then
+                    if m.count and SV.splitCount > 0 and SV.splitCount < m.count then
+                        if m.price then
+                            m.price = math.floor(m.price * SV.splitCount / m.count + 0.5) -- the stack's price, pro rata
+                        end
+                        -- the part lands as a new table item: offerView names it after this record
+                        SV.splits[#SV.splits + 1] = { uuid = m.uuid, name = m.name, side = m.side,
+                            count = SV.splitCount, price = m.price, at = splitSession(live),
+                            props = movedProps[#moved] }
+                    end
+                    m.count = SV.splitCount
+                end
                 SV.splitCount = nil
             end
             local q = table.remove(queue, 1)
@@ -622,12 +724,22 @@ RPC.register("ui.trade", function(args)
                 phase, waitUntil = "moved", RPC.now_ms() + 250
                 return nil
             end
-            local it, err2, e = findVMItem(q.u, q.groups)
-            if it then
+            local k = onTable(live, q.u, q.side) -- first: a second MoveTradeItem would take it back off the table
+            local it, err2, e
+            if not k then it, err2, e = findVMItem(q.u, q.groups) end
+            if k then
+                already[#already + 1] = { uuid = q.u, name = k.name, side = q.side }
+            elseif it then
                 local ok, err3 = UI.command(live, "MoveTradeItem", it, false)
                 if ok then
+                    lastMove = { key = tostring(it), side = q.side }
                     SV.offered[tostring(it)] = { uuid = q.u, name = nameOf(e) }
-                    moved[#moved + 1] = { uuid = q.u, name = nameOf(e), side = q.side }
+                    -- price/count as the screen showed the item when it moved (TradePrice = the whole stack's)
+                    local p = UI.pick(it, ITEM_PROPS)
+                    movedProps[#moved + 1] = UI.pick(it, SPLIT_PROPS)
+                    moved[#moved + 1] = { uuid = q.u, name = nameOf(e), side = q.side,
+                        count = tonumber(p.Count) or 1,
+                        price = (tonumber(p.TradePrice) or -1) >= 0 and tonumber(p.TradePrice) or nil }
                 else
                     problems[#problems + 1] = (nameOf(e) or q.u) .. ": " .. tostring(err3)
                 end
@@ -641,11 +753,13 @@ RPC.register("ui.trade", function(args)
             if not args.confirm then
                 local st = SV.tradeState(live)
                 st.moved, st.problems = moved, #problems > 0 and problems or nil
+                st.already = already[1] and already or nil
                 return "done", st
             end
             if #problems > 0 then
                 local st = SV.tradeState(live)
                 st.moved, st.problems = moved, problems
+                st.already = already[1] and already or nil
                 return "failed", st, "not confirmed: some items couldn't be moved"
             end
             -- Balance with gold the way the Balance button does, then barter.
@@ -660,7 +774,20 @@ RPC.register("ui.trade", function(args)
             -- confirm: FinishBarter went out before the Balance's gold was on our side, refused, ESCAPE + reopen
             -- (~25 s). Never finish an uneven deal: wait for the Balance (pressed again on a table that stopped
             -- changing), else say why. An overpay goes through only on purpose (donate).
-            local yours, theirs = offerView(UI.prop(live, "CharacterOffer")), offerView(UI.prop(live, "TraderOffer"))
+            local yours = offerView(UI.prop(live, "CharacterOffer"), "you", live)
+            local theirs = offerView(UI.prop(live, "TraderOffer"), "trader", live)
+            -- An item without a readable price would count 0 and pass as even: never barter it (a gift on purpose,
+            -- donate=true, gives our side away whatever its price).
+            local noPrice = SV.unpriced(theirs)
+            if not args.donate then
+                for _, n in ipairs(SV.unpriced(yours)) do noPrice[#noPrice + 1] = n end
+            end
+            if #noPrice > 0 then
+                local st = SV.tradeState(live)
+                st.moved, st.already = moved, already[1] and already or nil
+                return "failed", st, "not confirmed: the price of " .. table.concat(noPrice, ", ")
+                    .. " on the table could not be read"
+            end
             local give, get = sumPrices(yours), sumPrices(theirs)
             local side, n = SV.tradeImbalance(give, get)
             if side and not (side == "over" and args.donate) then
@@ -674,7 +801,7 @@ RPC.register("ui.trade", function(args)
                 local has = tonumber(UI.prop(live, "TraderInventoryGold")) or 0
                 local ours = tonumber(UI.prop(live, "TradePartyGold")) or 0
                 local st = SV.tradeState(live)
-                st.moved = moved
+                st.moved, st.already = moved, already[1] and already or nil
                 if side == "short" then
                     return "failed", st, string.format("not confirmed: you would get %dg more than you give (the Balance"
                         .. " didn't put your gold on the table; your gold %d), so the trader would refuse: call"
@@ -692,12 +819,13 @@ RPC.register("ui.trade", function(args)
                     .. " donate=true", n, has > 0 and "the Balance didn't add the trader's gold"
                         or "the trader has no gold to pay the difference: items only", n)
             end
+            deal = { you = { items = yours }, trader = { items = theirs } }
             local param = UI.prop(live, "ActionCommandParameter")
             if not isNoesis(param) then param = nil end
             local ok, err = UI.command(live, "FinishBarter", param, false)
             if not ok then
                 local st = SV.tradeState(live)
-                st.moved = moved
+                st.moved, st.already = moved, already[1] and already or nil
                 return "failed", st, "couldn't confirm the barter: " .. tostring(err)
             end
             phase, waitUntil = "finishing", RPC.now_ms() + 300
@@ -705,7 +833,8 @@ RPC.register("ui.trade", function(args)
             -- game ask "Donate these items?"; the bridge answers that box (trade donate=true), so stop here.
             if args.donate and #yours > 0 and #theirs == 0 then
                 local st = SV.tradeState(live)
-                st.moved, st.donate_box = moved, true
+                st.moved, st.donate_box, st.deal = moved, true, deal
+                st.already = already[1] and already or nil
                 return "done", st
             end
             return nil
@@ -717,14 +846,14 @@ RPC.register("ui.trade", function(args)
             local pending = #vmSlots(UI.prop(live, "CharacterOffer"), 60) + #vmSlots(UI.prop(live, "TraderOffer"), 60)
             if not declined and pending > 0 then return nil end
             local st = SV.tradeState(live)
-            st.moved = moved
+            st.moved, st.already = moved, already[1] and already or nil
             if declined then
                 return "failed", st, "the trader refused the offer"
             end
             if #st.offer.you.items == 0 and #st.offer.trader.items == 0 then
                 confirmed = true
-                SV.offered = {}
-                st.confirmed = confirmed
+                SV.offered, SV.splits = {}, {}
+                st.confirmed, st.deal = confirmed, deal
                 return "done", st
             end
             return nil

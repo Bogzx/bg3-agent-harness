@@ -114,7 +114,9 @@ class Recorder:
             job_ms = sum((min(b, t1) - max(a, t0)) * 1000 for a, b, _, _ in self.jobs if b > t0 and a < t1)
             busy = job_ms > 0 or self.last_active >= t0 or self.active_now
             bg = None if nested else self._bg_open_at(t0, exclude_from=t0)
-            started = not nested and any(t0 <= v[0] <= t1 + 0.001 for v in self.bg.values())
+            # its own job still running when it returned (a blocking walk's job starts and ends inside the call)
+            started = not nested and any(t0 <= v[0] <= t1 + 0.001 and (v[1] is None or v[1] > t1 + 0.001)
+                                         for v in self.bg.values())
         rec = {"type": "tool", "tool": tool, "t0": round(t0, 3), "t1": round(t1, 3), "ms": round(ms, 1),
                "rpc_ms": round(sum((b - a) * 1000 for a, b, _ in rpc), 1), "rpc_n": len(rpc),
                "job_ms": round(max(job_ms, 0.0), 1), "busy": bool(busy),
@@ -230,7 +232,7 @@ def client_state(game) -> str | None:
 
 # Memory samples (S038 20:48: the game's RSS went 5 -> 13 GB in ~30 s and the OOM kill took every agent down; the
 # per-minute ramwatch line could not say whether it was our Lua or the engine):
-#   {"type":"mem", "t", "rss_mb", "lua_server_mb"?, "lua_client_mb"?, "high"?, "why"?}
+#   {"type":"mem", "t", "rss_mb", "lua_server_mb"?, "lua_client_mb"?, "high"?, "why"?, "hit_radius_fallbacks"?}
 # every MEM_EVERY_S, and at once (why="rss_jump") when the game's RSS grew MEM_JUMP_MB since the last one; the RSS
 # is read from /proc every sample (one small file read), the Lua heaps from sys.mem in both contexts.
 MEM_EVERY_S = 60.0
@@ -315,6 +317,9 @@ class MemSampler:
                 rec[f"lua_{ctx}_mb"] = m["lua_mb"]
                 if m.get("high"):
                     rec["high"] = True
+                hf = m.get("hit_fallbacks")
+                if isinstance(hf, (int, float)) and hf > 0:  # server: melee reach on an assumed Move radius
+                    rec["hit_radius_fallbacks"] = hf
                 nz = m.get("noesis")
                 if isinstance(nz, dict):  # client: bg3le's Noesis release counters (BACKLOG "parked" watch)
                     for k in ("parked", "leaked", "gen"):

@@ -45,7 +45,8 @@
           "properties": {
             "allowlist_sha256": {"$ref": "#/$defs/sha256", "description": "bg3harness.run_manifest.tools_digest of names"},
             "count": {"type": "integer", "minimum": 1},
-            "names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true}
+            "names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true},
+            "defs_sha256": {"$ref": "#/$defs/sha256", "description": "bg3bench.submission.release.defs_digest of the served tools' definitions (bg3-tools.json entries named in names); optional, added 2026-11-03 (still v1): a release without it doesn't pin them"}
           }
         },
         "prompts": {
@@ -75,14 +76,15 @@
       "properties": {"harness": {"type": "string"}, "bench": {"type": "string"}}
     },
     "pins": {
-      "description": "the game build, the BG3 Script Extender build (bg3le dll sha256) and the mod (sha1) a run must pin",
+      "description": "the game build, the BG3 Script Extender build (bg3le dll sha256), the mod (sha1) and (from bench-v0.10) the rest of the code (code_sha1: bg3harness.pins.code_digest) a run must pin",
       "type": "object",
       "required": ["game_build", "bg3le_sha256", "mod_sha1"],
       "additionalProperties": false,
       "properties": {
         "game_build": {"type": "string", "minLength": 1},
         "bg3le_sha256": {"$ref": "#/$defs/sha256"},
-        "mod_sha1": {"$ref": "#/$defs/sha1"}
+        "mod_sha1": {"$ref": "#/$defs/sha1"},
+        "code_sha1": {"$ref": "#/$defs/sha1", "description": "the bg3 tools, runner, harness, agent text, pi client and uv.lock at the release's commit (tests left out); a run's manifest pins.repo.code_sha1 must equal it (P02). Optional, added 2026-11-03"}
       }
     },
     "scenarios": {

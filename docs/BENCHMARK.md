@@ -97,6 +97,10 @@ anecdotes removed (`packages/harness/prompts/`), but no live run has used the sp
 - bench-v0.9 (bg3bench 0.9.0): the same scenarios and graders as bench-v0.8; a new release file
   (`packages/bench/releases/bench-v0.9.json`) for the mod and bg3 tools after the bench-v0.8 runs.
   `releases/bench-v0.8.json` stays what the bench-v0.8 results were checked against.
+- bench-v0.10 (bg3bench 0.10.0): the same scenarios and graders again; a new release file
+  (`packages/bench/releases/bench-v0.10.json`) for the mod and bg3 tools after bench-v0.9's fight re-run
+  (CHANGELOG.md lists what changed for the agent). `releases/bench-v0.9.json` is frozen. A call's async flag now
+  needs its own job still running at return, so async % is not comparable with earlier suites.
 
 ### Game Over and the run's own saves (2026-10-25, bench B3)
 
@@ -272,7 +276,8 @@ default; the legacy runner refuses every goal that isn't one milestone) and need
 
 - Every scenario but `nautiloid` in a bench run: 17 start saves are made and registered (research/ovh/live6.md §2),
   but no run has loaded one yet.
-- A Tactician scenario: its save is not made, and the harness doesn't read the game's difficulty yet.
+- A Tactician scenario: its save is not made. The run's settings check reads the game's difficulty back
+  (`scn.difficulty`) and stops a run whose save has another one, but no Tactician save has been through it.
 - `model_time` and `persona` in run records (both unit-tested on real session files).
 - Any non-Claude client in a series (section 3).
 - `tools/bench_preflight.py` on a machine other than the test machine (unit-tested with fixture Steam trees; its

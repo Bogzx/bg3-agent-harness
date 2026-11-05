@@ -57,10 +57,10 @@ class Leveling(unittest.TestCase):
 
     def test_line(self):
         line = LV.line(ST, label, self.mem)
-        self.assertTrue(line.startswith("LEVEL UP: e3 Gale (2) → level_up(who) now"), line)
-        self.assertNotIn("no plan yet", line)
+        self.assertTrue(line.startswith("LEVEL UP: e3 Gale (2) (level_up(who) levels one member per call)"), line)
+        self.assertNotIn("has no plan", line)
         (self.mem / "party-build.md").write_text("")
-        self.assertIn("no plan yet for Gale L2", LV.line(ST, label, self.mem))
+        self.assertIn("memory/party-build.md has no plan for Gale L2", LV.line(ST, label, self.mem))
         self.assertEqual(LV.line(dict(ST, in_combat=True), label, self.mem), "")   # not in combat
         self.assertEqual(LV.line({"party": [{"uuid": "a", "name": "A", "level": 3}]}, label), "")
         camp = LV.line({"party": [], "camp": [{"uuid": "u-wyll", "name": "Wyll", "level": 3, "level_up": 4}]}, label)
@@ -69,7 +69,7 @@ class Leveling(unittest.TestCase):
     def test_nudge(self):
         n = LV.Nudge(every_s=300)
         n.observe(ST)
-        self.assertIn("LEVEL UP pending: Gale (2)", n.text(now=1000))
+        self.assertEqual(n.text(now=1000), "LEVEL UP pending: Gale (2).")  # D630: no 'Do it now ...'
         self.assertEqual(n.text(now=1100), "")                  # at most every 5 min
         self.assertIn("Gale", n.text(now=1301))
         n.text(now=1400, shown=True)                            # get_status printed it: timer restarts
@@ -123,8 +123,10 @@ class PlanHint(unittest.TestCase):
         n.observe(RUN2)
         h = n.plan_hint(self.mem, now=1000)
         self.assertTrue(h.startswith("PARTY PLAN"), h)
-        for want in ("Wyll L4", "Gale L5", "Claude L4", "Astarion"):
+        for want in ("Wyll L4", "Gale L5", "Claude L4"):
             self.assertIn(want, h)
+        self.assertTrue(h.endswith("no ## Party composition section, and the party has no skills (bard/ranger/rogue)"), h)
+        self.assertNotIn("write", h)  # D630: facts about the file, no 'write ... lines' / 'note who fills it'
         self.assertEqual(n.plan_hint(self.mem, now=1100), "")      # at most every HINT_S
         lines = "".join(f'- {m["name"]} L{lv}: {{}}\n' for m in RUN2["party"] for lv in (4, 5))
         (self.mem / "party-build.md").write_text("## Party composition\n- skills: Astarion next\n"
@@ -396,7 +398,7 @@ class ServerWiring(unittest.TestCase):
             self.assertEqual(overview._LEVEL_NUDGE.rows, [])            # done: no more nudging for Gale
             progression.level_up("Gale", plan='{"subclass": "Divination"}')  # an explicit plan wins
             self.assertEqual(sent["args"]["plan"], {"subclass": "Divination"})
-            self.assertTrue(overview._level_up_line(ST).startswith("LEVEL UP: u-gale (2) → level_up(who)"))
+            self.assertTrue(overview._level_up_line(ST).startswith("LEVEL UP: u-gale (2) (level_up(who)"))
         finally:
             core.game, plumbing._act, core.MEMORY, plumbing._who = saved
 
@@ -732,7 +734,7 @@ class ServerWiring(unittest.TestCase):
         self.assertEqual(swaps, [("Wyll", "Gale")])  # no swap back
         self.assertEqual(jobs, [])                   # no leave camp with the page up
         self.assertIn("Wyll stays in the party (Gale at camp) with the level-up page open", out)
-        self.assertIn('swap_party(into="Gale", out="Wyll")', out)
+        self.assertNotIn('swap_party(into="Gale", out="Wyll")', out)
         self.assertIn("can pick: Booming Blade", out)
 
     def test_camp_member_swap_failure_is_reported(self):

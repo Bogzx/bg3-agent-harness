@@ -207,7 +207,7 @@ class Revive(unittest.TestCase):
         out = world_tools._revive_spot(Inp(), "Scroll of Revivify", ME, SH)
         self.assertIn("REVIVED", out)
         self.assertIn("they stand up in Fire (the spot beside the body the game took): it can put them down again", out)
-        self.assertIn("heal them now (Lay on Hands, a potion: Help gives 1 HP)", out)
+        self.assertIn("it can put them down again at once (S090; Help gives 1 HP)", out)
 
     def test_nothing_in_hand_after_the_body_click(self):
         self.use(Fake([{"uuid": ME}, {"uuid": SH, "dead": True}]))

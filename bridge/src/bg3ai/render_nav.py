@@ -61,12 +61,12 @@ def render_frontier(res: Any, H: Handles) -> str:
     if isinstance(res, dict) and res.get("more"):
         out.append(f"(+{res['more']} more leads)")
     if not out:
-        out.append("No leads in view. Try another direction, a door, or get_map.")
+        out.append("No leads in view.")
     ways = render_ways(res.get("ways") if isinstance(res, dict) else None)
     if ways:
         out.append(ways)
     if isinstance(res, dict) and res.get("ways_off"):  # NAV-2: a killed level searches 2 directions per read
-        out.append("(WAYS partial: path searches are throttled on this level; read again for more directions)")
+        out.append("(WAYS partial: a throttled level searches up to 2 directions per read)")
     out.extend(render_hazards(res.get("hazards") if isinstance(res, dict) else None, limit=6))
     return "\n".join(out)
 
@@ -102,13 +102,13 @@ def render_ways(ways: Any, far: float = 20.0) -> str:
             jumps.append(f"{w['dir']} gap {num(j.get('gap_m', '?'))}m from {pos(j.get('from'))} to {pos(j['to'])}"
                          + (f" ({num(abs(dy))}m {'up' if dy > 0 else 'down'})" if isinstance(dy, (int, float)) else ""))
     if jumps:
-        line += " | jump: " + "; ".join(jumps) + " (jump_to the far side from the edge)"
+        line += " | jump: " + "; ".join(jumps) + " (a jump from the edge reaches the far side)"
     return line
 
 
 def opened_note(res: Any, H: Handles) -> str:
     """A no-path reply soon after a door/wall the party can see opened or closed (nav `opened`, V13: S071's Wyrmway
-    Stone Wall): while it may still be moving the answer can change, so try again; later the answer was searched
+    Stone Wall): while it may still be moving the answer can change; later the answer was searched
     after it, so it is current. '' when there is none."""
     o = res.get("opened") if isinstance(res, dict) else None
     if not isinstance(o, dict) or not o.get("uuid"):
@@ -117,7 +117,7 @@ def opened_note(res: Any, H: Handles) -> str:
     how = "closed" if o.get("how") == "closed" else "opened"
     ago = f"{num(o.get('ago_s', 0))}s ago"
     if o.get("settling") and how == "opened":
-        return f"{what} opened {ago} and may still be moving: this passage just opened, try again in a few seconds"
+        return f"{what} opened {ago} and may still be moving: the answer can change in the next seconds"
     return f"(searched after {what} {how} {ago}: up to date)"
 
 
@@ -126,16 +126,24 @@ def render_path(res: Any, H: Handles) -> str:
     no path; error_cause is the engine's opaque code, so it is left out."""
     if not isinstance(res, dict):
         return compact(res, H)
-    if res.get("reachable") is False:
+    if res.get("reachable") is False:  # no tool named (night 2026-11-04: 'a jump (jump_to)' pointed at the next call)
         note = opened_note(res, H)
         return (f"UNREACHABLE: no walkable path ({num(res.get('straight_m', '?'))}m straight line): "
-                "it may need a ladder, a jump (jump_to), a door, or another route" + (f"\n{note}" if note else ""))
+                "it may need a ladder, a jump, a door, or another route" + (f"\n{note}" if note else ""))
     if res.get("unknown_goal"):
         return (f"not seen or walked yet: {num(res.get('straight_m', '?'))}m {res.get('dir') or ''} straight line only "
                 "(path_preview checks ground the party has seen or walked)").replace("  ", " ")
-    if res.get("reachable") is None:
-        return compact({k: v for k, v in res.items() if k != "points"}, H)
+    if res.get("reachable") is None:  # REVIEW-18n: a plain line, never the raw result
+        why = res.get("reason") or ("the path search ran out of time" if res.get("unfinished") else "no path searched")
+        far = res.get("straight_m", res.get("length_m"))
+        return f"reachable unknown: {why}" + (f" ({num(far)}m straight line)" if far is not None else "")
     bits = [f"reachable: walk {num(res.get('length_m', '?'))}m"]
+    if res.get("partial"):  # w12 L1a: a 3.5 m landing read "reachable: walk 0.1m"; the engine's path ended by the walker
+        bits = [f"NOT REACHED: the walkable path ends @{pos(res.get('end_pos'))}, {num(res.get('end_off', '?'))}m short "
+                f"of the target: walk {num(res.get('length_m', '?'))}m"]
+        if res.get("free_spots_unchecked"):  # REVIEW-18n: the ring around the target hit its deadline
+            bits[0] = bits[0].replace(" of the target:", " of the target (the free spots around it were not all "
+                                      "checked in time):")
     if res.get("needs_jump"):
         bits.append("(route uses a jump/climb link)")
     if res.get("estimate"):
@@ -147,6 +155,14 @@ def render_path(res: Any, H: Handles) -> str:
                     + f" movement left {num(res.get('movement_left', '?'))}m")
     if res.get("hazard"):
         bits.append(f"hazard on the way: {compact(res['hazard'], H, 1)}")
+    for p in res.get("provokes") or []:  # the game's preview mark (window 9 MR2): leaving a reach with its reaction left
+        if isinstance(p, dict) and p.get("uuid"):
+            bits.append(f"| provokes an attack of opportunity from {H.get(p['uuid'], p.get('name'))} "
+                        f"{p.get('name') or ''}".rstrip()
+                        + f" where it leaves its reach @{pos(p.get('at'))}, {num(p.get('along_m', '?'))}m along")
+    if any(isinstance(p, dict) and p.get("uuid") for p in res.get("provokes") or []):
+        # window 11 J1b: the engine cancels a jump that draws one (the attack still comes, nothing of the jump spent)
+        bits.append("| a jump that draws an attack of opportunity is cancelled by the game (the attack still comes)")
     return " ".join(bits)
 
 

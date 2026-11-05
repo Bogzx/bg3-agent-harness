@@ -6,7 +6,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from .. import actq, delta, macros, render
+from .. import actq, delta, macros, passed, render
 from ..game import GameError
 from . import core, overview, plumbing, queueing, reporting, turn_plan
 
@@ -49,7 +49,7 @@ def _retry_after_dialogue(watcher: actq.Watcher, who: str | None, step: actq.Ste
     end = time.monotonic() + CONVO_WAIT_S
     while True:
         if _dialogue_needs_answer():
-            return rep, text, "a conversation is open: answer it (choose_dialogue), then run this again"
+            return rep, text, "a conversation is open"
         if time.monotonic() >= end:
             return rep, text, (f"still in a conversation after {CONVO_WAIT_S:g}s with no dialogue on screen "
                                f"({text.split(': ', 1)[-1]})")
@@ -103,13 +103,29 @@ def _macro_groups(who: str | None, groups: list, ignore: set | None = None,
     return lines, None, []
 
 
-def _macro_finish(tool: str, args: dict, lines: list[str], stop: str | None, left: list[str], t0: float) -> str:
+def _macro_finish(tool: str, args: dict, lines: list[str], stop: str | None, left: list[str], t0: float,
+                  walked: bool = False, sightings: passed.Sightings | None = None, walker: str | None = None) -> str:
+    """walked (regroup): the walks' end, so CHANGES comes with the minimap block (batch.walk_end_tail).
+    sightings: the trip's legs'; the PASSED line (what they saw that the end's read doesn't) comes before CHANGES."""
     if stop:
         lines.append(f"STOPPED: {stop}" + (f"; not reached: {', '.join(left)}" if left else ""))
         reporting._batch["last"] = "interrupted"
-    changes = delta.changes_text(core.game, core.H)
-    if changes:
-        lines.append(changes)
+    got: dict = {}
+    if walked and not reporting._batch["active"]:
+        tail = batch.walk_end_tail(got=got).lstrip("\n")
+    else:
+        tail = delta.changes_text(core.game, core.H, got=got, events=True)
+    if sightings is not None:
+        views: tuple = ()
+        st = got.get("status")
+        if walker and isinstance(got.get("nearby"), dict) and isinstance(st, dict) and st.get("active") != walker:
+            # the end's CHANGES read is centred on the selected member: a companion's trip ends elsewhere
+            views = (core.game.try_rpc("state.nearby", {"radius": passed.RADIUS_M, "center": walker}),)
+        seen_line = sightings.line(core.H, got, walker, views)
+        if seen_line:
+            lines.append(seen_line)
+    if tail:
+        lines.append(tail)
     return reporting._finish(tool, args, "\n".join(lines), t0)
 
 
@@ -172,6 +188,12 @@ AUTO_DIALOGUE_READ_LINE_S = 3.0
 # Autopilot (fast reflexes): the bridge clicks through filler itself after choose_dialogue and when a
 # conversation opens, so the agent sees the next real choice at once. AUTO_DIALOGUE = False turns it off.
 AUTO_DIALOGUE = True
+# The whole call, from its start, stays inside this (the clients give a tool call 110 s: clients.py http_server).
+# A walk that ends in a conversation near its 90 s budget still ran the autopilot after it (up to 12 lines x 15 s)
+# and the result could arrive after the client gave up (review-v010-human-gap #1). Past it the autopilot stops and
+# shows the conversation as it stands.
+CALL_DEADLINE_S = 100.0
+TIME_UP = "this call's time ran out with the conversation open"
 
 
 def _line_stuck(waited_s: float) -> str | None:
@@ -193,13 +215,15 @@ def _line_stuck(waited_s: float) -> str | None:
 
 def _dialogue_autopilot(max_lines: int = macros.DIALOGUE_MAX, open_s: float = 2.5,
                         line_s: float | None = None, strict: bool = True,
-                        idle_open_s: float | None = None) -> tuple[int, list[str], str | None]:
+                        idle_open_s: float | None = None,
+                        deadline: float | None = None) -> tuple[int, list[str], str | None]:
     """Click through FILLER only (macros.dialogue_filler: a Continue prompt or one untagged, non-committing
     option) until a real choice, a roll/reaction/popup, or the end. Returns (lines advanced, report lines,
     stop reason). open_s: how long a dialogue that is still opening may take to appear. strict (the bridge's
     own autopilot): only a Continue prompt or a bare "..."/Continue/End option, never a spoken answer, even
     the only one; dialogue_advance (the agent asked for it) also takes a single plain non-committing answer.
-    idle_open_s: no dialogue on screen and the game says no party member is in a conversation → wait only this long."""
+    idle_open_s: no dialogue on screen and the game says no party member is in a conversation → wait only this long.
+    deadline (monotonic): stop there with TIME_UP, the dialogue shown as it stands (the caller's call deadline)."""
     line_s = DIALOGUE_LINE_WAIT_S if line_s is None else line_s
     lines: list[str] = []
     stop = None
@@ -212,6 +236,11 @@ def _dialogue_autopilot(max_lines: int = macros.DIALOGUE_MAX, open_s: float = 2.
     while n < max(1, min(int(max_lines), 30)):
         ui = core.game.try_rpc("ui.state", context="client") or {}
         scr = ui.get("screen")
+        if deadline is not None and time.monotonic() >= deadline:
+            stop = TIME_UP
+            if scr == "dialogue":
+                lines.extend(reporting._render_ui(ui, brief=True))
+            break
         if scr in (None, "game") and n == 0 and time.monotonic() < open_until:
             if not idle_checked:
                 idle_checked = True
@@ -235,8 +264,7 @@ def _dialogue_autopilot(max_lines: int = macros.DIALOGUE_MAX, open_s: float = 2.
                     stuck_check = now + 1.0
                     stuck = _line_stuck(now - t_start)
                     if stuck:
-                        stop = (f"{why} ({stuck}; it wants no input: wait_for dialogue_ended or level_changed, "
-                                f"or act on what else you can)")
+                        stop = (f"{why} ({stuck}; it wants no input)")
                         lines.extend(reporting._render_ui(ui, brief=True))
                         break
                 time.sleep(0.3)
@@ -247,7 +275,8 @@ def _dialogue_autopilot(max_lines: int = macros.DIALOGUE_MAX, open_s: float = 2.
                 stop = f"a real choice ({len(reporting._listed['texts'])} options)"  # S081: "(6 options)" under 7 listed
             break
         said = (ui.get("dialogue") or {}).get("text")
-        r = core.game.run_job("ui.dialogue_choose", {"i": i}, context="client", wait_s=20)
+        wait_s = 20.0 if deadline is None else max(1.0, min(20.0, deadline - time.monotonic()))
+        r = core.game.run_job("ui.dialogue_choose", {"i": i}, context="client", wait_s=wait_s)
         n += 1
         lines.append(f"{n}. " + (f"'{core.H.scrub(str(said))[:90]}' → " if said else "") +
                      ("continue" if i == 0 else f"option {i}") + ("" if r.status == "done" else f" {r.status.upper()}"
@@ -282,7 +311,7 @@ def _travel_dest(marker: str, objective: str, x, y, z) -> tuple[list, str]:
         if m is None or not m.get("pos"):
             raise ValueError(f"no marker '{marker}' (get_map lists your markers)")
         if m.get("level") and st.get("level") and m["level"] != st["level"]:
-            raise ValueError(f"marker {m['id']} is in {m.get('region') or m['level']}: fast_travel there first")
+            raise ValueError(f"marker {m['id']} is in {m.get('region') or m['level']} (another region)")
         return list(m["pos"]), f"marker {m['id']} {m.get('label', '')}"
     if objective:
         m = render.find_objective(overview._objective_markers(overview.MARKERS_TTL_S), objective)
@@ -303,7 +332,7 @@ def _escape_surface(char: str, toward: list | None = None) -> str | None:
         return None
     what = r.get("standing_in") or "a harmful surface"
     if not (r.get("found") and r.get("pos")):
-        return f"standing in {what} and no clear ground within 8m: get out another way (jump_to, an exit)"
+        return f"standing in {what} and no clear ground within 8m"
     px, py, pz = r["pos"]
     watcher = actq.Watcher(queueing._watch_conn(), ignore={"surface", "damage", "hp", "hostile"})
     watcher.baseline()
@@ -314,5 +343,5 @@ def _escape_surface(char: str, toward: list | None = None) -> str | None:
 # The next module (and so the rest, in file order) loads after this one; later ones used here.
 # isort: off
 from . import (  # noqa: E402, F401
-    travel_macro, session,
+    travel_macro, session, batch,
 )

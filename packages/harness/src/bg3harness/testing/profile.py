@@ -9,6 +9,9 @@ process inherits the env vars. Forced, not setdefault: a shell that exports the 
 The runtime dir too ($BG3AI_RUNTIME, renv.RUNTIME, also read once at import): a harness test module collected first
 imported bg3harness.runner.env with the repo's runtime/, and every later test that didn't patch renv.RUNTIME logged
 to the real runtime/runner.log (runner/test_play_game.py KillGame, 2026-10-28).
+And $BG3LE_DEBUG_PORT, to a port nothing listens on: the bridge's Game read the default 9998, the live game on the
+test machine, in any test that didn't swap core.game for a fake (2026-11-02, test_batch_args SameText; the socket
+guard for code that hard-codes 9998 is bg3harness.testing.liveport).
 """
 
 from __future__ import annotations
@@ -22,17 +25,26 @@ from pathlib import Path
 ENV = "BG3AI_TEST_PROFILE"
 DIR_VARS = ("BG3AI_SAVE_DIR", "BG3AI_SE_DIR", "BG3AI_PROFILE_DIR")
 RUNTIME_VAR = "BG3AI_RUNTIME"
+PORT_VAR = "BG3LE_DEBUG_PORT"
+DEAD_PORT = "1"  # tcpmux: nothing listens, and an unprivileged fake can't bind it
+SHELL_PORT_VAR = "BG3AI_TEST_SHELL_PORT"  # the port the shell named before it was replaced (liveport guards it)
+SHIM_VAR = "BG3AI_INPUT_SOCKET"  # the input shim's socket name for gio.take_input (default bg3ai-input)
+DEAD_SHIM = "bg3ai-input-dead"  # nothing listens on it
 
 
 def temp_profile(environ: MutableMapping[str, str] = os.environ) -> Path:
     """The process's temp profile root (made on the first call); points the three profile env vars and the runtime
-    dir into it."""
+    dir into it, and the game's debug port and input shim socket at dead ones."""
     root = Path(environ.get(ENV) or tempfile.mkdtemp(prefix="bg3ai-test-profile-"))
     environ[ENV] = str(root)
     environ["BG3AI_SAVE_DIR"] = str(root / "saves")
     environ["BG3AI_SE_DIR"] = str(root / "se")
     environ["BG3AI_PROFILE_DIR"] = str(root / "profile")
     environ[RUNTIME_VAR] = str(root / "runtime")
+    if environ.get(PORT_VAR) not in (None, "", DEAD_PORT):
+        environ.setdefault(SHELL_PORT_VAR, environ[PORT_VAR])
+    environ[PORT_VAR] = DEAD_PORT
+    environ[SHIM_VAR] = DEAD_SHIM
     return root
 
 

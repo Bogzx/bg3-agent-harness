@@ -43,6 +43,10 @@
   ],
   "bench-v0.9": [
    "dc70cc2643818b52f433bbcbf5154d694036c4a7f77e3c79aba9c8c3e8790e6d"
+  ],
+  "bench-v0.10": [
+   "5c947552ac2d3f20f61d74d6d3a9c8d1f730950d57ffcfdb851bf02a1109ae66",
+   "3e7aa3ba3730d65db345ab95566339cad60c9df42e970bac893a98eb57095526"
   ]
  },
  "shared": {

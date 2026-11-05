@@ -17,6 +17,19 @@ CATCH_UP_S = 4.0      # ...this long (following on its own), before it is walked
 CATCH_UP_GAIN_M = 0.5  # ...and longer while the gap still shrinks by this much per poll (trailing a run, not stuck)
 CATCH_UP_MAX_S = 15.0  # ...up to this long in all
 REGROUP_WAIT_S = 60.0  # regroup: the longest it waits for the walks back
+# travel_to: a member farther than this from the leader at the trip's start isn't taken along (not re-chained, not
+# waited for). keep-up-v010: the bench saves start with Shadowheart 77-86 m off; the trip re-chained her, her walk back
+# didn't fit and the leader's trip stopped at once ("can't keep up"), in 10 of 171 launch-v1 runs
+FOLLOW_M = 24.0
+WALK_BACK_MIN_S = 30.0  # travel_to: a straggler's walk back gets this long, or the gap at TRIP_MPS + WALK_BACK_SLACK_S
+WALK_BACK_SLACK_S = 10.0
+WALK_BACK_MAX_S = 60.0  # ...at most: with the leg and the catch-up wait it stays under the call's 100 s deadline
+TRIP_MPS = 2.0  # a walk in legs, legs included (S005: 88 m in ~50 s); the same as batch.TRIP_MPS
+
+
+def walk_back_s(gap_m: float) -> float:
+    """How long a straggler `gap_m` behind gets to walk back (deepseek grove r3: 83 m, 26 m done in a flat 30 s)."""
+    return max(WALK_BACK_MIN_S, min(WALK_BACK_MAX_S, gap_m / TRIP_MPS + WALK_BACK_SLACK_S))
 
 
 def _d(a: Any, b: Any) -> float | None:
@@ -88,19 +101,17 @@ def _where(r: dict, far_m: float = APART_M) -> str:
 
 
 def apart_line(rows: list[dict], label: Callable[[str], str], far_m: float = APART_M) -> str:
-    """'PARTY APART: e1 Lae'zel 34m, e3 Gale other level → regroup()' ('' when everyone is together).
-    Members told to stay are listed as such; an unchained member near the leader as 'unchained'."""
-    bits, fix = [], False
+    """'PARTY APART: e1 Lae'zel 34m, e3 Gale other level' ('' when everyone is together): who and where (D630: no
+    '→ regroup()'). Members told to stay are listed as such; an unchained member near the leader as 'unchained'."""
+    bits = []
     for r in rows:
         what = _where(r, far_m)
         if r["stay"]:
             what += " (staying)"
-        else:
-            fix = fix or r["other_level"] or (r["dist"] or 0) > far_m or r["unchained"] or bool(r.get("dy"))
         bits.append(f"{label(r['uuid'])} {what}")
     if not bits:
         return ""
-    return "PARTY APART: " + ", ".join(bits) + (" → regroup()" if fix else "")
+    return "PARTY APART: " + ", ".join(bits)
 
 
 def rechain_candidates(rows: list[dict], busy: Callable[[str], bool]) -> list[str]:
@@ -194,12 +205,8 @@ def game_moved_text(tool: str, res: dict, who: str, label: Callable[[str], str],
     if behind:
         line = "PARTY LEFT BEHIND: " + behind_text(behind, label)
         if sealed_from:
-            line += (f"; no walkable way from {label(sealed_from)} to {label(who)} (a sealed story area?): plan the "
-                     "scene without them, or reload before the approach and walk in together")
+            line += (f"; no walkable way from {label(sealed_from)} to {label(who)} (a sealed story area?)")
         elif in_combat:
-            line += f" → in combat: move them toward {label(who)} on their turns (move_to who=)"
-        else:
-            line += (f" → regroup(leader={label(who).split(' ')[0]}) walks them to {label(who)} (their walks keep "
-                     "going through a conversation they are not in)")
+            line += "; the party is in combat"
         out.append(line)
     return "\n".join(out)

@@ -37,7 +37,11 @@ class FakeProc:
 
 
 def recording_on(
-    rig: Rig, window: str | None = "0x5", exit_after: str | None = None, spawn_error: OSError | None = None
+    rig: Rig,
+    window: str | None = "0x5",
+    exit_after: str | None = None,
+    spawn_error: OSError | None = None,
+    encoder: str = "h264_nvenc",
 ) -> list[list[str]]:
     """Recording on for rig's host: the game's window is `window`; ffmpeg exits once rig.calls has `exit_after`."""
     spawned: list[list[str]] = []
@@ -50,7 +54,7 @@ def recording_on(
         return FakeProc(rig.calls, exit_after)
 
     def recording(out: Path) -> hrec.RunRecording:
-        spec = hrec.RecordSpec(out, live=False)
+        spec = hrec.RecordSpec(out, live=False, encoder=encoder)
         probe = (lambda: hrec.Capture(":1", window)) if window else (lambda: None)
         return hrec.RunRecording(hrec.Recorder(spec, probe, lambda: 1000.0, spawn=spawn), interval=1e9)
 
@@ -95,6 +99,15 @@ def test_a_run_whose_recorder_isnt_recording_doesnt_start(rig: Rig, kw: dict, wh
     assert (rig.h.runs, rig.h.recordings) == ({}, {})
 
 
+def test_the_run_record_names_the_encoder_its_recording_used(rig: Rig):
+    recording_on(rig, encoder="libx264")
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    assert rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())["record_encoder"] == "libx264"
+    rig.h.recording = None  # BG3AI_BENCH_RECORD=0
+    rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
+    assert rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())["record_encoder"] is None
+
+
 def test_an_abort_stops_the_recording(rig: Rig):
     recording_on(rig)
     rig.h.start(JOB, SAVE_SC, run_dir("m-grove"))
@@ -104,21 +117,36 @@ def test_an_abort_stops_the_recording(rig: Rig):
 
 
 def test_play_py_bench_records_every_run_unless_turned_off():
-    assert H.bench_recording({}) is not None and H.bench_recording({"BG3AI_BENCH_RECORD": "1"}) is not None
+    on = {"BG3AI_BENCH_RECORD_ENCODER": "libx264"}
+    assert H.bench_recording(on) is not None and H.bench_recording({**on, "BG3AI_BENCH_RECORD": "1"}) is not None
     assert H.bench_recording({"BG3AI_BENCH_RECORD": "0"}) is None
 
 
-def test_the_bench_encoder_comes_from_the_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_the_bench_encoder_is_the_env_else_the_machine_setting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     seen: list[str] = []
 
     def run_recording(out: Path, env: object, runtime: Path, encoder: str) -> None:
         seen.append(encoder)
 
     monkeypatch.setattr(hrec, "run_recording", run_recording)
-    for env in ({}, {"BG3AI_BENCH_RECORD_ENCODER": "libx264"}):
+    cfg = {"BG3AI_CONFIG_DIR": str(tmp_path / "cfg")}
+    (tmp_path / "cfg").mkdir()
+    (tmp_path / "cfg/record-encoder").write_text("libx264\n")  # bg3harness.doctor wrote it (AMD: no NVENC)
+    for env in (cfg, {**cfg, "BG3AI_BENCH_RECORD_ENCODER": "h264_nvenc"}):
         make = H.bench_recording(env)
         assert make is not None
         make(tmp_path)
-    assert seen == ["h264_nvenc", "libx264"]
+    assert seen == ["libx264", "h264_nvenc"]
     with pytest.raises(ValueError, match="BG3AI_BENCH_RECORD_ENCODER='vp9'"):
-        H.bench_recording({"BG3AI_BENCH_RECORD_ENCODER": "vp9"})
+        H.bench_recording({**cfg, "BG3AI_BENCH_RECORD_ENCODER": "vp9"})
+    (tmp_path / "cfg/record-encoder").write_text("vp9\n")
+    with pytest.raises(ValueError, match="record-encoder='vp9'"):
+        H.bench_recording(cfg)
+
+
+def test_no_encoder_set_is_refused_before_any_run_naming_the_fix(tmp_path: Path):
+    env = {"BG3AI_CONFIG_DIR": str(tmp_path)}  # no variable, no setting: no h264_nvenc default (AMD: no NVENC)
+    with pytest.raises(ValueError) as e:
+        H.bench_recording(env)
+    assert "bg3harness.doctor" in str(e.value) and str(tmp_path / "record-encoder") in str(e.value)
+    assert "BG3AI_BENCH_RECORD_ENCODER=libx264" in str(e.value)

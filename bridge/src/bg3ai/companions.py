@@ -5,7 +5,7 @@ S.campRoster, the engine's CampPresence component) and state.camp the same with 
 party's skills. get_status/look print one PARTY line when it changes (a new region, quest, party or camp
 roster), e.g.
 
-    PARTY: Halsin (camp, Druid 5) is tied to Shadow-Cursed Lands / quest "Lift the Shadow Curse" → swap_party(out="Gale", into="Halsin") | no Sleight of Hand above +2: Astarion (camp) +7 | camp level-ups: Wyll L3→4 → level_up(who="Wyll") swaps in, levels, swaps back
+    PARTY: Halsin (camp, Druid 5) is tied to Shadow-Cursed Lands / quest "Lift the Shadow Curse": <why> | no Sleight of Hand above +2: Astarion (camp) +7 | camp level-ups: Wyll L3→4
 
 The ties come from play/knowledge/companions.md (one table row per companion: regions; quest keywords).
 """
@@ -31,8 +31,10 @@ SKILL_NEEDS = [("SleightOfHand", "Sleight of Hand (locks/traps)", 4),
                ("Perception", "Perception (traps/secrets)", 4)]
 SKILL_GAIN = 3  # a camp member fills a skill gap when it beats the party's best by this much
 
+# Columns: Companion | Class | Regions | Quests / keywords | Tied by (`why`, printed) | Notes (role, recruiting: not
+# printed; w13 L2: the old single "Why bring them" cell ended the PARTY line in a bare '; arcane AoE').
 KNOWLEDGE_ROW = re.compile(r"^\|\s*(?P<name>[^|]+?)\s*\|\s*(?P<cls>[^|]*?)\s*\|\s*(?P<regions>[^|]*?)\s*\|"
-                           r"\s*(?P<quests>[^|]*?)\s*\|\s*(?P<why>[^|]*?)\s*\|\s*$")
+                           r"\s*(?P<quests>[^|]*?)\s*\|\s*(?P<why>[^|]*?)\s*\|\s*(?P<notes>[^|]*?)\s*\|\s*$")
 
 
 def load_ties(text: str) -> dict[str, dict]:
@@ -128,17 +130,15 @@ def hint(party: list[dict], camp: list[dict], region: str, quests: list[str], ta
     composition holes, skill gaps, camp level-ups."""
     bits = []
     live = [r for r in party if not r.get("dead") and not r.get("summon")]
-    swappable = [r for r in live if not r.get("avatar")]
-    # (a) a camp companion tied to this region or an active quest; a party member tied too is kept.
-    tied_party = {r.get("uuid") for r in live if (t := tie_for(r.get("name"), table)) and matches(t, region, quests)}
+    # (a) a camp companion tied to this region or an active quest: the tie, no call to make (w12 L2: '… arcane AoE
+    # → swap_party' was the facts-text rule's leftover advice pointer)
     for c in camp:
         t = tie_for(c.get("name"), table)
         why = matches(t, region, quests) if t else []
         if not why:
             continue
-        out_pick = swap_out(live, swappable, c, keep=tied_party)
-        call = f'swap_party(out="{out_pick.get("name")}", into="{c.get("name")}")' if out_pick else "swap_party"
-        bits.append(f"{c.get('name')} (camp, {class_text(c)}) is tied to {' / '.join(why)}: {t.get('why')} → {call}")
+        bits.append(f"{c.get('name')} (camp, {class_text(c)}) is tied to {' / '.join(why)}"
+                    + (f": {t['why']}" if t.get("why") else ""))
     # (b) composition holes the camp could fill
     have = set().union(*(roles_of(r) for r in live)) if live else set()
     for role in ("healer", "tank", "ranged", "aoe"):
@@ -147,8 +147,8 @@ def hint(party: list[dict], camp: list[dict], region: str, quests: list[str], ta
         fit = [c for c in camp if role in roles_of(c)]
         bits.append(f"no {ROLE_TEXT[role]} in the party" + (f": {', '.join(c.get('name') for c in fit)} (camp)" if fit else ""))
     dead = [r for r in party if r.get("dead")]
-    if dead:
-        bits.append("dead: " + ", ".join(label(r["uuid"]) for r in dead) + " (Scroll of Revivify, or Withers at camp)"
+    if dead:  # who is dead, not how to revive them (night 2026-11-04: '(Scroll of Revivify, or Withers at camp)')
+        bits.append("dead: " + ", ".join(label(r["uuid"]) for r in dead)
                     + (f"; camp can stand in: {', '.join(c.get('name') for c in camp)}" if camp else ""))
     # (c) skill gaps a camp member fills
     if skills:
@@ -160,11 +160,11 @@ def hint(party: list[dict], camp: list[dict], region: str, quests: list[str], ta
             if cands and cands[0][0] >= best + SKILL_GAIN:
                 v, c = cands[0]
                 bits.append(f"party best {text} {best:+d}; {c.get('name')} (camp) {v:+d}")
-    # (d) camp members waiting for their level-ups (done once they rejoin)
+    # (d) camp members waiting for their level-ups (done once they rejoin); the members alone, no call to make
+    # (night 2026-11-04: '(level_up(who="Wyll") swaps in, levels, swaps back)' pointed at the next call)
     lv = [c for c in camp if c.get("level_up")]
     if lv:
-        bits.append("camp level-ups: " + ", ".join(f"{c.get('name')} L{c.get('level')}→{c.get('level_up')}" for c in lv)
-                    + " → level_up(who=\"" + str(lv[0].get("name")) + "\") swaps in, levels, swaps back")
+        bits.append("camp level-ups: " + ", ".join(f"{c.get('name')} L{c.get('level')}→{c.get('level_up')}" for c in lv))
     return bits
 
 
@@ -237,9 +237,12 @@ class TalkTracker:
     def __init__(self) -> None:
         self.text = ""
 
-    def line(self, st: Any, label: Callable[[str], str], force: bool = False) -> str:
+    def line(self, st: Any, label: Callable[[str], str], force: bool = False, extra: tuple[str, ...] = ()) -> str:
         bits = talk_bits(st, label)
-        text = ("TALK: " + " | ".join(bits) + " → talk_to(<id>) now (a companion's own scene; it may not wait)") if bits else ""
+        # extra (the night camp's '!'): facts only, without the companion scenes' suffix (a required talk waits)
+        parts = ([" | ".join(bits) + " (a companion's own scene; it may not wait)"] if bits
+                 else []) + [x for x in extra if x]
+        text = ("TALK: " + " | ".join(parts)) if parts else ""
         if text == self.text and not force:
             return ""
         self.text = text

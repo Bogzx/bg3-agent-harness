@@ -161,5 +161,14 @@ test("throwing component/field reads are tolerated", function()
     eq(G.in_dialogue(P1), false)
 end)
 
+test("dialogue_instance: the open instance by the dialogue_info rules (ambient banter skipped)", function()
+    comps[P1].DialogState.DialogId = 7
+    dialogs[7] = inst(7, { AutomatedDialog = true, Speakers = { sp(P1) } })
+    eq(G.dialogue_instance(P1), nil, "banter is no open dialogue")
+    dialogs[9] = inst(9, { Speakers = { sp(P1) } })
+    eq(G.dialogue_instance(P1), dialogs[9])
+    eq(G.dialogue_instance(P2), nil)
+end)
+
 print(("%d/%d passed"):format(count - failures, count))
 if failures > 0 then os.exit(1) end

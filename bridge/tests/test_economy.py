@@ -109,6 +109,20 @@ class Junk(unittest.TestCase):
         self.assertNotIn("Cup", names)
         self.assertNotIn("Chain Mail", names)  # AC 16 beats Claude's AC 14: an upgrade, not junk
 
+    def test_dyes_are_not_junk(self):
+        # w13 L2: sell=junk sold back a Dye Remover x10 bought a moment earlier (20 g -> 10 g). Shapes as the mod
+        # reads them (night-live n14b: Bloody Plum Dye cat DyeRare, tab Misc, usable).
+        inv = s026_inventory()
+        inv["items"] += [
+            {"uuid": _u(30), "name": "Dye Remover", "owner": CLAUDE, "cat": "Dye", "tab": "Misc", "value": 8,
+             "count": 10, "usable": True, "weight": 0.1},
+            {"uuid": _u(31), "name": "Bloody Plum Dye", "owner": CLAUDE, "cat": "DyeRare", "tab": "Misc", "value": 6,
+             "count": 4, "rarity": "rare", "usable": True, "weight": 0.1}]
+        names = {it["name"] for it in economy.junk(inv)}
+        self.assertEqual(names, {"Cup", "Skull", "Longsword", "Silver Candlestick", "Spear"})
+        self.assertEqual(economy.keep_kind(inv["items"][-2]), "dyes")
+        self.assertEqual(economy.keep_kind(inv["items"][-1]), "dyes")
+
 
 class Upgrades(unittest.TestCase):
     def ups(self, inv=None):
@@ -216,6 +230,7 @@ class Alerts(unittest.TestCase):
         self.assertIn("Withers at camp", al[0])
         self.assertTrue(al[1].startswith("ally DIED e9 Jaheira (revive: 5 Scroll(s) of Revivify"), al[1])
         self.assertIn("Withers can't raise an ally", al[1])
+        self.assertNotIn("reload", al[1])  # facts only (D630): no advice
         self.assertNotIn("DEAD", " | ".join(economy.alerts(STATUS, inv)))
 
     def test_dead_allies_reach_the_alerts_line(self):
@@ -268,7 +283,7 @@ class Report(unittest.TestCase):
         lines = economy.gear_report(s026_inventory(), {CLAUDE: "Claude", GALE: "Gale"}.get)
         text = "\n".join(lines)
         self.assertIn("- Claude: equip Sentinel Shield in MeleeOffHand", text)
-        self.assertIn("junk to sell:", text)
+        self.assertIn("- junk: ", text)
         self.assertIn("camp supplies: 12/40 carried", text)
 
 
@@ -289,6 +304,17 @@ class RenderInventory(unittest.TestCase):
         self.assertNotIn("Potion of Healing", out)
         self.assertRegex(out, r"JUNK 5 items ~\d+g")
 
+    def test_junk_in_bags_is_marked_and_counted(self):
+        # w11 L1 act3_gold_max: the junk preview listed 23 items, 22 inside Claude's Pouch / Alchemy Pouch, and
+        # trade sell=junk sold 1: the trade screen shows a bag, not what is in it
+        out = render.render_inventory(bag_junk_inventory(), self.H, "junk")
+        self.assertRegex(out, r"Amethyst in Pouch")
+        self.assertRegex(out, r"Pearl in Alchemy Pouch")
+        self.assertRegex(out, r"JUNK 7 items ~\d+g [\d.]+kg \(trade sell=junk sells it to a trader with gold; manage_inventory op=camp "
+                              r"item=junk sends it to camp\); 2 of them are in bags \(Alchemy Pouch, Pouch\), which the trade screen "
+                              r"shows as the bag only")
+        self.assertNotIn("in bags", render.render_inventory(s026_inventory(), self.H, "junk"))
+
     def test_name_filter_alternatives_and_no_match_line(self):
         # S039 21:43: filter "leap,misty,jump,dimension,feather" was one word and matched nothing, silently
         out = render.render_inventory(s026_inventory(), self.H, "misty,potion healing,cup")
@@ -304,6 +330,18 @@ class RenderInventory(unittest.TestCase):
         out = render.render_inventory(s026_inventory(), self.H, "")
         self.assertIn("BETTER GEAR IN BAGS (equip_best equips all):", out)
         self.assertIn("Sentinel Shield → MeleeOffHand", out)
+
+
+def bag_junk_inventory() -> dict:
+    """s026 plus two junk items read inside Claude's bags (state.inventory expand=true: `in` = the bag's name)."""
+    inv = s026_inventory()
+    inv["items"] += [
+        {"uuid": _u(40), "name": "Pouch", "owner": CLAUDE, "container": True},
+        {"uuid": _u(41), "name": "Amethyst", "owner": CLAUDE, "cat": "Gem", "tab": "Misc", "value": 40, "in": "Pouch"},
+        {"uuid": _u(42), "name": "Alchemy Pouch", "owner": CLAUDE, "container": True},
+        {"uuid": _u(43), "name": "Pearl", "owner": CLAUDE, "cat": "Gem", "tab": "Misc", "value": 30,
+         "in": "Alchemy Pouch"}]
+    return inv
 
 
 def lantern_inventory() -> dict:
@@ -429,19 +467,76 @@ class Tools(unittest.TestCase):
         self.assertIn("1 more left", out)
         self.assertGreaterEqual(g.trade_reads[0].get("max", 0), 500)  # every slot, not the screen's first 60
 
+    def test_sell_junk_reads_bags_and_says_what_it_left_in_them(self):
+        # w11 L1: preview 23 junk, sell=junk sold 1 and said nothing of the 22 inside the Pouch / Alchemy Pouch
+        g = self.use(FakeGame(bag_junk_inventory(), {"trader_gold": 500, "your_items": [
+            {"uuid": _u(5), "name": "Skull", "price": 2}, {"uuid": _u(40), "name": "Pouch", "price": 1}]}))
+        reads = []
+        rpc = g.rpc
+        g.rpc = lambda op, args=None, *a, **k: (reads.append((op, args)), rpc(op, args, *a, **k))[1]
+        out = progression.trade(sell="junk")
+        self.assertIn(("state.inventory", {"expand": True}), reads)
+        self.assertIn("sold 1 junk items", out)
+        self.assertTrue(out.endswith("\nLEFT IN BAGS 2 junk items (Alchemy Pouch, Pouch): the trade screen shows the "
+                                     "bag, not what is in it"), out)
+        g.trade = {"trader_gold": 500, "your_items": [{"uuid": _u(40), "name": "Pouch", "price": 1}]}
+        out = progression.trade(sell="junk")
+        self.assertIn("nothing sold (none of the junk is on this trade screen)\nLEFT IN BAGS 2 junk items", out)
+
+    def test_sell_junk_left_in_bags_never_counts_what_it_sold_or_what_the_screen_listed(self):
+        # if a trade screen ever lists a bag's contents, a sold one is not "left in bags"
+        self.use(FakeGame(bag_junk_inventory(), {"trader_gold": 500, "your_items": [
+            {"uuid": _u(41), "name": "Amethyst", "price": 40}]}))
+        out = progression.trade(sell="junk")
+        self.assertIn("SOLD Amethyst 40 g", out)
+        self.assertTrue(out.endswith("\nLEFT IN BAGS 1 junk items (Alchemy Pouch): the trade screen shows the bag, "
+                                     "not what is in it"), out)
+        # nothing sold (the trader is broke): an in-bag item the screen listed is not counted as hidden in a bag
+        self.use(FakeGame(bag_junk_inventory(), {"trader_gold": 0, "your_items": [
+            {"uuid": _u(41), "name": "Amethyst", "price": 40}]}))
+        out = progression.trade(sell="junk")
+        self.assertIn("nothing sold", out)
+        self.assertIn("\nLEFT IN BAGS 1 junk items (Alchemy Pouch)", out)
+
+    def test_sell_junk_names_what_it_sold_and_counts_what_it_kept(self):
+        # human-gap research 2026-11-02: 430 items sold in launch-v1 behind "(sold 30 junk items, ~277 g ...)",
+        # with the sale's item events dropped: the agent never learned what went. Every sold item is named now.
+        inv = s026_inventory()
+        inv["items"].append({"uuid": _u(30), "name": "Skull", "owner": CLAUDE, "cat": "JunkBio", "tab": "Misc",
+                             "value": 2})
+        trade = {"trader_gold": 500, "your_items": [
+            {"uuid": _u(6), "name": "Longsword", "price": 30}, {"uuid": _u(5), "name": "Skull", "price": 2},
+            {"uuid": _u(30), "name": "Skull", "price": 2}, {"uuid": _u(4), "name": "Cup", "price": 1},
+            {"uuid": _u(7), "name": "Potion of Healing", "price": 40, "count": 3},
+            {"uuid": _u(1), "name": "Sword of Justice", "price": 300}, {"uuid": _u(8), "name": "Tower-Shaped Key"},
+            {"uuid": _u(13), "name": "Thieves' Tools", "price": 20}]}
+        self.use(FakeGame(inv, trade))
+        out = progression.trade(sell="junk")
+        self.assertIn("sold 4 junk items, ~35 g", out)
+        self.assertIn("\nSOLD Longsword 30 g | Skull x2 4 g | Cup 1 g", out)
+        self.assertIn("\nKEPT (not junk) on this trade screen: 3 consumables, 1 books, keys and tools, 1 equipped, "
+                      "1 story", out)
+
+    def test_keep_kind_is_the_junk_rule(self):
+        inv = s026_inventory()
+        wanted = {u["uuid"] for u in economy.upgrades(inv)}
+        for it in inv["items"]:
+            self.assertEqual(economy.keep_kind(it, set(), wanted) is None, economy.is_junk(it, set(), wanted), it)
+
     def test_sell_junk_drops_the_sale_s_own_item_events(self):
         """Acceptance 12:21: every sold item of another member came back as 'item_added … owner=Claude' (the game
-        moves it to the trader-facing character first) plus 'Gold count=799'; other item events stay."""
+        moves it to the trader-facing character first); the SOLD line states the gold, so gold_changed goes too; other
+        item events stay."""
         trade = {"trader_gold": 40, "your_items": [{"uuid": _u(6), "price": 30}, {"uuid": _u(4), "price": 1}]}
         g = self.use(FakeGame(s026_inventory(), trade))
         claude = {"uuid": _u(1), "name": "Claude"}
         evs = [{"kind": "item_added", "data": {"owner": claude, "item": {"uuid": _u(6), "name": "Crude Mace"}}},
-               {"kind": "item_added", "data": {"owner": claude, "item": {"uuid": _u(90), "name": "Gold"}, "count": 799}},
+               {"kind": "gold_changed", "data": {"gold": 799, "delta": 35}},
                {"kind": "item_added", "data": {"owner": claude, "item": {"uuid": _u(91), "name": "Strange Key"}}}]
         g.drain_events = lambda ctx: evs if ctx == "server" else []
         out = progression.trade(sell="junk")
         self.assertNotIn("Crude Mace", out)
-        self.assertNotIn("count=799", out)
+        self.assertNotIn("gold=799", out)
         self.assertIn("Strange Key", out)
         # late events of the sale are still dropped in the next call, then the window closes
         self.assertEqual(core._drop_events([evs[0]]), [])
@@ -679,7 +774,7 @@ class Tools(unittest.TestCase):
             self.assertEqual(inventory.short_rest(), "short_rest: FAILED — not pressed: in combat")
             G.activity = {"in_combat": False, "in_dialogue": True}
             self.assertEqual(inventory.short_rest(), "short_rest: FAILED — not pressed: a party member is in a "
-                             "conversation (finish it first; it may be one you haven't selected)")
+                             "conversation (it may be one you haven't selected)")
             self.assertEqual(jobs, [])
             G.activity = {"in_combat": False, "in_dialogue": False}
             self.assertTrue(inventory.short_rest().startswith("short_rest: done"))

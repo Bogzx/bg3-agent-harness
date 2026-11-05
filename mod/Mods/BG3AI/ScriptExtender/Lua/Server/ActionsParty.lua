@@ -147,11 +147,11 @@ function A.equip_why(char, item)
     local w = G.guid(G.q("GetEquippedItem", char, "Melee Main Weapon"))
     local wst = w and stats_of(w)
     if offhand and w and wst and not G.same(w, item) and has_prop(wst, "Twohanded") then
-        why[#why + 1] = ("the main hand holds a two-handed weapon (%s): equip a one-handed weapon first"):format(
+        why[#why + 1] = ("the main hand holds a two-handed weapon (%s)"):format(
             name_of(w) or "a weapon")
     end
     local h = holder(item)
-    if h and not G.same(h, char) then why[#why + 1] = "it is in another member's bag (give it first)" end
+    if h and not G.same(h, char) then why[#why + 1] = "it is in another member's bag" end
     if not G.b(G.q("IsProficientWith", char, item)) then why[#why + 1] = "not proficient with it" end
     if #why == 0 then return "cannot equip that" end
     return "cannot equip that: " .. table.concat(why, "; ")
@@ -217,8 +217,8 @@ end)
 
 reg("transfer", function(args)
     local item, from = party_item(args.item)
-    if G.in_combat(from) then G.refuse("not available during combat through this action (use the UI)") end
-    if G.b(G.q("IsEquipped", item)) then G.refuse("unequip it first") end
+    if G.in_combat(from) then G.refuse("not available during combat through this action (the UI tools can do it)") end
+    if G.b(G.q("IsEquipped", item)) then G.refuse("it is equipped") end
     -- One value only: G.q returns three and tonumber(n, base) raised "bad argument #1 to 'tonumber'"
     -- on every give/camp (S018-S024, 7 calls).
     local stack = tonumber((G.q("GetStackAmount", item))) or 1
@@ -559,10 +559,16 @@ reg("sneak", function(args)
     local check = G.check_cast(char, "Shout_Hide", char, nil, nil)
     return start("sneak", char, {
         timeout_ms = 8000,
-        start = function(job) job.osi_task = "spell"; G.osi("UseSpell", char, "Shout_Hide", char, NULL_GUID, 1) end,
+        start = function(job)
+            job.osi_task = "spell"
+            A.cast_rolls(job, char, "Shout_Hide") -- the hide check rolls as a player's (ActionsCast.lua)
+            G.osi("UseSpell", char, "Shout_Hide", char, NULL_GUID, 1)
+        end,
         on_tick = function(job)
-            if G.b(G.q("HasActiveStatus", char, "SNEAKING")) then
-                RPC.finish_job(job, "done", { sneaking = true })
+            local hid = G.b(G.q("HasActiveStatus", char, "SNEAKING"))
+            if A.roll_stop_tick(job, hid) then return end
+            if hid then
+                RPC.finish_job(job, "done", A.unrolled_result(job, { sneaking = true }))
             end
         end,
         on_finish = function(job)

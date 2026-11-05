@@ -10,6 +10,7 @@ for _, path in ipairs({
     "Shared/HotbarMap.lua", -- worker se: hotbar slot -> spell id from the engine component (ACT-8)
     "Client/UI.lua",
     "Client/UIState.lua",
+    "Client/UIStateDialogue.lua", -- ui.answer_list, the answer rows' tag runs (state.dialogue_tags' merge)
     "Client/UIActions.lua",
     "Client/AutoSkip.lua",
     "Client/UISettings.lua",

@@ -120,6 +120,19 @@ def test_manifest_takes_the_versions_the_run_recorded():
     assert man["versions"] == {"harness": "0.5.0", "bench": "1.0.2", "suite": "bench-v1.0"}
 
 
+def test_manifest_pins_the_recording_encoder_the_run_used():
+    """runs.jsonl's record_encoder (run_host: the recording's encoder) is the manifest's; null when the run wasn't
+    recorded or its record predates the field."""
+    series, records = load_series()
+    man = manifest.from_series(series, {**records[0], "record_encoder": "libx264"})
+    assert man["record_encoder"] == "libx264"
+    assert_valid("manifest.v1.schema.json", man)
+    assert manifest.from_series(series, records[0])["record_encoder"] is None
+    old = {k: x for k, x in man.items() if k != "record_encoder"}  # a manifest written before 2026-11-04
+    assert_valid("manifest.v1.schema.json", old)
+    assert not validator("manifest.v1.schema.json").is_valid({**man, "record_encoder": 264})
+
+
 def test_manifest_rejects_mismatched_inputs(tmp_path):
     series, records = load_series()
     with pytest.raises(ValueError, match="series"):
@@ -203,6 +216,25 @@ def test_an_invalid_result_names_its_cause():
     assert "invalid_cause" not in results.from_record(records[0], "r")  # a valid result has none
 
 
+def test_a_result_discloses_the_launches_recovered_before_run_start():
+    # fights-v09 balthazar r2: one LinuxCrashReporter launch 134 s before run_start, the same save relaunched. Since
+    # bench-v0.10 that is no harness failure (bg3harness runs.recovered_launch); result.json still says it happened.
+    _, records = load_series()
+    launch = {
+        "t": 1793626311.4,
+        "attempt": 1,
+        "save": "Tav-14221265938__SCN-fight_act2_balthazar",
+        "error": "bg3le logged LinuxCrashReporter started while waiting for game state Running",
+    }
+    res = results.from_record({**records[0], "recovered_launches": [launch]}, "r")
+    assert (res["valid"], res["recovered_launches"]) == (True, [launch])
+    assert_valid("result.v1.schema.json", res)
+    assert_valid("result.v1.schema.json", {**res, "recovered_launches": [{**launch, "error": None}]})
+    for none in ({}, {"recovered_launches": []}):  # a record before the field, or no launch to disclose
+        assert "recovered_launches" not in results.from_record({**records[0], **none}, "r")
+    assert list(validator("result.v1.schema.json").iter_errors({**res, "recovered_launches": [{"t": 1}]}))
+
+
 def test_timeout_is_a_valid_failure_and_unknown_outcomes_raise():
     _, records = load_series()
     res = results.from_record({**records[0], "outcome": "timeout", "time_to_milestone_s": None}, "r")
@@ -259,7 +291,7 @@ def test_release_refuses_a_cell_whose_runs_differ_in_game_pins():
     same = [({**m, "pins": {**m.get("pins", {}), **pinned}}, r) for m, r in pairs]
     assert results.build_results(same, seed=0, created=1.0, b=20)["groups"][0]["n_runs"] == 3
     rebuilt = {**same[2][0], "pins": {**same[2][0]["pins"], "mod": {"sha1": "c" * 40}}}
-    with pytest.raises(ValueError, match=r"different game pins: nautiloid/pi/opus/None \(mod_sha1\)"):
+    with pytest.raises(ValueError, match=r"different game pins: nautiloid/pi/opus@medium/None \(mod_sha1\)"):
         results.build_results([*same[:2], (rebuilt, r3)], seed=0, created=1.0, b=20)
     # another cell may play another setup: only the runs of one cell are compared
     other = {**rebuilt, "model": {**rebuilt["model"], "slug": "deepseek"}}

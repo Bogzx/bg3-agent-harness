@@ -32,7 +32,7 @@
       "severity": "reject",
       "flag": null,
       "weekly": false,
-      "summary": "bundle, manifest, result and every facts/rolls/events/fights line match their schemas"
+      "summary": "bundle, manifest, result and every facts/rolls/events/fights line match their schemas; bundle.json's fields and attempt.cell agree with the manifest"
     },
     {
       "code": "F04",
@@ -65,7 +65,7 @@
       "severity": "reject",
       "flag": null,
       "weekly": false,
-      "summary": "game build, bg3le sha256 and mod sha1 equal the suite's pins; repo not dirty"
+      "summary": "game build, bg3le sha256, mod sha1 and (if pinned) the code's sha1 equal the suite's pins; repo not dirty"
     },
     {
       "code": "C01",
@@ -87,7 +87,7 @@
       "severity": "reject",
       "flag": null,
       "weekly": false,
-      "summary": "the tool list names equal the allowlist; the served texts hash to prompt.parts"
+      "summary": "the tool list names equal the allowlist, its definitions the release's; served texts hash to prompt.parts"
     },
     {
       "code": "C03",
@@ -99,6 +99,17 @@
       "flag": null,
       "weekly": false,
       "summary": "caps, seed (and seed applied) and difficulty equal the scenario's"
+    },
+    {
+      "code": "C04",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "the events' model is the manifest's slug; the served effort is the declared one"
     },
     {
       "code": "D01",

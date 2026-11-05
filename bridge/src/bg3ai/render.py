@@ -25,6 +25,8 @@ from .render_base import (  # noqa: F401  (re-exported: callers use render.<name
 )
 from .render_events import (  # noqa: F401
     ECHO,
+    EVENT_CEILING,
+    EVENT_LIMIT,
     FLAP,
     STATUS_GROUP_MIN,
     EventEcho,
@@ -55,8 +57,8 @@ def _statuses(c: dict) -> str:
     for s in st:
         if isinstance(s, dict):
             n = s.get("name") or s.get("id")
-            if s.get("duration") not in (None, -1):
-                n = f"{n}({num(s['duration'])}t)"
+            if isinstance(s.get("turns"), int):  # the mod's row (VisibilityObjects.lua V.statuses): turns left
+                n = f"{n}({num(s['turns'])}t)"
             names.append(str(n))
         else:
             names.append(str(s))
@@ -97,6 +99,8 @@ def character_line(c: dict, H: Handles, me: str | None = None) -> str:
     st = _statuses(c)
     if st:
         bits.append(f"[{st}]")
+    if c.get("concentration"):  # the concentration icon over them (State.lua concentration)
+        bits.append(f"concentrating on {c['concentration']}")
     for flag in ("downed", "dead", "in_combat", "can_talk", "can_trade", "sneaking", "is_current"):
         if c.get(flag):
             bits.append(flag)
@@ -301,10 +305,9 @@ def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
     if p and p.get("split"):
         # SplitItem (text "/3" = the stack size): S028 the agent clicked its arrow + Confirm by hand.
         size = re.sub(r"\D", "", str(p.get("text") or "")) or "?"
-        lines.append(f"POPUP how many of the stack: {p.get('title') or '?'} (1-{size}) → confirm(\"yes\", amount=N) "
-                     "or confirm(\"no\")")
+        lines.append(f"POPUP how many of the stack: {p.get('title') or '?'} (1-{size}; confirm takes amount=N)")
     elif p:
-        lines.append("POPUP " + compact(p, H) + (" → answer with confirm(\"yes\"|\"no\"|label)"
+        lines.append("POPUP " + compact(p, H) + (" (confirm answers it: \"yes\"|\"no\"|label)"
                                                  if p.get("decision") else ""))
     c = ui.get("container")
     if c:
@@ -591,6 +594,8 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
             if it.get("supply"):
                 b.append(f"supply={it['supply']}" + (f" (x{it['count']}={it['supply'] * it['count']})"
                                                       if it.get("count", 1) not in (1, None) else ""))
+            if it.get("in"):  # read with bags expanded: inside this bag (the trade screen shows only the bag)
+                b.append(f"in {it['in']}")
             return " ".join(b)
 
         if f == "equipped":
@@ -640,8 +645,8 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
     if junk_ids and f in ("", "notable", "junk"):
         js = [it for it in items if it["uuid"] in junk_ids]
         lines.append(f"JUNK {len(js)} items ~{sum((i.get('value') or 0) * (i.get('count') or 1) for i in js)}g "
-                     f"{sum((i.get('weight') or 0) * (i.get('count') or 1) for i in js):.1f}kg: trade sell=junk at a "
-                     "trader, or manage_inventory op=camp item=junk")
+                     f"{sum((i.get('weight') or 0) * (i.get('count') or 1) for i in js):.1f}kg (trade sell=junk sells it to a "
+                     "trader with gold; manage_inventory op=camp item=junk sends it to camp)" + economy.junk_in_bags(js))
     if by_name and not matched:
         lines.append(f"No item in the party's bags matches {filter.strip()!r} (names; separate alternatives with "
                      "commas: 'misty,scroll').")

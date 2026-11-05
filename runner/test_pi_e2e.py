@@ -82,8 +82,9 @@ def wait_until(cond, what: str) -> None:
 
 
 class Walk:
-    """A fake-mod responder for one walk that never arrives: move_to starts job 900, which stays running (a
-    NOTES WINDOW in coaching), and a wait_for right after it is the PACE case."""
+    """A fake-mod responder for one walk that never arrives: move_to with wait=false (walks block by default since
+    v0.10) starts job 900, which stays running (a NOTES WINDOW in coaching), and a wait_for right after it is the PACE
+    case."""
 
     def reply(self, ctx: str, op: str, args: dict) -> dict | None:
         if op == "act.move_to":
@@ -334,7 +335,7 @@ class Conditions(PiE2EBase):
     WALK: ClassVar[list[dict]] = [
         {
             "tool_calls": [
-                call("move_to", {"x": 10, "y": 0, "z": 0}),
+                call("move_to", {"x": 10, "y": 0, "z": 0, "wait": False}),
                 call("wait_for", {"target": f"j{WALK_JOB}", "timeout_s": 0.5}),
             ]
         },
@@ -362,7 +363,8 @@ class Conditions(PiE2EBase):
         self.assertNotIn(coaching, rules_only)
         out = self.results()
         self.assertIn("NOTES WINDOW: ~30s of walking left", out["move_to"])
-        self.assertIn("PACE: you waited right after issuing", out["wait_for"])
+        # 7e23f2f6 (D630): PACE states how soon the wait_for came after the last issued action
+        self.assertRegex(out["wait_for"], r"PACE: this wait_for came [\d.]+s after the last issued action")
 
 
 class TextOnly(PiE2EBase):

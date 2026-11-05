@@ -49,40 +49,74 @@ class RollCheck(Base):
         self.assertEqual(len(calls), 3)
         self.assertTrue(out.startswith("(rolled without Guidance: the roll offers no boosts)"), out)
 
-    def test_reroll_on_fail(self):
+    def test_a_failed_roll_returns_with_the_screen_open(self):
+        # human-gap research 2026-11-02: 15 Inspiration points went on rerolls chosen before the failure was seen
+        # (reroll_on_fail=true). A failure with Inspiration left now returns; nothing is pressed after the roll.
         calls = []
 
         def run_job(op, args, context="server", wait_s=25.0, **kw):
             calls.append(dict(args))
-            if len(calls) == 1:
-                return JobResult("done", {"roll": {"phase": "result", "success": False}})
-            return JobResult("done", {"roll": {"phase": "result", "success": True}})
+            return JobResult("done", {"roll": {"phase": "result", "success": False, "result": 4, "bonus": -1,
+                                               "dc": 20, "skill": "Persuasion", "inspiration": 4}})
         self.g.run_job = run_job
-        dialogue.roll_check(reroll_on_fail=True)
-        self.assertEqual(calls[1], {"reroll": True})
-        self.assertEqual(len(calls), 3)
+        out = dialogue.roll_check()
+        self.assertEqual(calls, [{"reroll": False}])  # rolled; no reroll, no Continue
+        self.assertIn("roll: Persuasion DC 20: d20 4 - 1 = 3 → FAILED (inspiration 4)", out)
+        self.assertIn(dialogue.ROLL_OPEN_NOTE, out)
 
-    def test_reroll_shows_both_rolls_plainly(self):
-        # S013-S026: the reroll returned the same failed roll twice and the outcome was a missing key.
+    def test_reroll_on_fail_is_gone(self):
+        import inspect
+        self.assertNotIn("reroll_on_fail", inspect.signature(dialogue.roll_check).parameters)
+
+    def test_reroll_is_its_own_call(self):
+        # the second call, on the open result screen: RollAgainCommand, then Continue on a success
         calls = []
 
         def run_job(op, args, context="server", wait_s=25.0, **kw):
             calls.append(dict(args))
             if len(calls) == 1:
-                return JobResult("done", {"roll": {"phase": "result", "success": False, "result": 4, "bonus": 7,
-                                                   "dc": 21, "skill": "Persuasion", "inspiration": 4},
-                                          "phases": "WaitForStart@0 StartRoll@300 ResultReady@6500"})
-            if len(calls) == 2:
                 return JobResult("done", {"roll": {"phase": "result", "success": True, "result": 17, "bonus": 7,
                                                    "dc": 21, "skill": "Persuasion", "inspiration": 3},
-                                          "rerolled": True})
+                                          "rerolled": True, "phases": "WaitForReRoll@0 ResultReady@6500"})
             return JobResult("done", {"screen": "dialogue"})
         self.g.run_job = run_job
-        out = dialogue.roll_check(reroll_on_fail=True)
-        self.assertIn("roll: Persuasion DC 21: d20 4 + 7 = 11 → FAILED (inspiration 4)", out)
-        self.assertIn("reroll (1 Inspiration): Persuasion DC 21: d20 17 + 7 = 24 → SUCCESS", out)
+        out = dialogue.roll_check(reroll=True)
+        self.assertEqual(calls, [{"reroll": True}, {}])
+        self.assertIn("reroll (1 Inspiration): Persuasion DC 21: d20 17 + 7 = 24 → SUCCESS (inspiration 3)", out)
         self.assertNotIn("phases", out)
-        self.assertEqual(out.count("⏱"), min(out.count("⏱"), 1))
+        self.assertNotIn(dialogue.ROLL_OPEN_NOTE, out)
+
+    def test_a_reroll_on_a_success_is_refused_without_a_press(self):
+        calls = []
+        self.g.run_job = lambda op, args, **kw: calls.append(dict(args)) or JobResult("done", {})
+        self.g.ui = {"screen": "dialogue", "roll": {"phase": "result", "success": True, "result": 17, "dc": 12}}
+        out = dialogue.roll_check(reroll=True)
+        self.assertEqual(calls, [])  # no RollAgainCommand: an Inspiration point a player couldn't spend
+        self.assertIn("roll_check: REFUSED — the roll on screen succeeded", out)
+
+    def test_a_failed_reroll_returns_again(self):
+        calls = []
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            calls.append(dict(args))
+            return JobResult("done", {"roll": {"phase": "result", "success": False, "result": 3, "bonus": -1,
+                                               "dc": 20, "inspiration": 3}, "rerolled": True})
+        self.g.run_job = run_job
+        out = dialogue.roll_check(reroll=True)
+        self.assertEqual(calls, [{"reroll": True}])
+        self.assertIn("reroll (1 Inspiration) DC 20: d20 3 - 1 = 2 → FAILED (inspiration 3)", out)
+        self.assertIn(dialogue.ROLL_OPEN_NOTE, out)
+
+    def test_continue_on_the_open_result_accepts_it(self):
+        # roll_check() on the result screen: ui.roll presses Continue (its result is the dialogue, no roll)
+        calls = []
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            calls.append(dict(args))
+            return JobResult("done", {"screen": "dialogue"})
+        self.g.run_job = run_job
+        dialogue.roll_check()
+        self.assertEqual(calls, [{"reroll": False}])
 
     def test_reroll_ignored_and_no_inspiration(self):
         calls = []
@@ -90,16 +124,13 @@ class RollCheck(Base):
         def run_job(op, args, context="server", wait_s=25.0, **kw):
             calls.append(dict(args))
             if len(calls) == 1:
-                return JobResult("done", {"roll": {"phase": "result", "success": False, "result": 2, "bonus": 1,
-                                                   "inspiration": 2}})
-            if len(calls) == 2:
                 return JobResult("done", {"roll": {"phase": "result", "success": False, "result": 2},
                                           "reroll_ignored": True})
             return JobResult("done", {"screen": "game"})
         self.g.run_job = run_job
-        out = dialogue.roll_check(reroll_on_fail=True)
+        out = dialogue.roll_check(reroll=True)
         self.assertIn("the game kept the first result", out)
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 2)  # nothing to choose: Continue
         calls.clear()
 
         def run_job2(op, args, context="server", wait_s=25.0, **kw):
@@ -108,9 +139,10 @@ class RollCheck(Base):
                 return JobResult("done", {"roll": {"phase": "result", "success": False, "result": 2, "inspiration": 0}})
             return JobResult("done", {"screen": "game"})
         self.g.run_job = run_job2
-        out = dialogue.roll_check(reroll_on_fail=True)
-        self.assertIn("no Inspiration points left", out)
-        self.assertEqual(len(calls), 2)  # no reroll request, straight to Continue
+        out = dialogue.roll_check()
+        self.assertIn("no Inspiration points left to reroll", out)
+        self.assertNotIn(dialogue.ROLL_OPEN_NOTE, out)
+        self.assertEqual(len(calls), 2)  # no reroll possible: straight to Continue
 
     def test_batch_state_get(self):
         self.assertEqual(reporting._batch.get("nope", 7), 7)
@@ -184,6 +216,8 @@ class Confirm(Base):
         self.assertIn("doesn't allow a long rest", out)
         self.assertIn("Karlach: turn-based mode is on", out)
         self.assertNotIn("Gale", out)  # Location alone only explains a failure
+        self.assertEqual(inventory._rest_reasons({"blocked": [{"name": "Gale", "flags": ["Dialog"]}]}),
+                         "Gale: in a conversation")  # D630: no "(finish it first)"
         self.assertEqual(seen, [])
         # only soft flags (Location, supplies): the rest goes on
         self.g.try_rpc = lambda op, args=None, **kw: (
@@ -216,6 +250,40 @@ class Confirm(Base):
         story["DB_CAMP_JustWokeUp"] = 0  # left camp since (or no rest yet): pressed as before
         self.assertIn("done", inventory.long_rest())
         self.assertEqual(seen, ["ui.long_rest"])
+
+    def test_long_rest_at_night_names_the_talk_the_camp_story_still_wants(self):
+        # launch-v1 haiku act3_gold_max r2 S001 calls 24-60: at night camp every long_rest pressed the sleep button
+        # twice and failed 30 s later "the night at camp didn't end" (17x in r2, 46x in 4 runs); camp leave the same.
+        # The camp story answers the press with its "talks left" box while DB_Camp_RequiredTalks has a row: the
+        # loop ended the moment the agent talked to Shadowheart (19:42), the next long_rest slept at once.
+        seen = []
+        self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: (
+            seen.append(op) or JobResult("done", {"rest": "full", "night_ended": True}))
+        orig = self.g.try_rpc
+        sh = "3ed74f06-3c60-42dc-83f6-f034cb47c679"
+        flow = {"steps": [], "story": {"DB_Camp_NightMode": 1, "DB_CAMP_JustWokeUp": 0},
+                "required_talks": [{"uuid": sh, "name": "Shadowheart"}]}
+
+        def try_rpc(op, args=None, **kw):
+            if op == "camp.can_rest":
+                return {"blocked": [], "global_disabled": 0}
+            if op == "camp.rest_flow":
+                return flow
+            return orig(op, args, **kw)
+        self.g.try_rpc = try_rpc
+        out = inventory.long_rest()
+        h = core.H.get(sh)
+        self.assertIn(f"long_rest: FAILED — not pressed: the night at camp can't end yet: the game still wants a talk "
+                      f"with {h} Shadowheart (the '!' over them) first;", out)
+        self.assertNotIn("DB_Camp", out)
+        self.assertEqual(seen, [])
+        flow["required_talks"] = []  # the talk was had (DialogActorJoined cleared the row): pressed, the night ends
+        self.assertIn("done", inventory.long_rest())
+        self.assertEqual(seen, ["ui.long_rest"])
+        # a required talk outside the night (the story checks them only when the night is to end): pressed
+        flow.update(required_talks=[{"uuid": sh, "name": "Shadowheart"}], story={"DB_Camp_NightMode": 0})
+        inventory.long_rest()
+        self.assertEqual(seen, ["ui.long_rest", "ui.long_rest"])
 
     def test_long_rest_waits_for_the_end_day_answer(self):
         # S030 16:30: requested -> gathered, the job gave up at 8 s, end_day_failed came ~10 s after the press;
@@ -263,6 +331,7 @@ class Confirm(Base):
             out = inventory.long_rest()
         self.assertIn("gather_failed", out)
         self.assertIn("DEAD: Wyll — the game won't gather a dead party member", out)
+        self.assertIn("at camp, revives them; swap_party takes them out of the party)", out)
         self.assertNotIn("Spiritual Weapon", out)
         dead[0] = False
         with mock.patch.object(time, "sleep"):
@@ -368,8 +437,7 @@ class Confirm(Base):
                                   "popup": {"title": "Supply Pack", "text": "/3", "buttons": ["Cancel", "Confirm"],
                                             "decision": True, "split": True}}, core.H)
         line = next(x for x in lines if x.startswith("POPUP"))
-        self.assertIn("Supply Pack (1-3)", line)
-        self.assertIn('confirm("yes", amount=N)', line)
+        self.assertIn("Supply Pack (1-3; confirm takes amount=N)", line)
         seen = []
         self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: (
             seen.append(args) or JobResult("done", {"pressed": "Confirm"}))
@@ -379,7 +447,7 @@ class Confirm(Base):
     def test_popup_line_says_how_to_answer(self):
         lines = render.render_ui({"screen": "popup", "popup": {"title": "[ForceUpdate]", "buttons": ["Yes", "No"],
                                                                "decision": True}}, core.H)
-        self.assertTrue(any(line.startswith("POPUP") and "confirm(" in line for line in lines), lines)
+        self.assertTrue(any(line.startswith("POPUP") and "(confirm answers it" in line for line in lines), lines)
         lines = render.render_ui({"screen": "popup", "popup": {"title": "Info", "buttons": ["OK"],
                                                                "dismissable": True}}, core.H)
         self.assertFalse(any("confirm(" in line for line in lines), lines)

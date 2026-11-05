@@ -161,17 +161,15 @@ HINT_RULES: list[tuple[str, str, str]] = [
                      r"ends, when the character would stand idle\); queue_actions the arrival first",
      r"NOTES WINDOW: ~\g<s>s of walking left: note/plan now"),
     ("appends", r" \(queue_actions appends after it\)", ""),
-    ("pace", r"PACE: you waited right after issuing\. Next time first do independent work \(queue the arrival steps, "
-             r"look, plan, notes\): the character acts while you think\.",
-     "PACE: you waited right after issuing (do independent work first)."),
+    # reporting.py's PACE line since 7e23f2f6 (D630); the old instruction text it replaced is never produced
+    ("pace", r"PACE: this wait_for came (?P<s>[\d.]+)s after the last issued action, with no other call in between\.",
+     r"PACE: wait_for \g<s>s after the last issued action, no call between."),
     ("actions_before", r"\(other actions as listed before for (?P<h>e\d+); get_combat_state lists them all\)",
      r"(other actions of \g<h> as before)"),
     ("plan_while", r"\. Plan it while they act and send its combat_turn now \(it waits for the turn\)",
      ": send its combat_turn now"),
     ("combat_started", r"COMBAT STARTED \(no get_combat_state needed\):", "COMBAT STARTED:"),
     ("no_change", r"No change since your last look \(full=true shows everything\)\.", "No change since your last look."),
-    ("saving", r" in the background \(~2 s with the game's save freeze; your next call waits for them\)\. Keep playing; "
-               r"SAVED shows on a later result\.", " in the background; SAVED shows later."),
     ("shared_turn", r" can all act now, in any order \((?:who=<member> on each action, end_turn for each|combat_turn who=\.\.\., "
                     r"end each one's turn)\)",
      " can all act now, any order"),
@@ -180,7 +178,6 @@ HINT_RULES: list[tuple[str, str, str]] = [
     ("plan_them", r" — plan them from this state \(combat_turn again\)\.", " — plan them (combat_turn again)."),
     ("retarget", r" \(retarget:false keeps it\)", ""),
     ("climb", r" \[interact to climb\]", ""),
-    ("sell_junk", r" \(sell junk: trade sell=junk\)", ""),
     ("combat_over", r"combat is over: loot, heal, then end_combat_report", "combat is over"),
     ("floors_rel", r" \(m, relative to you\)", ""),
     ("walks_it", r"^NEXT: travel_to/move_to walks it$", ""),
