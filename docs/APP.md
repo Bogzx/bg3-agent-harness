@@ -228,9 +228,11 @@ OPERATOR MESSAGE (from the person running this playthrough, sent 14:02:31): Chec
 - A session the option was on for has `operator: {enabled, sent, delivered}` in its `supervisor.json` row, its
   `/sessions` row and its Timeline session (null when the option was off). `sent` counts the messages posted while
   it ran, `delivered` the ones its results carried. Timeline, Replay, Story and Stats mark such a session
-  "guided (N messages)", with N = `delivered`. Replay shows `operator` events at the sent and delivered times, and
-  the session's `Sxxx.latency.json` has `operator_messages` (the delivered count, from the metrics records'
-  `operator` ids), so a reader can leave out the turns after a message.
+  "guided (N messages)", with N = `delivered`: the messages delivered in that session. A message posted between
+  sessions counts in the next one's `delivered` and in no session's `sent`, and a redelivered message counts as
+  delivered in both sessions. Replay shows `operator` events at the sent and delivered times, and the session's
+  `Sxxx.latency.json` has `operator_messages` (the delivered count, from the ids in its metrics' `operator`
+  records), so a reader can leave out the turns after a message.
 - The files are in `runtime/sessions/<pt>/`: `operator.jsonl` (the app appends `{id, t, text}`) and
   `operator.delivered.jsonl` (the bg3 server appends `{id, t, session, tool}`). The runner gives the session's bg3
   server `BG3AI_OPERATOR_DIR` (that folder) only when the option is on; a `BG3AI_OPERATOR_*` the app's own shell
