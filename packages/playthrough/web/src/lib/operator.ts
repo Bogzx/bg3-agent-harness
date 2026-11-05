@@ -6,14 +6,18 @@ import type { Action, OperatorMessage, Runner, SessionOperator, SessionRow } fro
 export const MAX_TEXT = 1000; // the server's limit (400 above it)
 export const MAX_SHOWN = 50;
 
-/** The list with `row` in it, newest first. A row replaces the one with its id, except that a "queued" row never
- * undoes a delivery: the snapshot and the stream overlap, so the stream can replay a message's queued row after the
- * snapshot already had it delivered. */
+/** The list with `row` in it, newest first: a row replaces the one with its id. A queued row after a delivered one
+ * is a redelivery (the client died before the model saw it), so the message is queued again. The stream is ordered:
+ * a replayed queued row from the snapshot overlap is followed by its delivered row. */
 export function mergeMessage(list: OperatorMessage[], row: OperatorMessage): OperatorMessage[] {
-  const old = list.find((m) => m.id === row.id);
-  if (old && old.status === "delivered" && row.status === "queued") return list;
   const out = [row, ...list.filter((m) => m.id !== row.id)].sort((a, b) => b.t - a.t);
   return out.slice(0, MAX_SHOWN);
+}
+
+/** The list with the POST's own echo of a message just sent, unless the stream already brought that message (its
+ * delivered row can come before the POST's answer). */
+export function mergeSent(list: OperatorMessage[], row: OperatorMessage): OperatorMessage[] {
+  return list.some((m) => m.id === row.id) ? list : mergeMessage(list, row);
 }
 
 const bare = (tool: string) => tool.replace("mcp__bg3__", "");

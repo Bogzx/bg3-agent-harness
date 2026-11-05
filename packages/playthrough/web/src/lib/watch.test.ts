@@ -105,8 +105,8 @@ describe("watch reducer", () => {
     const done = { ...row, status: "delivered" as const, delivered: { t: 9, session: "S001", tool: "travel_to" } };
     s = applyEvent(s, "operator", { ...done, playthrough: "pt" });
     expect(s.operator.messages.map((m) => m.status)).toEqual(["delivered"]);
-    s = applyEvent(s, "operator", { ...row, playthrough: "pt" }); // the stream's replay of its queued row
-    expect(s.operator.messages.map((m) => m.status)).toEqual(["delivered"]);
+    s = applyEvent(s, "operator", { ...row, playthrough: "pt" }); // a redelivery: the model never saw it
+    expect(s.operator.messages.map((m) => m.status)).toEqual(["queued"]);
     const before = s;
     expect(applyEvent(s, "operator", { ...row, id: "m2", playthrough: "other" })).toBe(before);
     expect(applyEvent(s, "operator", { ...row, id: "m2" }).operator.messages.map((m) => m.id)).toEqual(["m2", "m1"]);

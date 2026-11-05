@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { clock } from "./format";
-import { canSend, guidedLabel, guidedLine, guidedSessions, MAX_SHOWN, mergeMessage, nextAction, sendError, sessionLive, statusText, textProblem } from "./operator";
+import { canSend, guidedLabel, guidedLine, guidedSessions, MAX_SHOWN, mergeMessage, mergeSent, nextAction, sendError, sessionLive, statusText, textProblem } from "./operator";
 import type { Action, OperatorMessage } from "./types";
 
 const queued = (id: string, t: number, text = `text ${id}`): OperatorMessage => ({ id, t, text, status: "queued" });
@@ -17,9 +17,14 @@ describe("operator messages", () => {
     expect(l.map((m) => [m.id, m.status])).toEqual([["m2", "queued"], ["m1", "delivered"]]);
   });
 
-  it("a replayed queued row never undoes a delivery", () => {
+  it("a queued row after the delivery is a redelivery: queued again", () => {
+    expect(mergeMessage([delivered("m1", 10, 30)], queued("m1", 10)).map((m) => m.status)).toEqual(["queued"]);
+  });
+
+  it("the POST's echo never replaces a row the stream brought first", () => {
     const l = [delivered("m1", 10, 30)];
-    expect(mergeMessage(l, queued("m1", 10))).toBe(l);
+    expect(mergeSent(l, queued("m1", 10))).toBe(l);
+    expect(mergeSent(l, queued("m2", 20)).map((m) => [m.id, m.status])).toEqual([["m2", "queued"], ["m1", "delivered"]]);
   });
 
   it("keeps the newest MAX_SHOWN", () => {

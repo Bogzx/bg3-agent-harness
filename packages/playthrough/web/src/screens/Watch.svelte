@@ -5,7 +5,7 @@
   import { applyPosition, emptyPositions } from "../lib/breadcrumb";
   import { argLine, clock, hpPct, mmss, num, usd } from "../lib/format";
   import type { PositionRow, Positions } from "../lib/types";
-  import { canSend, MAX_TEXT, nextAction, sendError, sessionLive, statusText, textProblem } from "../lib/operator";
+  import { canSend, MAX_TEXT, mergeSent, nextAction, sendError, sessionLive, statusText, textProblem } from "../lib/operator";
   import { applyEvent, fromSnapshot, says, screenSrc, secondsLeft, type WatchState } from "../lib/watch";
   import Breadcrumb from "./Breadcrumb.svelte";
 
@@ -65,7 +65,7 @@
       const r = await api.message(pt, text);
       draft = "";
       sendErr = null;
-      if (s) s = applyEvent(s, "operator", { ...r, text, playthrough: pt }); // the stream's row replaces it
+      if (s) s = { ...s, operator: { ...s.operator, messages: mergeSent(s.operator.messages, { ...r, text }) } };
     } catch (e) {
       sendErr = e instanceof ApiError ? sendError(e.status, e.message) : (e as Error).message;
     } finally {
