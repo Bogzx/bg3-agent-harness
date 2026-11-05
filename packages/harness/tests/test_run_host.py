@@ -869,6 +869,7 @@ def test_the_kickoff_of_a_maximise_scenario_states_the_end_rule_and_what_an_acti
     # v010 pilot: Sonnet's act3_gold_max ended by this rule with 29 min of the cap left, a rule it was never told
     text = H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000", served=SERVED)
     assert "A stretch with no acting call since a restart also ends it sooner" in text
+    assert "when you stop calling tools with time left" in text and "end your turn" not in text  # end_turn acts
     assert acting_tools(text) == ["move_to", "trade"]  # get_status is served but is no acting call
 
 

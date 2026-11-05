@@ -435,7 +435,7 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "", ser
         if not acting:
             raise ValueError(f"{sc['name']}: a maximise run served no acting tool can't state its end rule")
         lines.append(
-            "A stretch with no acting call since a restart also ends it sooner: when you end your turn with time "
+            "A stretch with no acting call since a restart also ends it sooner: when you stop calling tools with time "
             "left, the harness restarts you if you made an acting call since your start or last restart, and "
             f"otherwise the run ends. Acting calls are calls of these tools: {', '.join(acting)}."
         )
