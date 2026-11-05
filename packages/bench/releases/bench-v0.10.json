@@ -10,8 +10,8 @@
  "pins": {
   "game_build": "25605617",
   "bg3le_sha256": "b7ecfd06da11f0c34f599cf360b850a258b542a17f9f2eb50010bae799ab8b3b",
-  "mod_sha1": "ad0501b25ae54db6742a51efc978a51546f28314",
-  "code_sha1": "8b33b1199681a799017f0f22f232fcde253ec6d4"
+  "mod_sha1": "9ec50440701277739ede24e68d92e3963756e333",
+  "code_sha1": "6583485b701bfa8aae7f7b77efb38be27985109f"
  },
  "scenarios": {
   "act1_goblin_camp_no_fight": {
@@ -840,15 +840,15 @@
      "walk_toward",
      "zoom"
     ],
-    "defs_sha256": "c5f18d5e484cf0f89d9bd9b6e5ff3262ae43dd2e61e764b4dc841dae0dc80b29"
+    "defs_sha256": "a2d25c0a9464ca85f8c96599d7d6382cf6b3837fe6bc73ddd681c6b92adc06b9"
    },
    "prompts": {
     "claude": {
-     "sha256": "f168932e6a6c4cdd8db731277d788d2913943e9f1fe95f7a87a3b94acb0c45b9",
+     "sha256": "5c7ec7d3df7943c0cc795fec10380642f4e7bcf4434b1a8c9573fd37ea1674aa",
      "condition": "rules+coaching"
     },
     "pi": {
-     "sha256": "f00837a8c14621d67156b82a0ae602e875b039939bbdedd095a571e89cd9b2a5",
+     "sha256": "b3dd35736b5c7e80b4661b749ded97767e551b5cf715f8eff60b64e19cc73701",
      "condition": "rules"
     }
    },
@@ -938,11 +938,11 @@
        "wait_for",
        "walk_toward"
       ],
-      "defs_sha256": "e9c628c971df0797b1861cbfb583391badca6924e0cfb2b271c5802f2875eb21"
+      "defs_sha256": "eafe50e7b147ee46c8ddcd99cd7980a69287f0d7f5fa07180d9072a9e8a19ded"
      },
      "prompts": {
       "pi": {
-       "sha256": "4e327a49fca4970df925215d88fd67609e84bee488b7be16bbbf2fd735eb92f4",
+       "sha256": "08a501fe3e878aa671c0184b2138ff15a99a522709ccfbf2e34dacaacae17352",
        "condition": "rules"
       }
      }
