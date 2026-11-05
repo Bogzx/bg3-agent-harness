@@ -502,6 +502,16 @@ def kill_limits(cap: int | None) -> tuple[int, int]:
     return min(KILL_GAME_MB, cap - KILL_UNDER_CAP_MB), min(KILL_ANON_SWAP_MB, cap - KILL_UNDER_CAP_MB)
 
 
+def game_cap_mb(pids: list[int], proc: Path = Path("/proc"), root: Path = CGROUP_ROOT) -> int | None:
+    """MiB of the cap the game runs under: its scope's (scope_cap_mb), else $BG3AI_GAME_MEMORY_MAX; None: neither."""
+    for pid in pids:
+        cg = game_scope_cgroup(pid, proc, root)
+        cap = scope_cap_mb(cg, root) if cg else None
+        if cap is not None:
+            return cap
+    return cap_mb(os.environ.get(GAME_CAP_ENV))
+
+
 class RamWatch:
     def __init__(self, log=None, logfile: Path = LOG, warn_mb: int = WARN_MB, kill_mb: int = KILL_MB,
                  exclude: set[int] | None = None):

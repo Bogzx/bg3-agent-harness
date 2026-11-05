@@ -452,13 +452,15 @@ class Relaunch(unittest.TestCase):
 
     def _runner(self, d: Path, *, launched, log_text, save_mtime, last_started=50.0, steam=(True, "offline"),
                 owns=True, first=False, ram=5000, mod_path=None, acts=(), extra_saves=(), runner_saves=(),
-                save_combat=None, combat_now=False, last_ended=None, save_saved=None):
+                save_combat=None, combat_now=False, last_ended=None, save_saved=None, cap=None):
         self.saved = getattr(self, "saved", None) or (G.port_open, rcode.steam_ready, rcode.list_saves, rpolicy.game_started_at,
-                      renv.log, rpolicy.game_ram_mb, rcode.game_mod_path, rpolicy.read_actions_since, G.party_in_combat)  # first call's
+                      renv.log, rpolicy.game_ram_mb, rcode.game_mod_path, rpolicy.read_actions_since, G.party_in_combat,
+                      rpolicy.game_cap_mb)  # first call's
         G.port_open = lambda *a, **k: True
         G.party_in_combat = lambda: combat_now
         rpolicy.read_actions_since = lambda t, *a, **k: [x for x in acts if x.get("t", 0) > t]   # never the real log
         rpolicy.game_ram_mb = lambda: ram
+        rpolicy.game_cap_mb = lambda: cap
         rcode.game_mod_path = lambda: mod_path   # never the machine's real game
         rcode.steam_ready = lambda: steam
         rcode.list_saves = lambda: [sv("Claude-1__S032-end", save_mtime, saved=save_saved), *extra_saves]
@@ -486,7 +488,7 @@ class Relaunch(unittest.TestCase):
     def tearDown(self):
         if hasattr(self, "saved"):
             (G.port_open, rcode.steam_ready, rcode.list_saves, rpolicy.game_started_at, renv.log, rpolicy.game_ram_mb,
-             rcode.game_mod_path, rpolicy.read_actions_since, G.party_in_combat) = self.saved
+             rcode.game_mod_path, rpolicy.read_actions_since, G.party_in_combat, rpolicy.game_cap_mb) = self.saved
 
     def test_relaunches_after_a_ready_check_failure(self):
         with tempfile.TemporaryDirectory() as td:

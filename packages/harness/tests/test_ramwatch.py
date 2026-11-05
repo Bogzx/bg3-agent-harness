@@ -220,6 +220,19 @@ class RamWatchTest(unittest.TestCase):
         self.assertEqual((w.kill_game_mb, w.kill_anon_swap_mb), (7692, 7692))
         self.assertEqual((rec["kind"], k.call_args_list), ("kill", [mock.call(100, R.signal.SIGKILL)]))
 
+    def test_game_cap_mb_reads_the_game_scope_before_the_env(self):
+        self._kill_setup()
+        self.scope_tree(memory_max=str(8 * 2**30))
+        with mock.patch.dict(R.os.environ, {R.GAME_CAP_ENV: "6G"}):
+            self.assertEqual(R.game_cap_mb([100], self.w.proc, self.w.cgroup_root), 8192)
+
+    def test_game_cap_mb_falls_back_to_the_env_then_none(self):
+        with mock.patch.dict(R.os.environ, {R.GAME_CAP_ENV: "6G"}):
+            self.assertEqual(R.game_cap_mb([], self.w.proc, self.w.cgroup_root), 6144)
+        with mock.patch.dict(R.os.environ):
+            R.os.environ.pop(R.GAME_CAP_ENV, None)
+            self.assertIsNone(R.game_cap_mb([], self.w.proc, self.w.cgroup_root))
+
     def test_the_cap_is_the_smallest_memory_max_of_the_scope_and_its_ancestors(self):
         # REVIEW-18d NOTE 1: the scope's processes run under every ancestor's limit too (app.slice, user@.service, ...)
         cg = self.scope_tree(memory_max="max")
