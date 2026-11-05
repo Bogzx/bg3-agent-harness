@@ -54,9 +54,12 @@ describe("operator messages", () => {
   });
 
   it("labels guided sessions", () => {
-    expect(guidedLabel({ enabled: true, sent: 3, delivered: 2 })).toBe("guided (3 messages)");
+    expect(guidedLabel({ enabled: true, sent: 3, delivered: 2 })).toBe("guided (2 messages)"); // one still queued
     expect(guidedLabel({ enabled: true, sent: 1, delivered: 1 })).toBe("guided (1 message)");
     expect(guidedLabel({ enabled: true, sent: 0, delivered: 0 })).toBe("guided (0 messages)");
+    // two sent between S1 and S2 reach the agent in S2: S1 sent them, S2 got them
+    expect(guidedLabel({ enabled: true, sent: 2, delivered: 0 })).toBe("guided (0 messages)");
+    expect(guidedLabel({ enabled: true, sent: 0, delivered: 2 })).toBe("guided (2 messages)");
     expect(guidedLabel({ enabled: false, sent: 0, delivered: 0 })).toBeNull();
     expect(guidedLabel(null)).toBeNull();
     expect(guidedLabel(undefined)).toBeNull();
@@ -67,7 +70,7 @@ describe("operator messages", () => {
       { session: "S003", started: 1, minutes: 5 },
       { session: "S004", started: 2, minutes: 5, operator: { enabled: true, sent: 2, delivered: 2 } },
       { session: "S005", started: 3, minutes: 5, operator: null },
-      { session: "S006", started: 4, minutes: 5, operator: { enabled: true, sent: 1, delivered: 0 } },
+      { session: "S006", started: 4, minutes: 5, operator: { enabled: true, sent: 0, delivered: 1 } },
     ]);
     expect(g).toEqual({ S004: "guided (2 messages)", S006: "guided (1 message)" });
     expect(guidedLine(g)).toBe("S004 guided (2 messages) · S006 guided (1 message)");

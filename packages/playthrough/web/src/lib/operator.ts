@@ -47,10 +47,11 @@ export function nextAction(m: OperatorMessage, actions: Action[], session: strin
   return carrier >= 0 ? (actions[carrier + 1] ?? null) : null;
 }
 
-/** "guided (3 messages)" for a session the option was on in, else null. */
+/** "guided (3 messages)" for a session the option was on in, else null. N counts the messages the agent got in
+ * that session (delivered), not the ones posted during it: one posted between sessions reaches the next session. */
 export function guidedLabel(op: SessionOperator | null | undefined): string | null {
   if (!op?.enabled) return null;
-  return `guided (${op.sent} message${op.sent === 1 ? "" : "s"})`;
+  return `guided (${op.delivered} message${op.delivered === 1 ? "" : "s"})`;
 }
 
 /** The guided sessions in `rows`, session -> "guided (N messages)". */
