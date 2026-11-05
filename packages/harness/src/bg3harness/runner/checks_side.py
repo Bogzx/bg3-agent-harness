@@ -86,10 +86,14 @@ class ChecksSide:
         return res
 
     def progress_loop(self, session: str, base: Path, start: float, stop: threading.Event, human=None) -> None:
-        """Poll story progress (fair journal/map/status data) into Sxxx.progress.jsonl until stop is set."""
+        """Poll story progress (fair journal/map/status data) into Sxxx.progress.jsonl until stop is set, then once
+        more: the session's end state (v010 pilot choice_act2_nightsong sonnet: the quests closed 4-11 s after the
+        last 15 s poll and the session ended, so its progress read 0 points and 0 events)."""
         tl = story.Timeline(Path(f"{base}.progress.jsonl"), self.state.dir / "progress_state.json", start)
         actions = story.actions_in(Path(f"{base}.metrics.jsonl"))
-        while not stop.wait(story.POLL_S):
+        last = False
+        while not last:
+            last = stop.wait(story.POLL_S)
             try:
                 got = story.read_game(lambda code, ctx: game.lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
             except Exception:

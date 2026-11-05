@@ -601,6 +601,44 @@ class Progress(unittest.TestCase):
             self.assertEqual(row["session"], "S004")
             self.assertTrue((d / "progress_state.json").exists())
 
+    def test_poller_reads_once_more_at_the_stop(self):
+        # v010 pilot choice_act2_nightsong sonnet (57 s): the quests closed after the last 15 s poll and the session
+        # ended before the next one; its progress read 0 points, 0 events (haiku's 72 s run of it: 50, 13)
+        import json
+        import tempfile
+        import threading
+
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            base = d / "S001"
+            world = {"status": {"region": "Shadow-Cursed Lands", "party": [{"name": "Claude", "level": 5}]},
+                     "journal": [{"title": "The Chosen of Shar", "steps": ["a"]}], "map": {"waypoints": []},
+                     "markers": {"markers": []}, "ui": {"screen": "game", "region": "Shadow-Cursed Lands"}}
+            polls = []
+            stop = threading.Event()
+
+            def fake_read(_eval):
+                polls.append(1)
+                got = json.loads(json.dumps(world))
+                if len(polls) == 1:  # after this poll: the scene resolves and the session ends before the next
+                    world["journal"][0]["steps"].append("I freed Nightsong")
+                    stop.set()
+                return got
+
+            class FakeRunner:
+                state = type("S", (), {"dir": d})()
+                check_until = lambda self, seen, session: None   # noqa: E731 - no run --until here
+
+            orig_read, orig_poll = rchecks.story.read_game, rchecks.story.POLL_S
+            rchecks.story.read_game, rchecks.story.POLL_S = fake_read, 0.001
+            try:
+                lpt.Runner.progress_loop(FakeRunner(), "S001", base, 0.0, stop, None)
+            finally:
+                rchecks.story.read_game, rchecks.story.POLL_S = orig_read, orig_poll
+            self.assertEqual(len(polls), 2)
+            s = lpt.Runner.write_progress(FakeRunner(), "S001", base, 0.0, 57.0)
+            self.assertEqual((s["points"], s["by_kind"]), (2, {"quest_step": 1}))
+
     def test_wired_into_run_claude(self):
         src = Path(ragent.__file__).read_text()
         self.assertIn('progress=f"{base}.progress.jsonl"', src)
