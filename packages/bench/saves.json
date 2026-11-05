@@ -2089,7 +2089,31 @@
      "key": "saves/bench-v0.11/Tav-30512631021__SCN-fight_act1_windmill_tactician.zip",
      "bytes": 15287387,
      "sha256": "bfa68875d49ac3f56d41154cef7ccce5495fc645052f88bc746b3744367816e3",
-     "fingerprint": null
+     "fingerprint": {
+      "party": [
+       [
+        "Gale",
+        3
+       ],
+       [
+        "Shadowheart",
+        3
+       ],
+       [
+        "Tav",
+        3
+       ],
+       [
+        "Wyll",
+        3
+       ]
+      ],
+      "gold": 156,
+      "region": "Wilderness",
+      "area": "Blighted Village",
+      "difficulty": "Tactician",
+      "name": "Tav"
+     }
     },
     {
      "name": "Tav-34221263934__SCN-crash_site_grove",
@@ -2129,7 +2153,31 @@
      "key": "saves/bench-v0.11/Tav-34512631016__SCN-fight_act1_dror_ragzlin_tactician.zip",
      "bytes": 15361949,
      "sha256": "7c9bdd09e46a00a8fc76bba1636e39d93235eff0f5158903eeaa021b5414b03a",
-     "fingerprint": null
+     "fingerprint": {
+      "party": [
+       [
+        "Gale",
+        3
+       ],
+       [
+        "Shadowheart",
+        3
+       ],
+       [
+        "Tav",
+        3
+       ],
+       [
+        "Wyll",
+        3
+       ]
+      ],
+      "gold": 156,
+      "region": "Wilderness",
+      "area": "Shattered Sanctum",
+      "difficulty": "Tactician",
+      "name": "Tav"
+     }
     },
     {
      "name": "Tav-37512631030__SCN-fight_act2_balthazar_tactician",
@@ -2141,7 +2189,31 @@
      "key": "saves/bench-v0.11/Tav-37512631030__SCN-fight_act2_balthazar_tactician.zip",
      "bytes": 15008231,
      "sha256": "caf197543d721a5696d2fe0528d6b0d6af7b225a7fef69948a08cba1f48cd6ed",
-     "fingerprint": null
+     "fingerprint": {
+      "party": [
+       [
+        "Karlach",
+        6
+       ],
+       [
+        "Shadowheart",
+        6
+       ],
+       [
+        "Tav",
+        6
+       ],
+       [
+        "Wyll",
+        6
+       ]
+      ],
+      "gold": 60,
+      "region": "Shadow-Cursed Lands",
+      "area": "Nightsong's Prison",
+      "difficulty": "Tactician",
+      "name": "Tav"
+     }
     },
     {
      "name": "Tav-40221263931__SCN-act1_recruit_3",
@@ -2285,7 +2357,31 @@
      "key": "saves/bench-v0.11/Tav-49512631040__SCN-fight_act3_sarevok_tactician.zip",
      "bytes": 24464220,
      "sha256": "4e8cc9a82645498a9d6275ab06c08535abd7215ed783b2065a3a0753355d31cc",
-     "fingerprint": null
+     "fingerprint": {
+      "party": [
+       [
+        "Karlach",
+        8
+       ],
+       [
+        "Shadowheart",
+        8
+       ],
+       [
+        "Tav",
+        8
+       ],
+       [
+        "Wyll",
+        8
+       ]
+      ],
+      "gold": 410,
+      "region": "Lower City",
+      "area": "Bhaalist Crypt",
+      "difficulty": "Tactician",
+      "name": "Tav"
+     }
     },
     {
      "name": "Tav-5122126499__SCN-fight_act1_dror_ragzlin",
