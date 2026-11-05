@@ -200,3 +200,25 @@ def test_session_cost_from_events_when_the_end_line_has_none(store: RunStore):
     rows = store.sessions(PT)
     assert [r["cost_usd"] for r in rows] == [5.33, 8.58, 8.12, 0.5]
     assert seen == ["S097"]  # the [end] line's cost wins where there is one
+
+
+def test_guided_sessions_carry_their_operator_counts(store: RunStore):
+    from bg3play import config, operator
+
+    d = store.session_dir(PT)
+    hist = [{"session": "S094", "operator": None}, {"session": "S095", "operator": {"enabled": True, "sent": 2,
+                                                                                    "delivered": 2}}]  # fmt: skip
+    (d / "supervisor.json").write_text(json.dumps({"v": 1, "history": hist}))
+    assert api.watch(store, PT)["operator"] == {"enabled": False, "messages": []}
+    _start_s097(store, 1792312800.0)
+    assert store.sessions(PT)[-1]["operator"] is None  # running, the option off: not guided
+    config.save(store.playthroughs_dir / PT, config.validate({"v": 1, "name": PT, "operator": {"messages": True}}))
+    assert operator.post(d, True, {"text": "rest first"}, 1792312900.0)[0] == 201
+    row = {"id": "m1", "t": 1792312910.0, "session": "S097", "tool": "look"}
+    (d / "operator.delivered.jsonl").write_text(json.dumps(row) + "\n")
+    rows = store.sessions(PT)
+    assert [r["operator"] for r in rows] == [None, hist[1]["operator"], None,
+                                             {"enabled": True, "sent": 1, "delivered": 1}]  # fmt: skip
+    assert [s["operator"] for s in api.timeline(store, PT)["sessions"]] == [r["operator"] for r in rows]
+    w = api.watch(store, PT)["operator"]
+    assert w["enabled"] is True and [(m["id"], m["status"]) for m in w["messages"]] == [("m1", "delivered")]

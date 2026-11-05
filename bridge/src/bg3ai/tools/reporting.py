@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .. import busywait, debrief, delta, lessons, lore, memtools, offlimits, render, rules, tool_classes
+from .. import busywait, debrief, delta, lessons, lore, memtools, offlimits, operator, render, rules, tool_classes
 from ..game import GameError, NotReady
 from . import core
 
@@ -436,6 +436,7 @@ PACE_GAP_S = 1.5
 # Consecutive wait_for(<event kinds>) answers "nothing is running", with only these reads in between.
 _noop_waits = {"n": 0}
 _READ_TOOLS = tool_classes.READ_TOOLS
+OPERATOR = operator.Outbox(core.SETTINGS.operator_dir)  # None without $BG3AI_OPERATOR_DIR: no file is opened
 
 
 # Tools whose metrics record splits _finish into stages (_Stages): talk_to's 1.5 s median bridge-side time had no
@@ -471,6 +472,10 @@ def _finish(tool: str, args: dict, body: str, t0: float, events: bool = True, is
     elif tool not in _READ_TOOLS:
         _noop_waits["n"] = 0
     out = [body.rstrip()]
+    told, ids = OPERATOR.take(os.environ.get("BG3AI_SESSION") or "", tool)  # the app's operator messages, once
+    if told:
+        out.append(told)
+        core.metrics_extra(operator=ids)
     stage = _Stages(t0) if tool in _STAGED else None
     if events:
         job = str(args.get("target") or "").strip().lower() if tool == "wait_for" else ""

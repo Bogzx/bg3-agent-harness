@@ -11,6 +11,9 @@ Feeds (each `poll()` returns the new (type, data) pairs since its last call):
 - log: the followed playthrough's agent log -> "log" entries; a new log file -> "session" first
 - status: runner.status.json changed (heartbeat/updated ignored) -> "status"
 - memory: a new commit in the memory repo -> "memory" (checked only when .git/logs/HEAD changes)
+- operator: a new operator message (operator.jsonl) -> "operator" with status queued; a new delivered row
+  (operator.delivered.jsonl) -> "operator" with that message delivered, or queued again for a redeliver row. Each
+  carries "playthrough" (message ids are per playthrough). Checked only when either file changes
 
 Event ids are "<generation>-<seq>". A reader that sends an id from another generation (the server restarted), from
 the future, or older than the buffer gets reset=True and the whole buffer; otherwise exactly the events after it.
@@ -25,7 +28,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import api, parse
+from bg3ai import operator as op
+
+from . import api, operator, parse
 from .store import RunStore
 from .tail import Tailer
 
@@ -138,12 +143,55 @@ class MemoryFeed:
         return [] if first else [("memory", dict(c, playthrough=pt)) for c in new]
 
 
+def _sig(path: Path) -> tuple[int, int] | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return st.st_size, st.st_mtime_ns
+
+
+class OperatorFeed:
+    """The followed playthrough's operator messages (`pt`, else the runner's current one): one event per new row of
+    either file. A first look (also after a switch to another playthrough) only counts the rows."""
+
+    def __init__(self, store: RunStore, pt: str | None = None):
+        self.store, self.pt = store, pt
+        self.key: tuple[Any, ...] | None = None
+        self.sent = self.done = 0  # rows of the inbox and the delivered file seen so far
+
+    def poll(self) -> list[tuple[str, Any]]:
+        pt = self.pt or self.store.current()
+        if not pt:
+            return []
+        sdir = self.store.session_dir(pt)
+        key = (pt, _sig(sdir / op.INBOX), _sig(sdir / op.DELIVERED))
+        if key == self.key:
+            return []
+        first = self.key is None or self.key[0] != pt
+        self.key = key
+        inbox = op.valid(op.read_rows(sdir / op.INBOX))
+        done = [r for r in op.read_rows(sdir / op.DELIVERED) if isinstance(r.get("id"), str)]
+        new_sent, new_done = ([], []) if first else (inbox[self.sent :], done[self.done :])
+        self.sent, self.done = len(inbox), len(done)
+        msgs = {r["id"]: r for r in inbox}
+        out = [operator.row(r, None) for r in new_sent]
+        out += [operator.row(msgs[r["id"]], None if r.get("redeliver") else r) for r in new_done if r["id"] in msgs]
+        return [("operator", dict(r, playthrough=pt)) for r in out]
+
+
 class Hub:
     def __init__(self, store: RunStore, generation: str, pt: str | None = None, buffer: int = 2000):
         if "-" in generation:
             raise ValueError("generation must not contain '-'")
         self.generation = generation
-        self.feeds = [StatusFeed(store), LogFeed(store, pt), ActionsFeed(store), MemoryFeed(store, pt)]
+        self.feeds = [
+            StatusFeed(store),
+            LogFeed(store, pt),
+            ActionsFeed(store),
+            MemoryFeed(store, pt),
+            OperatorFeed(store, pt),
+        ]
         self.events: deque[Event] = deque(maxlen=buffer)
         self.seq = 0
         self.closed = False
