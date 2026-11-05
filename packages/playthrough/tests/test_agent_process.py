@@ -178,3 +178,21 @@ def test_the_shells_operator_dir_never_reaches_the_agent(tmp_path: Path, monkeyp
     a, spawned = agent([SAY])
     a.run(call(tmp_path, env={"BG3AI_SESSION": "S004", "BG3AI_OPERATOR_DIR": str(tmp_path)}))
     assert spawned[0][2]["BG3AI_OPERATOR_DIR"] == str(tmp_path)
+
+
+def test_an_option_off_session_gives_its_bg3_server_no_operator_dir_from_the_apps_env(tmp_path: Path, monkeypatch: Any):
+    # REVIEW-CHAT-INT #2: the app started from a shell that exports BG3AI_OPERATOR_DIR. The bg3 server is the client's
+    # stdio child and inherits the client's env: the runner's session env (harness_runner.session_env, option off)
+    # plus the app's own env must not name another playthrough's dir
+    from bg3play import config
+    from bg3play.adapters import harness_runner as hr
+    from bg3play.supervisor import SessionRequest
+
+    monkeypatch.setenv("BG3AI_OPERATOR_DIR", "/elsewhere/sessions/other")
+    rt = tmp_path / "runtime"
+    for on in (False, True):
+        cfg = config.validate({"v": 1, "name": "ilse", "operator": {"messages": on}})
+        env = hr.session_env(SessionRequest("ilse", 1, cfg, False), "S001", 1000.0, rt, tmp_path / "pts", False)
+        a, spawned = agent([SAY])
+        a.run(call(tmp_path, env=env))
+        assert spawned[0][2].get("BG3AI_OPERATOR_DIR") == (str(rt / "sessions" / "ilse") if on else None)
