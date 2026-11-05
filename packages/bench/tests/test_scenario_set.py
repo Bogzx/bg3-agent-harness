@@ -239,7 +239,7 @@ def test_each_scenario_tells_the_agent_its_task_and_how_it_is_scored(path):
         assert not re.search(r"protects|promises|distrusts|good|evil", char["brief"].lower()), path.stem
     from bg3harness.runner.run_host import scenario_kickoff
 
-    text = scenario_kickoff(sc, "S001", sc["start"].get("save"))
+    text = scenario_kickoff(sc, "S001", sc["start"].get("save"), served=("move_to",))
     head = text.split("\n\n")
     assert head[1] == f"YOUR TASK: {sc['task']}" and head[2] == f"How it is scored: {sc['scored_by']}"
     cap = round(sc["caps"]["run_hours"] * 60)
