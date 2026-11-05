@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from bg3bench import contamination, predicates, scenario
+from bg3bench.submission import release
 
 HERE = Path(__file__).resolve().parent
 SET = HERE.parent / "scenarios"
@@ -274,6 +275,15 @@ def test_a_tactician_variant_is_its_base_at_tactician(name):
     assert vs["save"] != bs["save"] and vs["save_sha1"] != bs["save_sha1"]  # the difficulty lives in its own save
     vq, bq = (raw(SET / "quizzes" / f"{n}.json") for n in (name, TACTICIAN[name]))
     assert vq == {**bq, "scenario": name}
+
+
+@pytest.mark.parametrize("name", sorted(TACTICIAN.keys() - HOLDOUT))
+def test_a_tactician_variants_release_fingerprint_is_its_bases_but_for_the_difficulty(name):
+    """Each save is its base's start resaved at Tactician, so the start state read from it is the base's. A holdout's
+    save has no fingerprint and no release entry."""
+    shipped = raw(release.default_path())["scenarios"]
+    var, base = shipped[name]["fingerprint"], shipped[TACTICIAN[name]]["fingerprint"]
+    assert base["difficulty"] == "Balanced" and var == {**base, "difficulty": "Tactician"}
 
 
 def test_the_holdout_is_about_a_fifth_and_spans_the_families():

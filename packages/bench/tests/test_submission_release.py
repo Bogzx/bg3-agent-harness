@@ -69,10 +69,14 @@ def pilot_prompts(tmp: Path) -> Path:
 
 
 def v08_scenarios() -> dict:
-    """Today's scenarios less those bench-v0.8's frozen release shipped without a save: they got theirs in a later
-    suite, so its saves.json entries don't list them."""
+    """Today's scenarios less those that got a save after bench-v0.8's frozen release shipped them without one: its
+    saves.json entries don't list them. A scenario that still has no save stays, so build keeps seeing one."""
     shipped = json.loads((release.RELEASES / "bench-v0.8.json").read_text(encoding="utf-8"))["scenarios"]
-    return {n: sc for n, sc in pack.load_scenarios().items() if n not in shipped or shipped[n]["save"]}
+    return {
+        n: sc
+        for n, sc in pack.load_scenarios().items()
+        if n not in shipped or shipped[n]["save"] or not sc["start"].get("save")
+    }
 
 
 def test_served_matches_what_the_pilot_run_recorded(tmp_path, monkeypatch):
