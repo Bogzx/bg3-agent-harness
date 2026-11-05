@@ -161,6 +161,38 @@ def test_the_facts_feed_writes_what_play_py_s_facts_poll_writes(tmp_path: Path):
     assert [r.get("mark") for r in facts_of(tmp_path)].count("run_start") == 1
 
 
+def test_the_facts_feed_runs_one_poll_at_a_time(tmp_path: Path):
+    # REVIEW-18s: an old session's pass still out on a hung game overlapped the next session's poller on the same feed
+    rings = FakeRings()
+    a_in, b_in, release = threading.Event(), threading.Event(), threading.Event()
+    inside, most = [0], [0]
+
+    def rpc(op: str, args: dict[str, Any]) -> dict[str, Any]:
+        inside[0] += 1
+        most[0] = max(most[0], inside[0])
+        try:
+            if threading.current_thread().name == "A":
+                a_in.set()
+                release.wait(10)  # the hung game's rpc, until the test lets it answer
+            else:
+                b_in.set()
+            return rings.rpc(op, args)
+        finally:
+            inside[0] -= 1
+
+    feed = FactsFeed(tmp_path, rpc, rings.eval, {"playthrough": PT})
+    a = threading.Thread(target=feed.poll, args=(game_read("TUT_Avernus_C"),), name="A")
+    b = threading.Thread(target=feed.poll, args=(game_read("TUT_Avernus_C"),), name="B")
+    a.start()
+    assert a_in.wait(10)
+    b.start()
+    entered = b_in.wait(0.5)  # B must wait for A's poll: it never gets in while A is inside
+    release.set()
+    a.join(10)
+    b.join(10)
+    assert not entered and most[0] == 1 and b_in.is_set()
+
+
 def test_an_app_session_writes_its_choices_into_facts(tmp_path: Path):
     sup, *_, runtime = make(tmp_path, hours=0.5)
     sdir = runtime / "sessions" / PT

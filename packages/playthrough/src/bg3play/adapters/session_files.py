@@ -49,12 +49,16 @@ class FactsFeed:
             self.writer.mark("run_start", run_start)  # pyright: ignore[reportUnknownMemberType]
         self.ring = facts.RingFeed(rpc, self.writer, sdir / "rolls.jsonl")
         self.lua_eval = lua_eval
+        # one poll at a time (play.py's FACTS_LOCK): an old session's pass still out on a hung game (past the 20 s
+        # join) overlapped the next session's poller on this feed (REVIEW-18s)
+        self.lock = threading.Lock()
 
     def poll(self, got: dict[str, Any] | None) -> None:
-        if got:
-            self.ring.poll()
-        inv: dict[str, Any] | None = facts.read_inventory(self.lua_eval, story.combined_code) if got else None  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportUnknownVariableType]
-        self.writer.observe(got, inv)  # pyright: ignore[reportUnknownMemberType]
+        with self.lock:
+            if got:
+                self.ring.poll()
+            inv: dict[str, Any] | None = facts.read_inventory(self.lua_eval, story.combined_code) if got else None  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportUnknownVariableType]
+            self.writer.observe(got, inv)  # pyright: ignore[reportUnknownMemberType]
 
     def choices(self, sid: str, base: Path, log: Log) -> None:
         """The session's dialogue choices (scene, options, pick, stated reason) from its <sid>.events.jsonl."""
