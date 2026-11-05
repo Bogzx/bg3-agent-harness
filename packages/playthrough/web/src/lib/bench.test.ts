@@ -19,6 +19,19 @@ describe("bench", () => {
     });
   });
 
+  it("gives a maximise run its score: it has no pass or fail, however it ended", () => {
+    const run = { ...pi, passed: null, outcome: "ended_by_agent" as const };
+    const score = { fact: "gold", start: 133, end: 650, gain: 517, peak: 900 };
+    expect(verdict({ ...run, score })).toEqual({ text: "+517 gold (ended by agent)", level: "info" });
+    expect(verdict({ ...run, outcome: "timeout", score: { ...score, gain: -40 } }).text).toBe("-40 gold (timeout)");
+    expect(verdict({ ...run, score: { ...score, gain: 0 } }).text).toBe("0 gold (ended by agent)");
+    expect(verdict({ ...run, score: { ...score, gain: null } })).toEqual({
+      text: "no gold read (ended by agent)", level: "info",
+    });
+    expect(verdict(run)).toEqual({ text: "no pass or fail (ended by agent)", level: "info" });
+    expect(verdict({ ...run, score, valid: false, invalid_reason: "harness_failure" }).level).toBe("warn");
+  });
+
   it("formats durations, tokens and the think share of the wall clock", () => {
     expect(dur(1042.7)).toBe("17m 23s");
     expect(dur(45)).toBe("45s");

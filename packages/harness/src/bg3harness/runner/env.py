@@ -63,7 +63,10 @@ STEAM_RETRY_S = 120            # Steam not offline: refuse to launch, retry this
 GAME_MAX_AGE_H = float(os.environ.get("BG3AI_GAME_MAX_AGE_H", "2"))
 # The game's RAM grows ~0.9 GB/h (S082: 5754 → 7403 MB RSS in ~2 h, then ramwatch's KILL_ANON_SWAP_MB kill mid-save):
 # a session never starts with a game already holding this much RAM+swap (anon incl. swapped out; 0 = no RAM check).
+# This is the ceiling, the 10G cap's number; a smaller cap lowers it to RELAUNCH_UNDER_KILL_MB under ramwatch's kill
+# (policy.relaunch_limits: 6500 at 8G, where 7000 left ~45 min of growth under the 7692 kill).
 RELAUNCH_RAM_MB = int(os.environ.get("BG3AI_RELAUNCH_RAM_MB", "7000"))
+RELAUNCH_UNDER_KILL_MB = 1200
 READY_FAIL_RE = re.compile(r"\b(?:ready_failed|end_day_failed)\b(?::\w+)?")
 JUDGE_TIMEOUT_S = 15 * 60      # the persona judge's whole budget after a run (two chunks, a retry each, fit)
 KILLED_EXITS = (-2, -9, -15, 130, 137, 143)   # claude ended by a signal (SIGINT/KILL/TERM, raw or as 128+n)

@@ -57,6 +57,7 @@ UNTIL_SC: dict[str, Any] = {k: v for k, v in NEW_SC.items() if k != "goal"} | {
     "name": "nautiloid",
     "until": "nautiloid_escaped",
 }
+SERVED = ("get_status", "move_to", "trade")  # the tools the rig's run_files says the run is served
 JOB = {
     "model": "opus",
     "client": "claude",
@@ -216,7 +217,7 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig:
 
     def run_files(d: Path, client: str, seed: int | None, timing: str | None) -> dict[str, Any]:
         rig.dumped.append((d, client, seed, timing))
-        return {"tools_expected": 90, "manifest": {"m": 1}}
+        return {"tools_expected": 90, "tools_served": SERVED, "manifest": {"m": 1}}
 
     rig.h = H.LiveRunHost(make, run_files=run_files, env=rig.env, clock=lambda: 1000.0)
     monkeypatch.setattr(renv, "SAVE_DIR", tmp_path / "Story")
@@ -431,6 +432,7 @@ def test_a_bench_runs_served_text_and_tools_have_no_memory(rig: Rig, monkeypatch
     assert gone <= registry  # the dump lists the whole registry; the run is served the rest
     (r,) = host.runs.values()
     assert r[0].opt.tools_expected == len(registry - gone)
+    assert r[0].opt.tools_served == tuple(sorted(registry - gone))  # what the maximise kickoff names tools from
     assert r[0].opt.manifest is not None and r[0].opt.manifest["prompt"]["sha256"]  # rules: no capability needed
     for name in ("pi-system.txt", "bg3-instructions.txt"):
         text = (d / name).read_text()
@@ -843,6 +845,10 @@ def test_an_agent_that_keeps_ending_its_turn_is_recorded_as_an_early_exit_not_a_
     )
 
 
+def acting_tools(kickoff: str) -> list[str]:
+    return kickoff.split("Acting calls are calls of these tools: ")[1].split(".")[0].split(", ")
+
+
 MAX_SC: dict[str, Any] = {k: v for k, v in SAVE_SC.items() if k != "goal"} | {
     "name": "act1_gold_max",
     "maximise": {"fact": "gold"},
@@ -851,12 +857,44 @@ MAX_SC: dict[str, Any] = {k: v for k, v in SAVE_SC.items() if k != "goal"} | {
 
 
 def test_the_kickoff_of_a_maximise_scenario_says_its_time_cap_and_how_it_is_scored():
-    text = H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000")
+    text = H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000", served=SERVED)
     assert "The run has no pass: it is scored when it ends, after at most 45 minutes of play (the time cap)." in text
     assert "plays all" not in text  # a run that stops acting ends sooner (pilot: Sonnet act3_gold_max at 16 of 45 min)
     assert "A party wipe (the Game Over screen) ends it sooner." in text  # graders.measure stops there
     assert "the party's gold when the run ends minus its gold at the start save" in text
     assert "as soon as the task is decided" not in text and "exact goal" not in text
+
+
+def test_the_kickoff_of_a_maximise_scenario_states_the_end_rule_and_what_an_acting_call_is():
+    # v010 pilot: Sonnet's act3_gold_max ended by this rule with 29 min of the cap left, a rule it was never told
+    text = H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000", served=SERVED)
+    assert "A stretch with no acting call since a restart also ends it sooner" in text
+    assert "when you stop calling tools with time left" in text and "end your turn" not in text  # end_turn acts
+    assert acting_tools(text) == ["move_to", "trade"]  # get_status is served but is no acting call
+
+
+def test_the_kickoff_lists_only_acting_tools_the_run_is_served():
+    # REVIEW-v011 R1: ISSUE_TOOLS still holds combat_turn (#98 removed it; old records count), and a condition can
+    # remove more. The real registry, minus what a bench run's env takes off: the set client_setup.run_files gives
+    registry = [t["name"] for t in json.loads((renv.REPO / "tools/pi/conformance/tools.json").read_text())]
+    served = client_setup.served_tools(registry, {"BG3AI_TOOLS_OFF": f"{H.NO_MEMORY},trade"})
+    listed = acting_tools(H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000", served=served))
+    assert listed == sorted(H.bmetrics.ISSUE_TOOLS & set(served)) and "move_to" in listed
+    assert "combat_turn" not in listed and "combat_turn" in H.bmetrics.ISSUE_TOOLS
+    assert "trade" not in listed
+
+
+def test_a_maximise_kickoff_refuses_a_run_served_no_acting_tool():
+    with pytest.raises(ValueError, match="no acting tool"):
+        H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000", served=["get_status"])
+
+
+def test_a_maximise_runs_kickoff_lists_what_its_run_files_serve(rig: Rig):
+    assert acting_tools(rig.h.start(JOB, MAX_SC, run_dir("m-gold")).prompt) == ["move_to", "trade"]
+
+
+def test_a_goal_run_is_not_told_the_maximise_end_rule():
+    assert "acting call" not in H.scenario_kickoff(SAVE_SC, "S001", "SCN-act1_gold_1000")
 
 
 def test_a_maximise_run_resumes_an_agent_that_ends_its_turn_until_the_time_cap(rig: Rig):
@@ -868,7 +906,9 @@ def test_a_maximise_run_resumes_an_agent_that_ends_its_turn_until_the_time_cap(r
     rig.prepare = lambda r: setattr(r, "play", play)
     r, out = play_session(rig, MAX_SC, "m-gold")
     assert [t for t, _, _ in r.plays] == ["", "-c1", "-c2", "-c3", "-c4"] and out.stop_resumes == 4
-    assert "it has no pass, it scores the party's gold gained by its time cap" in r.plays[1][1]
+    assert "it has no pass and scores the party's gold gained when it ends" in r.plays[1][1]
+    assert "goes on until then" not in r.plays[1][1]  # a stretch with no acting call ends it sooner
+    assert "a stretch with no acting call since a restart" in r.plays[1][1]
     assert [round(m) for _, _, m in r.plays[1:]] == [35, 25, 15, 5]  # each resume gets the time left
 
 
@@ -899,16 +939,44 @@ def test_a_maximise_run_ends_after_a_stretch_with_no_acting_call(rig: Rig):
     r, out = play_session(rig, MAX_SC, "m-gold")
     assert [t for t, _, _ in r.plays] == ["", "-c1", "-c2", "-c3"] and out.result.reason == "exited"
     rec = rig.h.record(JOB, MAX_SC, run_dir("m-gold"), out)
-    assert (rec["first_stop_s"], rec["wall_min"], rec["outcome"]) == (120.0, 8.0, "timeout")
+    assert (rec["first_stop_s"], rec["wall_min"], rec["outcome"]) == (120.0, 8.0, "ended_by_agent")
     # what happened, not "before the goal" (a maximise run has none; v010 pilot Sonnet act3_gold_max)
     assert [(f["kind"], f["class"], f["detail"]) for f in rec["failures"]] == [
         (
-            "timeout",
+            "ended_by_agent",
             "agent",
             "S001: the run ended at its turn's end with no acting call since its last (re)start, 37.0 min of the "
             "cap left",
         )
     ]
+
+
+def test_the_end_rule_is_named_however_little_of_the_cap_is_left(rig: Rig):
+    # under EARLY_EXIT_MINUTES left the old check called this "the run's time cap was reached"
+    def play(r: FakeRunner, tag: str) -> tuple[str, float]:
+        called(r, "get_status", "move_to") if not r.plays[1:] else called(r, "get_status")
+        return "exited", (42 if not r.plays[1:] else 1) * 60.0
+
+    rig.prepare = lambda r: setattr(r, "play", play)
+    _, out = play_session(rig, MAX_SC, "m-gold")
+    rec = rig.h.record(JOB, MAX_SC, run_dir("m-gold"), out)
+    assert (rec["outcome"], rec["wall_min"]) == ("ended_by_agent", 43.0)
+    assert [f["detail"] for f in rec["failures"]] == [
+        "S001: the run ended at its turn's end with no acting call since its last (re)start, 2.0 min of the cap left"
+    ]
+
+
+def test_a_maximise_run_that_reaches_its_cap_without_acting_is_a_timeout(rig: Rig):
+    # the cap ended it, not the rule: the stop check sees no time left before it looks at the acting calls
+    def play(r: FakeRunner, tag: str) -> tuple[str, float]:
+        called(r, "get_status")
+        return "exited", 45 * 60.0
+
+    rig.prepare = lambda r: setattr(r, "play", play)
+    _, out = play_session(rig, MAX_SC, "m-gold")
+    rec = rig.h.record(JOB, MAX_SC, run_dir("m-gold"), out)
+    assert rec["outcome"] == "timeout"
+    assert [(f["kind"], f["detail"]) for f in rec["failures"]] == [("timeout", "the run's time cap was reached")]
 
 
 def test_a_goal_run_keeps_its_stop_resume_count_however_much_it_acts(rig: Rig):

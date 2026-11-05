@@ -61,8 +61,8 @@
 #   host tuning        opt-in per machine: the marker ~/.config/bg3ai/host-tuning (platform_profile=balanced,
 #                      nvidia_max_clock=1500, ...) is applied with `sudo -n` before each launch, skipped with a
 #                      warning when sudo needs a password (bg3harness.host_tuning; the test machine froze twice uncapped)
-#   BG3AI_GAME_MEMORY_MAX / BG3AI_GAME_SWAP_MAX   the scope's MemoryMax / MemorySwapMax (default 10G / 2G; the
-#                      game normally peaks at ~6.3 GB RSS)
+#   BG3AI_GAME_MEMORY_MAX / BG3AI_GAME_SWAP_MAX   the scope's MemoryMax / MemorySwapMax (default 10G / 2G, and 4G of
+#                      swap under a smaller MemoryMax: ramwatch.default_swap_max; the game normally peaks at ~6.3 GB RSS)
 set -euo pipefail
 
 # Never carry a flock fd into the game's lifetime: 10:52 the game was launched from inside a
@@ -296,9 +296,13 @@ SCOPE_UNIT="bg3ai-game-$stamp.scope"
 if [ "${BG3AI_GAME_SCOPE:-1}" = 1 ]; then
     if command -v systemd-run >/dev/null 2>&1 &&
        systemd-run --user --scope --quiet --collect -p OOMPolicy=continue true >/dev/null 2>&1; then
+        swap_max="${BG3AI_GAME_SWAP_MAX:-}"
+        [ -n "$swap_max" ] || swap_max="$(PYTHONPATH="$REPO/packages/harness/src" python3 -c \
+            'import sys; from bg3harness.ramwatch import default_swap_max; print(default_swap_max(sys.argv[1]))' \
+            "${BG3AI_GAME_MEMORY_MAX:-}")"
         scope=(systemd-run --user --scope --quiet --collect "--unit=$SCOPE_UNIT"
                -p OOMPolicy=continue
-               -p "MemoryMax=${BG3AI_GAME_MEMORY_MAX:-10G}" -p "MemorySwapMax=${BG3AI_GAME_SWAP_MAX:-2G}")
+               -p "MemoryMax=${BG3AI_GAME_MEMORY_MAX:-10G}" -p "MemorySwapMax=$swap_max")
     else
         echo "launch_game: warning: systemd-run --user --scope does not work here: the game shares the caller's" \
              "cgroup (an OOM could take the caller's unit down)" >&2
@@ -332,7 +336,7 @@ echo "launch_game: game log $GAME_LOG" >&2
 cd "$GAME"
 "${launch[@]}" >> "$GAME_LOG" 2>&1 &
 pid=$!
-[ ${#scope[@]} -gt 0 ] && echo "launch_game: game cgroup $SCOPE_UNIT (OOMPolicy=continue, MemoryMax=${BG3AI_GAME_MEMORY_MAX:-10G})" >&2
+[ ${#scope[@]} -gt 0 ] && echo "launch_game: game cgroup $SCOPE_UNIT (OOMPolicy=continue, MemoryMax=${BG3AI_GAME_MEMORY_MAX:-10G}, MemorySwapMax=$swap_max)" >&2
 echo "launch_game: started (pid $pid); bg3le debug server will listen on 127.0.0.1:$PORT" >&2
 
 # If libsteam_api decides the game was not started by Steam it asks Steam to relaunch it and exits at once; the

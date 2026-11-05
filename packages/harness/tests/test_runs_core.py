@@ -237,6 +237,14 @@ class Caps(TmpDir):
         self.assertIn("over_budget", runs.OUTCOMES)
         self.assertFalse(runs.is_clean("over_budget", [], []))
 
+    def test_the_end_rule_is_the_agents_failure_like_a_timeout(self):
+        f = runs.outcome_failure("ended_by_agent", "", 9, [])
+        self.assertEqual([(x["kind"], x["class"]) for x in f], [("ended_by_agent", "agent")])
+        self.assertIn("no acting call", f[0]["detail"])
+        f = runs.outcome_failure("ended_by_agent", "why", 9, [{"class": "harness"}])
+        self.assertEqual([(x["kind"], x["class"], x["detail"]) for x in f], [("ended_by_agent", "unknown", "why")])
+        self.assertFalse(runs.is_clean("ended_by_agent", [], []))
+
 
 # ======================================================================== run metrics
 

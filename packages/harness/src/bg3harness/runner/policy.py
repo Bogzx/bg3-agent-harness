@@ -114,7 +114,7 @@ def session_budget(now: float, run_end: float | None, session_minutes: float,
 def relaunch_reason(started: float | None, now: float, last_log: str | None,
                     max_age_h: float = renv.GAME_MAX_AGE_H, session_s: float = 0.0, ram_mb: int | None = None,
                     ram_limit_mb: int = renv.RELAUNCH_RAM_MB, mod_path: str | None = None,
-                    mod_live: str | None = None) -> str | None:
+                    mod_live: str | None = None, ram_kill_mb: int = ramwatch.KILL_ANON_SWAP_MB) -> str | None:
     """Why the game process should be relaunched before the next session, or None: the last session's log shows a
     party ready check failing (ready_failed / end_day_failed), the game loads the mod from mod_path instead of the
     runner's snapshot mod_live, the game already holds ram_limit_mb or more RAM+swap, or the process would be
@@ -128,13 +128,27 @@ def relaunch_reason(started: float | None, now: float, last_log: str | None,
                 "mid-session would reach its next load_game: S090)")
     if ram_mb is not None and ram_limit_mb > 0 and ram_mb >= ram_limit_mb:
         return (f"the game holds {ram_mb} MB RAM+swap (relaunched at {ram_limit_mb} MB: it grows ~0.9 GB/h and "
-                f"ramwatch kills it at {ramwatch.KILL_ANON_SWAP_MB} MB)")
+                f"ramwatch kills it at {ram_kill_mb} MB)")
     if started and max_age_h > 0 and now - started + session_s >= max_age_h * 3600:
         age = f"{(now - started) / 3600:.1f} h old"
         if session_s:
             age += f" and the session may run {session_s / 60:.0f} min (to {(now - started + session_s) / 3600:.1f} h)"
         return f"the game process is {age} (relaunched at {max_age_h:g} h: ready checks break in a long-lived process)"
     return None
+
+
+def relaunch_limits(cap_mb: int | None) -> tuple[int, int]:
+    """(relaunch point, ramwatch's anon+swap kill) in MiB under a game cap of cap_mb: RELAUNCH_UNDER_KILL_MB under the
+    kill, to the nearest 100, at most RELAUNCH_RAM_MB (8G: 6500 and 7692; 10G or no cap read: 7000 and 9000)."""
+    kill = ramwatch.kill_limits(cap_mb)[1]
+    if renv.RELAUNCH_RAM_MB <= 0:
+        return 0, kill  # no RAM check
+    return min(renv.RELAUNCH_RAM_MB, round(kill - renv.RELAUNCH_UNDER_KILL_MB, -2)), kill
+
+
+def game_cap_mb() -> int | None:
+    """The memory cap of the running game (ramwatch.game_cap_mb), None when none reads."""
+    return ramwatch.game_cap_mb(ramwatch.game_pids())
 
 
 def game_ram_mb() -> int | None:
