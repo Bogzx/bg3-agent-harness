@@ -8,8 +8,9 @@ import hashlib
 import io
 import json
 import os
+import signal
 import sys
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, suppress
 from pathlib import Path
 from typing import NamedTuple
 from unittest import mock
@@ -281,7 +282,7 @@ class TestDoctor(DoctorFixture):
 
 # --claude-probe: a fake `claude` (a script) prints one stream case and records its argv and cwd; no API call.
 FAKE_CLAUDE = """#!{python}
-import json, os, sys, time
+import json, os, subprocess, sys, time
 case = {case!r}
 with open({log!r}, "w") as f:
     memory = os.environ.get("CLAUDE_CODE_DISABLE_AUTO_MEMORY")
@@ -295,22 +296,44 @@ call = {{"type": "assistant", "message": {{"id": "m1", "content": [
 denied = "Claude requested permissions to use mcp__bg3__session_clock, but you haven't granted it yet."
 ok = {{"type": "result", "subtype": "success", "is_error": False, "result": "No session deadline set.",
       "total_cost_usd": 0.0012, "num_turns": 2, "permission_denials": []}}
+failed = {{**ok, "is_error": True, "total_cost_usd": 0}}
+tool_error = [
+    {{"type": "assistant", "message": {{"id": "m0", "content": [
+        {{"type": "tool_use", "id": "t0", "name": "ToolSearch", "input": {{}}}}]}}}},
+    {{"type": "user", "message": {{"content": [
+        {{"type": "tool_result", "tool_use_id": "t0", "is_error": True, "content": "search: boom"}}]}}}}]
 if case == "login":
     sys.stderr.write("auth: no credentials\\n")
     lines.append({{"type": "result", "subtype": "success", "is_error": True,
                   "result": "Not logged in · Please run /login", "total_cost_usd": 0, "permission_denials": []}})
+elif case == "usage":
+    lines.append({{**failed, "result": "Claude AI usage limit reached|1762365600"}})
+elif case == "apikey":
+    lines.append({{**failed, "result": "Invalid API key · Fix external API key"}})
+elif case == "noinit-api":
+    lines = [{{**failed, "result": "API Error: 529 overloaded"}}]
 elif case == "crash":
     sys.stderr.write("Error: unknown option '--frobnicate'\\n")
     print("not json")
     sys.exit(1)
-elif case == "timeout":
+elif case == "stderr-login":
+    sys.stderr.write("Not logged in · Please run /login\\n")
+    sys.exit(1)
+elif case in ("timeout", "escape"):  # a child holds stdout: in claude's process group, or out of it
+    child = subprocess.Popen(["sleep", "30"], start_new_session=case == "escape")
+    with open({log!r} + ".child", "w") as f:
+        f.write(str(child.pid))
     sys.stderr.write("waiting for the MCP server\\n")
     sys.stderr.flush()
     time.sleep(30)
+elif case == "toolsearch-only":
+    lines += tool_error + [{{**ok, "result": "I can't."}}]
 elif case == "silent":
     lines += [{{"type": "assistant", "message": {{"id": "m1", "content": [{{"type": "text", "text": "Sure."}}]}}}},
               ok]
 else:
+    if case == "toolsearch-ok":
+        lines += tool_error
     lines.append(call)
     if case == "denied":
         lines.append({{"type": "user", "message": {{"content": [
@@ -325,9 +348,15 @@ else:
         text = [{{"type": "text", "text": "No session deadline set."}}]
         lines.append({{"type": "user", "message": {{"content": [
             {{"type": "tool_result", "tool_use_id": "t1", "content": text}}]}}}})
-        lines.append(ok)
+        if case == "end-failed":
+            lines.append({{**failed, "subtype": "error_during_execution", "result": "API Error: 500 late"}})
+        elif case == "other-denied":
+            lines.append({{**ok, "permission_denials": [{{"tool_name": "ToolSearch", "tool_use_id": "t0"}}]}})
+        elif case != "no-end":
+            lines.append(ok)
 for ev in lines:
     print(json.dumps(ev), flush=True)
+sys.exit(3 if case == "bad-rc" else 0)
 """
 
 
@@ -367,11 +396,20 @@ class TestClaudeProbe(DoctorFixture):
     def test_each_failing_stream_is_a_fail_with_claudes_stderr(self):
         cases = {
             "denied": ("Claude Code denied mcp__bg3__session_clock", "must allow mcp__bg3__*"),
-            "error": ("a tool call failed: bridge: boom", "see the error"),
+            "other-denied": ("Claude Code denied ToolSearch", "must allow mcp__bg3__*"),
+            "error": ("session_clock failed: bridge: boom", "see the error"),
             "mcp": ("the bg3 MCP server didn't connect (init: ['bg3:failed'])", "uv sync in bridge/"),
             "login": ("claude isn't logged in: Not logged in", "/login"),
-            "crash": ("claude exited 1 without its init event", "/login"),
+            "stderr-login": ("claude isn't logged in", "/login"),
+            "crash": ("claude exited 1 without its init event", "too old for the play command, update it"),
+            "usage": ("claude ended in an error (success): Claude AI usage limit reached", "usage-limit failure"),
+            "apikey": ("claude ended in an error (success): Invalid API key", "usage-limit failure"),
+            "noinit-api": ("claude ended in an error (success): API Error: 529", "usage-limit failure"),
+            "end-failed": ("(error_during_execution): API Error: 500 late", "usage-limit failure"),
+            "bad-rc": ("claude exited 3: No session deadline set.", "see the error"),
+            "no-end": ("claude exited 0", "see the error"),
             "silent": ("haiku never called mcp__bg3__session_clock (calls 0, results 0): No session", "rerun"),
+            "toolsearch-only": ("(calls 0, results 0, a tool failed: search: boom): I can't.", "rerun"),
         }
         for case, (detail, fix) in cases.items():
             with self.subTest(case):
@@ -380,13 +418,35 @@ class TestClaudeProbe(DoctorFixture):
                 self.assertIn(detail, c.detail)
                 self.assertIn(fix, c.fix)
                 self.assertIn(f"(claude's stderr: stderr of {case}", c.fix)
-        self.assertIn("unknown option '--frobnicate'", self.probe("crash").fix)
+        crash = self.probe("crash")
+        self.assertIn("unknown option '--frobnicate'", crash.fix)
+        self.assertNotIn("/login", crash.fix)  # a rejected flag isn't a login problem
 
-    def test_timeout_kills_it_and_fails(self):
+    def test_another_tools_error_before_a_good_call_passes(self):
+        c = self.probe("toolsearch-ok")
+        self.assertEqual(c.status, PASS, c)
+
+    def test_timeout_kills_the_process_group_and_fails(self):
         c = self.probe("timeout", timeout=1)
         self.assertEqual(c.status, FAIL, c)
         self.assertIn("didn't finish in 1 s", c.detail)
         self.assertIn("waiting for the MCP server", c.fix)
+        self.assertNotIn("still holds", c.detail)  # the kill closed stdout: claude and its child are both gone
+
+    def test_a_child_outside_the_group_doesnt_hold_doctor_past_the_timeout(self):
+        with mock.patch.object(doctor, "PROBE_KILL_WAIT_S", 0.2):
+            c = self.probe("escape", timeout=2)
+        child = int(Path(f"{self.log}.child").read_text())
+
+        def stop() -> None:
+            with suppress(ProcessLookupError):
+                os.kill(child, signal.SIGKILL)
+
+        self.addCleanup(stop)
+        self.assertEqual(c.status, FAIL, c)
+        self.assertIn("didn't finish in 2 s, and a child outside its process group still holds", c.detail)
+        self.assertIn("waiting for the MCP server", c.fix)  # what it wrote before the kill
+        os.kill(child, 0)  # it outlives doctor's return: raises if doctor waited for it to exit
 
     def test_no_claude(self):
         ctx = self.dctx()
@@ -409,6 +469,7 @@ class TestClaudeProbe(DoctorFixture):
             self.assertEqual(doctor.main(["--claude-probe"], ctx), 1)
         self.assertIn("FAIL  claude-probe", out.getvalue())
         self.assertIn("spends about $0.005", self.help())
+        self.assertIn("--claude-probe runs the bridge: uv may create bridge/.venv and bridge/uv.lock", self.help())
 
     def help(self) -> str:
         out = io.StringIO()

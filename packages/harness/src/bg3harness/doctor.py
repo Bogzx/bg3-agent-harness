@@ -1,6 +1,8 @@
-"""Can a new machine run the harness? Every check a stranger's machine needs, each failure with the fix. Stdlib only and
-read-only but for one file: it reads files and runs version queries (and 0.1 s ffmpeg test encodes), never installs
-anything, and writes only the bench recording's encoder setting, once, when none is set (check_record).
+"""Can a new machine run the harness? Every check a stranger's machine needs, each failure with the fix. Stdlib only
+and, without --claude-probe, read-only but for one file: it reads files and runs version queries (and 0.1 s ffmpeg test
+encodes), never installs anything, and writes only the bench recording's encoder setting, once, when none is set
+(check_record). --claude-probe runs the bridge: uv may create bridge/.venv and bridge/uv.lock, and runtime/ files are
+written.
 
     python3 tools/doctor.py [--json] [--claude-probe]   # or: uv run python -m bg3harness.doctor [...]
 
@@ -21,10 +23,11 @@ this adds what a first install misses:
   node/pi    Node.js >= 22.19 and tools/pi's pinned pi (only for the non-Claude clients: WARN, never FAIL)
 and, only with --claude-probe (it spends about $0.005 and needs a logged-in claude):
   claude-probe  the real play command (clients.ClaudeClient, same flags and --settings) with haiku in play/, asked
-             to call mcp__bg3__session_clock (it answers without the game): FAIL when claude is missing or not
-             logged in, the bg3 MCP server doesn't connect, Claude Code denies the call, the call errors or it times
-             out. preflight's claude check only finds the binary: #101's reporter passed it, then every bg3 call
-             was refused.
+             to call mcp__bg3__session_clock (it answers without the game): FAIL when claude is missing, rejects the
+             command or isn't logged in, the bg3 MCP server doesn't connect, Claude Code denies a call, the
+             session_clock call errors, the run ends in an error (an API or usage-limit failure) or it times out.
+             preflight's claude check only finds the binary: #101's reporter passed it, then every bg3 call was
+             refused.
 """
 
 from __future__ import annotations
@@ -43,7 +46,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from bg3harness import bg3le_buildinfo, bg3le_prebuilt, clients, display_env, preflight, steam_paths
 from bg3harness import recorder as hrec
@@ -60,6 +63,7 @@ PROBE = "claude-probe"
 PROBE_MODEL = "haiku"
 PROBE_TOOL = "session_clock"  # answers without the game (runs.GAME_FREE)
 PROBE_TIMEOUT_S = 60.0
+PROBE_KILL_WAIT_S = 5.0  # for claude's pipes to close after the kill
 PROBE_PROMPT = f"Call the {clients.MCP_PREFIX}{PROBE_TOOL} tool once, then reply with what it returned."
 
 
@@ -327,6 +331,14 @@ def _stderr(err: str) -> str:
     return f" (claude's stderr: {one[-400:]})" if one else " (claude's stderr is empty)"
 
 
+def _denied_tool(denial: object) -> str:
+    match denial:
+        case {"tool_name": str(name)}:
+            return name
+        case _:
+            return str(denial)
+
+
 def check_claude_probe(ctx: Ctx, timeout: float = PROBE_TIMEOUT_S) -> Check:
     """--claude-probe: one real play command (ClaudeClient().command, the runner's cwd play/ and client env) with
     haiku, asked to call mcp__bg3__session_clock. Its stream decides; the fix line quotes claude's stderr."""
@@ -351,9 +363,18 @@ def check_claude_probe(ctx: Ctx, timeout: float = PROBE_TIMEOUT_S) -> Check:
     except subprocess.TimeoutExpired:
         with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)  # claude and the MCP server it started
-        out, err = proc.communicate()
+        left = ""
+        try:
+            _, err = proc.communicate(timeout=PROBE_KILL_WAIT_S)
+        except subprocess.TimeoutExpired as e:  # a child that left the group: it can't be found, so stop reading
+            err = (e.stderr or b"").decode(errors="replace")  # bytes even with text=True
+            left = ", and a child outside its process group still holds its pipes"
+            for pipe in (proc.stdout, proc.stderr):
+                if pipe:
+                    pipe.close()
+            proc.poll()
         return Check(
-            PROBE, FAIL, f"claude didn't finish in {timeout:.0f} s",
+            PROBE, FAIL, f"claude didn't finish in {timeout:.0f} s{left}",
             "run the command by hand in play/ (claude -p ... --mcp-config .mcp.json) to see where it hangs: a login "
             "prompt, or the bg3 MCP server not starting (uv sync in bridge/)" + _stderr(err),
         )  # fmt: skip
@@ -364,7 +385,8 @@ def judge_probe(client: clients.ClaudeClient, out: str, err: str, rc: int, secs:
     mcp: list[str] | None = None
     calls: set[str] = set()  # the session_clock calls' ids: their results are the probe's answer
     denials: list[Any] = []  # the result event's permission_denials
-    errors: list[str] = []  # every error tool_result's text
+    errors: list[str] = []  # the session_clock calls' errors
+    others: list[str] = []  # other tools' errors: harmless before a good session_clock call
     results: list[str] = []  # the session_clock calls' results
     end: clients.Event | None = None
     for line in out.splitlines():
@@ -373,46 +395,58 @@ def judge_probe(client: clients.ClaudeClient, out: str, err: str, rc: int, secs:
                 mcp = ev.mcp or []
             elif ev.kind == "tool_call" and ev.tool == PROBE_TOOL:
                 calls.add(ev.call_id or "")
-            elif ev.kind == "tool_result" and ev.is_error:  # any tool's: ToolSearch's too
-                errors.append(ev.text or "")
             elif ev.kind == "tool_result" and ev.call_id in calls:
-                results.append(ev.text or "")
+                (errors if ev.is_error else results).append(ev.text or "")
+            elif ev.kind == "tool_result" and ev.is_error:
+                others.append(ev.text or "")
             elif ev.kind == "result":
                 end = ev
                 raw: dict[str, Any] = json.loads(line)  # parse() read it: a JSON object
                 denials = raw.get("permission_denials") or []
     said = f": {' '.join(end.text.split())[:300]}" if end and end.text else ""
+    failed = end if end and end.is_error else None
 
     def fail(detail: str, fix: str) -> Check:
         return Check(PROBE, FAIL, detail, fix + _stderr(err))
 
-    if mcp is None or (end and end.is_error and "login" in end.text.lower()):
-        login = "log in: run `claude` once and /login (CLAUDE_CONFIG_DIR picks the account), then rerun"
-        if mcp is None:
-            return fail(f"claude exited {rc} without its init event{said}", login)
-        return fail(f"claude isn't logged in{said}", login)
-    if "bg3:connected" not in mcp:
+    if (failed and "login" in failed.text.lower()) or (mcp is None and "not logged in" in err.lower()):
+        return fail(
+            f"claude isn't logged in{said}",
+            "log in: run `claude` once and /login (CLAUDE_CONFIG_DIR picks the account), then rerun",
+        )
+    if mcp is None and not failed:
+        return fail(
+            f"claude exited {rc} without its init event{said}",
+            "see its stderr: an unknown option means this Claude Code is too old for the play command, update it",
+        )
+    if mcp is not None and "bg3:connected" not in mcp:
         return fail(
             f"the bg3 MCP server didn't connect (init: {mcp})",
             "in play/, `uv run --project ../bridge bg3ai-mcp` must start and wait on stdin: fix what it prints "
             "(uv sync in bridge/)",
         )
     if denials:
-        names = sorted({str(cast(dict[str, Any], d).get("tool_name") if isinstance(d, dict) else d) for d in denials})
+        names = sorted({_denied_tool(d) for d in denials})
         return fail(
             f"Claude Code denied {', '.join(names)}: every bg3 call of a play session would be refused",
             "play/.claude/settings.json must allow mcp__bg3__*; ClaudeClient passes it as --settings (#101): "
             "update the checkout",
         )
     if errors:
-        return fail(f"a tool call failed: {' '.join(errors[0].split())[:300]}", "see the error")
+        return fail(f"{PROBE_TOOL} failed: {' '.join(errors[0].split())[:300]}", "see the error")
+    if failed:
+        return fail(
+            f"claude ended in an error ({failed.subtype}){said}",
+            "an API, auth or usage-limit failure: fix what it says (CLAUDE_CONFIG_DIR picks the account), then rerun",
+        )
     if not calls or not results:
+        other = f", a tool failed: {' '.join(others[0].split())[:300]}" if others else ""
         return fail(
             f"{PROBE_MODEL} never called {clients.MCP_PREFIX}{PROBE_TOOL} "
-            f"(calls {len(calls)}, results {len(results)}){said}",
+            f"(calls {len(calls)}, results {len(results)}{other}){said}",
             "rerun; if it repeats, claude doesn't see the bg3 tools",
         )
-    if rc != 0 or (end and end.is_error) or end is None:
+    if rc != 0 or end is None:
         return fail(f"claude exited {rc}{said}", "see the error")
     cost = f"${end.cost_usd:.4f}" if end.cost_usd is not None else "$?"
     shown = " ".join(results[0].split())[:120]
