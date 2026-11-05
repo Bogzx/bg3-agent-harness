@@ -235,9 +235,9 @@ OPERATOR MESSAGE (from the person running this playthrough, sent 14:02:31): Chec
   `operator.delivered.jsonl` (the bg3 server appends `{id, t, session, tool}`). The runner gives the session's bg3
   server `BG3AI_OPERATOR_DIR` (that folder) only when the option is on; a `BG3AI_OPERATOR_*` the app's own shell
   exports never reaches a session, the memory keeper or a bench run.
-- When an agent restarts after a crash (`harness` runner), a delivered message that the dead client's stream log
-  never showed (so its model never read it) is queued again with a `redeliver` row and goes out in the restarted
-  session's next result.
+- At every agent start (`harness` runner: a new session or a restart after a crash), a delivered message that its
+  session's stream log never showed (the client died, or a cap or a stop killed it, before its model read the
+  result) is queued again with a `redeliver` row and goes out in the new agent's next result.
 - The `legacy` runner passes `BG3AI_OPERATOR_DIR` to `play.py run`, whose bg3 server delivers messages in the same
   way. play.py resumes a crashed client itself, so there is no redelivery: a message that was in the crashed
   client's last result counts as delivered.

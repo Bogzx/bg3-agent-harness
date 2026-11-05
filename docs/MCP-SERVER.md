@@ -103,8 +103,8 @@ In that folder:
 
 - `operator.jsonl`: the app appends `{id, t, text}`, one line per message.
 - `operator.delivered.jsonl`: the server appends `{id, t, session, tool}` when a result carries the message. The
-  app's runner appends `{id, t, redeliver: true}` for a message that a crashed client's stream never showed, which
-  makes it pending again.
+  app's runner appends `{id, t, redeliver: true}` at an agent start for a message that a dead client's stream never
+  showed, which makes it pending again.
 
 A message is pending until a delivered row names it (and again after a later `redeliver` row). The next tool result
 the server finishes gets every pending message appended, after the tool's own text, one line each:

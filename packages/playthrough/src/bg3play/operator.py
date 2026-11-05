@@ -133,16 +133,19 @@ def shown(stream: Path) -> list[str]:
     return out
 
 
-def redeliver(sdir: Path, session: str, now: float) -> list[str]:
-    """At an agent restart: each message delivered in `session` whose block is in no string of the session's stream
-    log (the client died before its model saw the result) gets a redeliver row. Returns those ids."""
+def redeliver(sdir: Path, now: float) -> list[str]:
+    """At every agent start (a new session or a resume): each delivered message whose block is in no string of its
+    session's stream log (the client died, or a cap or a stop killed it, before its model saw the result) gets a
+    redeliver row. Only the streams of sessions that delivered rows name are read. Returns those ids."""
     inbox = {r["id"]: r for r in op.valid(op.read_rows(sdir / op.INBOX))}
-    done = op.delivery(op.read_rows(sdir / op.DELIVERED))
-    mine = [i for i, d in done.items() if d is not None and d.get("session") == session and i in inbox]
-    if not mine:
-        return []
-    seen = shown(sdir / f"{session}.jsonl")
-    lost = [i for i in mine if not any(op.head(inbox[i]["t"]) in s for s in seen)]
+    by_session: dict[str, list[str]] = {}
+    for i, d in op.delivery(op.read_rows(sdir / op.DELIVERED)).items():
+        if d is not None and i in inbox:
+            by_session.setdefault(str(d.get("session") or ""), []).append(i)
+    lost: list[str] = []
+    for session, ids in by_session.items():
+        seen = shown(sdir / f"{session}.jsonl")
+        lost += [i for i in ids if not any(op.head(inbox[i]["t"]) in s for s in seen)]
     if lost:
         with (sdir / op.DELIVERED).open("a", encoding="utf-8") as f:
             for i in lost:

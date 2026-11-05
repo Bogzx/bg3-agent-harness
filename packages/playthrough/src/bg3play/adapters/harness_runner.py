@@ -230,8 +230,9 @@ class AppSessionHooks:
             self.sdir, self.sid, prompt, minutes * 60 + self.grace_s, client_session or str(uuid.uuid4()), resume,
             self.env, max(self.max_cost_usd - spent, 1e-9) if self.max_cost_usd > 0 else 0.0,
         )  # fmt: skip
-        if resume and self.env.get("BG3AI_OPERATOR_DIR"):  # a message the dead client's model never saw goes out again
-            lost = operator.redeliver(self.sdir, self.sid, self.clock())
+        # a message a dead client's model never saw (this session's or an earlier one's) goes out again
+        if self.env.get("BG3AI_OPERATOR_DIR"):
+            lost = operator.redeliver(self.sdir, self.clock())
             if lost:
                 self._log(f"{self.sid}: operator messages queued again (not in the client's stream): {', '.join(lost)}")
         res = self.agent.run(call)
