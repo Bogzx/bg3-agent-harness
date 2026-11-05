@@ -17,6 +17,7 @@ drive it with a fake process.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 from collections.abc import Callable, Iterable
@@ -28,6 +29,8 @@ from typing import Any, Protocol
 from bg3ai.metrics import StreamTiming  # pyright: ignore[reportMissingTypeStubs]
 from bg3harness import clients, events
 from bg3harness.runner import policy
+
+from .. import operator
 
 WATCH_S = 30.0  # seconds between game checks while the agent plays
 
@@ -120,7 +123,8 @@ class ClientAgent:
         start = self.clock()
         evlog.harness("session_start", session=call.sid, client=self.client.name, model=self.model,  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
                       conversation=call.conversation, resume=call.resume)  # fmt: skip
-        env: dict[str, str] = clients.process_env(self.client, req)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        # the operator messages' dir only from call.env (a playthrough with the option on), never the shell's
+        env: dict[str, str] = clients.process_env(self.client, req, operator.runner_env(os.environ))  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         proc = self.spawn(self.client.command(req), self.cwd, env)
         done = done or threading.Event()
         stopped: list[tuple[str, float]] = []  # (reason, when) the watchdog stopped it

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,12 @@ MIN_GAP_S = 5.0  # one message per this many seconds
 MAX_QUEUED = 10  # messages still queued before a new one is refused
 CONTROL_RE = re.compile(r"[\x00-\x09\x0b-\x1f\x7f]")  # control characters but the newline
 _post_lock = threading.Lock()  # the server's request threads: one append at a time (ids stay unique)
+
+
+def runner_env(env: Mapping[str, str]) -> dict[str, str]:
+    """`env` (the app's, a shell's export included) without any BG3AI_OPERATOR_*: only the runner's session env
+    gives a playthrough with the option on its own dir (session_env, legacy_cli.condition_env)."""
+    return {k: v for k, v in env.items() if not k.startswith("BG3AI_OPERATOR_")}
 
 
 def bench_run(sdir: Path) -> bool:

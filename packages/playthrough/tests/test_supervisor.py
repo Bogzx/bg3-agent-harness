@@ -304,6 +304,28 @@ def test_legacy_run_session_soft_stop(tmp_path: Path):
     assert spawned[0][2]["BG3AI_PROMPT_CONDITION"] == "rules+coaching"  # a playthrough's default condition
 
 
+@pytest.mark.parametrize("on", [True, False])
+def test_the_legacy_runner_gives_play_py_the_operator_dir_only_with_the_option(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, on: bool
+):
+    # Under the legacy CLI a queued message must reach play.py's bg3 server (it passes its BG3AI_* on), and a
+    # shell's export must not reach a playthrough without the option
+    monkeypatch.setenv("BG3AI_OPERATOR_DIR", "/elsewhere/sessions/other")
+    runtime = tmp_path / "runtime"
+    rj = runtime / "sessions" / "ilse" / "runner.json"
+    spawned = []
+
+    def spawn(args, cwd, log, env):
+        spawned.append(env)
+        rj.write_text(json.dumps({"history": [{"kind": "play", "session": "S001", "reason": "exited"}]}))
+        return FakeProc(lambda: None, timeouts=0)
+
+    cli = legacy_cli.LegacyCli(tmp_path / "repo", runtime, spawn_fn=spawn, poll_s=0)
+    assert cli.run_session(req(operator={"messages": on}), threading.Event()).session == "S001"
+    env = spawned[0]
+    assert env.get("BG3AI_OPERATOR_DIR") == (str(runtime / "sessions" / "ilse") if on else None)
+
+
 def test_sessions_the_runner_played_before_count(tmp_path: Path):
     sup, runner, _, _ = make(tmp_path, [("error", None)])
     sup.played = lambda pt: 96  # a playthrough the legacy runner played 96 sessions of
