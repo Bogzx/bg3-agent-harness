@@ -1,0 +1,86 @@
+bg3le preload: stand up bg3se's globals (gStaticSymbols, gExtender) in bg3le's own setup, not only from the overlay
+
+On top of 0001-0012. extender_globals_init() (src/vendor/extender_globals.cpp) is what creates
+bg3se::gStaticSymbols and bg3se::gExtender, and its only caller was imgui_overlay_start(), which builds once the
+engine heap exists: in practice from bg3le's vkCreateInstance export (src/vulkan_forward.cpp). Entity reads need
+gStaticSymbols too: a component that is still pending goes through EntityWorld::Deferred, which indexes its
+command buffers by ThreadRegistry::RequestThreadIndex(), read through gStaticSymbols. In a game where the
+overlay never built (BG3LE_IMGUI=0, or Vulkan calls that never reach bg3le's exports), the first such read
+crashed: SIGSEGV at 0xa0, pc ThreadRegistry::RequestThreadIndex+0xa, rax 0, from bg3le_entity_pending_component
+at the first server tick after Running (issue #101; reproduced with BG3LE_IMGUI=0 on the pinned build).
+
+- ensure_symbols() (the first Osiris callback, RegisterDIVFunctions, about 1 s before vkCreateInstance) calls
+  extender_globals_init() last, after install_game_allocator(): the globals allocate from the engine heap, and
+  that is the first point it is installed, which is why the overlay waited for it. Earlier, next to the "bg3le,
+  bg3se vNN API" line, the heap isn't there yet. Without the heap it logs "extender: globals not stood up: no
+  engine heap"; an exception is logged, not passed into the Osiris callback.
+- extender_globals_init() is idempotent (a mutex and g_ready), so the overlay's own call later finds them and
+  builds on the same objects. What it reads that early is safe: the targets it resolves (PathRoots,
+  TextureAtlasMap, the thread-index read) are found by scanning the image, which needs no symbol table, and
+  PathRoots entries the engine has not filled yet read as unset.
+- With the overlay off, the extra objects change nothing else: the SDL hooks pass events on while enableUI_ is
+  false, the overlay tick returns until the overlay started, and OnCreateWindow binds only an initialized UI.
+  Path overrides now resolve to absolute paths as they do in an overlay launch.
+
+Offline: tools/test_bg3le_patches.py checks the call in the patched source. The fix itself needs the game: a
+launch with BG3LE_IMGUI=0 must log "extender: globals stood up" and read entities at Running without the crash,
+and a normal launch must be unchanged. Against bg3le 3728a68 (v0.3.6) with 0001-0012. Applied by
+tools/build_bg3le.sh.
+---
+diff --git a/src/preload.cpp b/src/preload.cpp
+index 05c0f80..0fb9f87 100644
+--- a/src/preload.cpp
++++ b/src/preload.cpp
+@@ -22,6 +22,7 @@
+ #include <chrono>
+ #include <thread>
+ #include <mutex>
++#include <exception>
+ #include <ctime>
+ #include <unistd.h>
+ 
+@@ -54,6 +55,8 @@ namespace bg3le {
+ // Defined in src/vendor/imgui_overlay.cpp, which needs bg3se headers this
+ // file does not include.
+ void imgui_overlay_start();
++// Defined in src/vendor/extender_globals.cpp, for the same reason.
++void extender_globals_init();
+ 
+ 
+ namespace {
+@@ -79,6 +82,7 @@ extern "C" bool bg3le_stats_attr_at(void const* object, std::size_t index,
+ extern "C" bool bg3le_stats_attr_set(void const* object, std::size_t index,
+                                      int raw);
+ extern "C" bool bg3le_install_game_allocator(void* alloc, void* free);
++extern "C" bool bg3le_game_allocator_ready();
+ extern "C" void bg3le_corelib_strings_install();
+ 
+ // Points bg3se's GameAllocRaw/GameFree at the engine's own heap, so any bg3se
+@@ -513,6 +517,27 @@ void ensure_symbols() {
+         install_game_allocator();
+         fast_alloc_install();
+         install_path_override_hook();
++        // bg3se's globals (gStaticSymbols, gExtender) are not the overlay's
++        // alone: an entity read whose component is still pending goes through
++        // EntityWorld::Deferred, which takes its command buffer by
++        // ThreadRegistry::RequestThreadIndex() through gStaticSymbols. The
++        // overlay was their only creator, from bg3le's vkCreateInstance
++        // export, so a game where that never ran (BG3LE_IMGUI=0, or Vulkan
++        // calls that bypass the preload) crashed at the first such read
++        // (SIGSEGV at 0xa0). Stood up here, the first point the engine heap
++        // they allocate from is installed (above); the overlay's own call,
++        // later, then finds them.
++        if (!bg3le_game_allocator_ready()) {
++            logf("extender: globals not stood up: no engine heap");
++        } else {
++            try {
++                extender_globals_init();
++            } catch (std::exception const& e) {
++                logf("extender: could not stand up the globals: %s", e.what());
++            } catch (...) {
++                logf("extender: could not stand up the globals");
++            }
++        }
+     });
+ }
+ 

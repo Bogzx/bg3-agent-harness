@@ -134,6 +134,17 @@ class PatchTest(unittest.TestCase):
             self.assertIn(needle, inl)
         self.assertNotIn("push_stored(L, entry.key->GetType(), entry.value, type, &name);", inl)
 
+    def test_extender_globals_without_the_overlay(self):
+        # 0013 (issue #101): bg3se's globals are stood up at the end of ensure_symbols, once the engine heap is
+        # installed, not only by the ImGui overlay; with BG3LE_IMGUI=0 the first pending-component read crashed
+        self.assertEqual(self.run_script("--patch").returncode, 0)
+        pre = (self.src / "src" / "preload.cpp").read_text()
+        body = pre[pre.index("void ensure_symbols() {"):]
+        body = body[: body.index("\n}\n")]
+        self.assertLess(body.index("install_game_allocator();"), body.index("extender_globals_init();"))
+        self.assertIn("if (!bg3le_game_allocator_ready()) {", body)
+        self.assertIn('logf("extender: globals not stood up: no engine heap");', body)
+
     def test_prefix_applied_gets_the_rest(self):
         # The series up to the newest patch in place (a patch was added since the last build): the
         # rest is applied, giving the same tree as a fresh apply; --unpatch reverts a prefix too.
