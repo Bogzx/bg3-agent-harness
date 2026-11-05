@@ -16,7 +16,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import test_play_saves as saves_tests  # first: its testenv import sets the temp profile folders
+import testenv  # noqa: F401, I001  (first: the game's profile folders are a temp dir before play)
+import test_play_saves as saves_tests
 from bg3harness.runner import env as renv
 from bg3harness.runner import policy as rpolicy
 
