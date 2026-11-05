@@ -65,6 +65,8 @@ matches. `pack` makes such a package from a local build of both.
 `python3 tools/doctor.py` then checks the whole machine (game build, Steam offline, bg3le, the mod, the screenshot
 layer, the input shim, the display, ffmpeg and the recording encoder, RAM, VRAM, disk, uv, Node and pi) and prints
 the fix for each failure; `--json` prints the same as data.
+`--claude-probe` also runs one real play command (claude haiku in play/ calling `mcp__bg3__session_clock`, about
+$0.005, needs a logged-in claude) and fails when Claude Code can't use the bg3 tools there.
 
 Offline tests, as CI runs them (`tools/ci/task.py` lists every job):
 

@@ -8,12 +8,13 @@ import hashlib
 import io
 import json
 import os
+import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import NamedTuple
 from unittest import mock
 
-from bg3harness import bg3le_prebuilt, doctor
+from bg3harness import bg3le_prebuilt, clients, doctor
 from bg3harness.preflight import FAIL, PASS, WARN
 from test_preflight import Fixture
 
@@ -276,3 +277,141 @@ class TestDoctor(DoctorFixture):
         ctx = doctor.default_ctx()
         self.assertTrue((ctx.repo / "runner" / "launch_game.sh").is_file())
         self.assertEqual(ctx.env.get("HOME"), os.environ.get("HOME"))
+
+
+# --claude-probe: a fake `claude` (a script) prints one stream case and records its argv and cwd; no API call.
+FAKE_CLAUDE = """#!{python}
+import json, os, sys, time
+case = {case!r}
+with open({log!r}, "w") as f:
+    memory = os.environ.get("CLAUDE_CODE_DISABLE_AUTO_MEMORY")
+    json.dump({{"argv": sys.argv[1:], "cwd": os.getcwd(), "memory": memory}}, f)
+sys.stderr.write("stderr of " + case + "\\n")
+mcp = "failed" if case == "mcp" else "connected"
+lines = [{{"type": "system", "subtype": "init", "session_id": "s", "model": "claude-haiku",
+          "tools": ["ToolSearch", "mcp__bg3__session_clock"], "mcp_servers": [{{"name": "bg3", "status": mcp}}]}}]
+call = {{"type": "assistant", "message": {{"id": "m1", "content": [
+    {{"type": "tool_use", "id": "t1", "name": "mcp__bg3__session_clock", "input": {{}}}}]}}}}
+denied = "Claude requested permissions to use mcp__bg3__session_clock, but you haven't granted it yet."
+ok = {{"type": "result", "subtype": "success", "is_error": False, "result": "No session deadline set.",
+      "total_cost_usd": 0.0012, "num_turns": 2, "permission_denials": []}}
+if case == "login":
+    sys.stderr.write("auth: no credentials\\n")
+    lines.append({{"type": "result", "subtype": "success", "is_error": True,
+                  "result": "Not logged in · Please run /login", "total_cost_usd": 0, "permission_denials": []}})
+elif case == "crash":
+    sys.stderr.write("Error: unknown option '--frobnicate'\\n")
+    print("not json")
+    sys.exit(1)
+elif case == "timeout":
+    sys.stderr.write("waiting for the MCP server\\n")
+    sys.stderr.flush()
+    time.sleep(30)
+elif case == "silent":
+    lines += [{{"type": "assistant", "message": {{"id": "m1", "content": [{{"type": "text", "text": "Sure."}}]}}}},
+              ok]
+else:
+    lines.append(call)
+    if case == "denied":
+        lines.append({{"type": "user", "message": {{"content": [
+            {{"type": "tool_result", "tool_use_id": "t1", "is_error": True, "content": denied}}]}}}})
+        lines.append({{**ok, "permission_denials": [{{"tool_name": "mcp__bg3__session_clock", "tool_use_id": "t1",
+                                                     "tool_input": {{}}}}]}})
+    elif case == "error":
+        lines.append({{"type": "user", "message": {{"content": [
+            {{"type": "tool_result", "tool_use_id": "t1", "is_error": True, "content": "bridge: boom"}}]}}}})
+        lines.append(ok)
+    else:
+        text = [{{"type": "text", "text": "No session deadline set."}}]
+        lines.append({{"type": "user", "message": {{"content": [
+            {{"type": "tool_result", "tool_use_id": "t1", "content": text}}]}}}})
+        lines.append(ok)
+for ev in lines:
+    print(json.dumps(ev), flush=True)
+"""
+
+
+class TestClaudeProbe(DoctorFixture):
+    def setUp(self):
+        super().setUp()
+        play = self.repo / "play"
+        (play / ".claude").mkdir(parents=True)
+        real = Path(__file__).resolve().parents[3] / "play"
+        for name in (".mcp.json", ".claude/settings.json"):
+            (play / name).write_text((real / name).read_text())
+        self.fake = self.tmp / "bin" / "claude"
+        self.fake.parent.mkdir()
+        self.log = self.tmp / "claude-args.json"
+
+    def probe(self, case: str, timeout: float = 20) -> doctor.Check:
+        self.fake.write_text(FAKE_CLAUDE.format(python=sys.executable, case=case, log=str(self.log)))
+        self.fake.chmod(0o755)
+        ctx = self.dctx()
+        ctx.which = lambda n: str(self.fake) if n == "claude" else None
+        return doctor.check_claude_probe(ctx, timeout=timeout)
+
+    def test_pass_runs_the_real_play_command_in_play(self):
+        c = self.probe("ok")
+        self.assertEqual(c.status, PASS, c)
+        self.assertIn("session_clock: 'No session deadline set.' ($0.0012", c.detail)
+        got = json.loads(self.log.read_text())
+        self.assertEqual(Path(got["cwd"]).resolve(), (self.repo / "play").resolve())
+        self.assertEqual(got["memory"], "1")  # ClaudeClient.env
+        argv = got["argv"]
+        want = clients.ClaudeClient(mcp_config=self.repo / "play/.mcp.json", binary=str(self.fake)).command(
+            clients.Request(prompt=doctor.PROBE_PROMPT, model="haiku", session_dir=self.repo, session="x")
+        )[1:]
+        self.assertEqual(argv[: argv.index("--session-id")], want[: want.index("--session-id")])
+        self.assertIn("mcp__bg3__*", json.loads(argv[argv.index("--settings") + 1])["permissions"]["allow"])
+
+    def test_each_failing_stream_is_a_fail_with_claudes_stderr(self):
+        cases = {
+            "denied": ("Claude Code denied mcp__bg3__session_clock", "must allow mcp__bg3__*"),
+            "error": ("a tool call failed: bridge: boom", "see the error"),
+            "mcp": ("the bg3 MCP server didn't connect (init: ['bg3:failed'])", "uv sync in bridge/"),
+            "login": ("claude isn't logged in: Not logged in", "/login"),
+            "crash": ("claude exited 1 without its init event", "/login"),
+            "silent": ("haiku never called mcp__bg3__session_clock (calls 0, results 0): No session", "rerun"),
+        }
+        for case, (detail, fix) in cases.items():
+            with self.subTest(case):
+                c = self.probe(case)
+                self.assertEqual(c.status, FAIL, c)
+                self.assertIn(detail, c.detail)
+                self.assertIn(fix, c.fix)
+                self.assertIn(f"(claude's stderr: stderr of {case}", c.fix)
+        self.assertIn("unknown option '--frobnicate'", self.probe("crash").fix)
+
+    def test_timeout_kills_it_and_fails(self):
+        c = self.probe("timeout", timeout=1)
+        self.assertEqual(c.status, FAIL, c)
+        self.assertIn("didn't finish in 1 s", c.detail)
+        self.assertIn("waiting for the MCP server", c.fix)
+
+    def test_no_claude(self):
+        ctx = self.dctx()
+        ctx.which = lambda n: None
+        c = doctor.check_claude_probe(ctx)
+        self.assertEqual((c.status, c.detail), (FAIL, "no claude on PATH"))
+        self.assertIn("log in", c.fix)
+
+    def test_only_with_the_flag(self):
+        self.fake.write_text(FAKE_CLAUDE.format(python=sys.executable, case="denied", log=str(self.log)))
+        self.fake.chmod(0o755)
+        ctx = self.dctx()
+        ctx.which = lambda n: str(self.fake) if n == "claude" else f"/usr/bin/{n}" if n in self.have else None
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(doctor.main([], ctx), 0)
+        self.assertFalse(self.log.exists())  # no claude run, no spend
+        self.assertNotIn(doctor.PROBE, [c.name for c in doctor.doctor(ctx)])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(doctor.main(["--claude-probe"], ctx), 1)
+        self.assertIn("FAIL  claude-probe", out.getvalue())
+        self.assertIn("spends about $0.005", self.help())
+
+    def help(self) -> str:
+        out = io.StringIO()
+        with redirect_stdout(out), self.assertRaises(SystemExit):
+            doctor.main(["--help"])
+        return " ".join(out.getvalue().split())
