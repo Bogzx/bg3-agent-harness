@@ -139,6 +139,12 @@ class NotOurGame(SystemExit):
     retry loop swallows it; a bench start reports it as ForeignGameRunning (run_host)."""
 
 
+class GameBuildRefused(LaunchBlocked):
+    """runner/launch_game.sh refused the installed game build: not the pinned one bg3le was verified on (its exit 6).
+    Not a game death: installing the pinned build fixes it (BG3AI_ALLOW_OTHER_BUILD=1 in the runner's env launches
+    another build anyway)."""
+
+
 class OperatorStop(LaunchBlocked):
     """An operator stop (a signal, runtime/STOP) refused a run's start before its agent: no run played, and the
     stop's owner decides when runs start again."""

@@ -174,6 +174,10 @@ game unless it says so.
   paths and, after a nonzero exit or a logged crash, up to 8 `crash:`/`WARNING: resolve` lines per bg3le log; the
   exit status stays the game's. Issue #101: a crash at a save load's end with no build, bg3le info or logs to go
   on. The bug report template asks for `tools/bg3le_buildinfo.py`, `launch_game.sh --dry-run` and those logs.
+- The runner reads the launcher's exit 6 as a refusal, not a game death: `GameBuildRefused` (a `LaunchBlocked`, so the
+  run loop retries like a Steam or display refusal and the bench records no attempt), the log line, event and alert
+  say "launcher refused: game build X, pinned Y" from the launcher's refusal line. Before, it counted as a launch
+  that died and was retried until the crash-loop stop.
 
 ### Benchmark (`packages/bench`)
 

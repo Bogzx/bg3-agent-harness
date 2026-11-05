@@ -154,7 +154,7 @@ if [ "$use_bg3le" = 1 ]; then
         else
             echo "launch_game: REFUSING TO LAUNCH: $build_line; bg3le was verified on the pinned build only" >&2
             echo "launch_game: install the pinned build (docs/GAME-UPDATES.md), or BG3AI_ALLOW_OTHER_BUILD=1 launches this one anyway" >&2
-            exit 6
+            exit 6   # bg3harness.game.controller.OTHER_BUILD_EXIT
         fi
     elif [ "$build_rc" != 0 ]; then
         echo "launch_game: warning: game build: ${build_line:-tools/ci/game_build.py failed (exit $build_rc)}" >&2
