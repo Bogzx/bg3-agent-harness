@@ -1,7 +1,8 @@
 # pyright: basic
 """A play session's summaries at its end, for play.py's Runner and the app (bg3play.adapters.session_files):
 
-    <base>.latency.json  + latency_history.jsonl   bridge records (<base>.metrics.jsonl) + stream timing (.turns.jsonl)
+    <base>.latency.json  + latency_history.jsonl   bridge records (<base>.metrics.jsonl) + stream timing (.turns.jsonl);
+                                                   latency.json's operator_messages = the operator messages delivered
     <base>.progress.json + progress_history.jsonl  the story poll's <base>.progress.jsonl
     <base>.triage.md                               failed calls, long gaps, clicks, stuck stretches
 
@@ -23,12 +24,20 @@ from bg3harness import triage
 Log = Callable[[str], None]
 
 
+def operator_messages(metrics_path: Path) -> int:
+    """The operator messages (the app's operator chat) the session's results carried: the distinct ids in its
+    `operator` records (bg3ai.tools.reporting.operator_told). 0 for a session without the option."""
+    recs = latency.read_jsonl(metrics_path)
+    return len({i for r in recs if r.get("type") == "operator" for i in r.get("ids") or () if isinstance(i, str)})
+
+
 def write_latency(
     session: str, base: Path, start: float, end: float, hist_dir: Path, log: Log
 ) -> dict[str, Any] | None:
     """Sxxx.latency.json + a line in latency_history.jsonl (bridge records + stream timing)."""
     try:
         summary = latency.summarize_files(Path(f"{base}.metrics.jsonl"), Path(f"{base}.turns.jsonl"), start, end)
+        summary["operator_messages"] = operator_messages(Path(f"{base}.metrics.jsonl"))
         latency.write_summary(summary, Path(f"{base}.latency.json"), hist_dir / "latency_history.jsonl", session)
     except Exception as e:
         log(f"{session}: latency summary failed: {e}")

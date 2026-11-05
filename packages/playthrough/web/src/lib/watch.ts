@@ -1,5 +1,6 @@
 // The Watch screen's state: a snapshot from /watch, then stream events applied in order. Pure functions only.
-import type { Action, Commit, Cost, Latency, LogEntry, Party, Runner, WatchSnapshot } from "./types";
+import { mergeMessage } from "./operator";
+import type { Action, Commit, Cost, Latency, LogEntry, OperatorMessage, OperatorView, Party, Runner, WatchSnapshot } from "./types";
 
 export const LIMITS = { log: 400, actions: 200, memory: 20 };
 
@@ -16,6 +17,7 @@ export interface WatchState {
   latency: Latency | null;
   screenshotRev: number; // 0: no agent screenshot
   memory: Commit[];
+  operator: OperatorView; // messages newest first
 }
 
 export function fromSnapshot(s: WatchSnapshot): WatchState {
@@ -32,6 +34,10 @@ export function fromSnapshot(s: WatchSnapshot): WatchState {
     latency: s.latency,
     screenshotRev: s.screenshot ? s.screenshot.t : 0,
     memory: [],
+    operator: {
+      enabled: s.operator?.enabled ?? false,
+      messages: (s.operator?.messages ?? []).reduce(mergeMessage, [] as OperatorMessage[]),
+    },
   };
 }
 
@@ -97,6 +103,12 @@ export function applyEvent(s: WatchState, type: string, data: unknown): WatchSta
       const c = data as Commit;
       if (c.playthrough !== s.pt) return s;
       return { ...s, memory: [c, ...s.memory].slice(0, LIMITS.memory) };
+    }
+    case "operator": {
+      // ids are per playthrough: a row naming none is the live playthrough's (the hub tails the runner's)
+      const m = data as OperatorMessage & { playthrough?: string | null };
+      if (m.playthrough ? m.playthrough !== s.pt : !s.live) return s;
+      return { ...s, operator: { ...s.operator, messages: mergeMessage(s.operator.messages, m) } };
     }
     default:
       return s;

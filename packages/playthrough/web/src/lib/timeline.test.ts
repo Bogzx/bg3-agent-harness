@@ -14,7 +14,8 @@ const fight = (session: string, t: string, over: Partial<Fight> = {}): Fight => 
 const payload: TimelinePayload = {
   v: 1, playthrough: "pt",
   sessions: [{ session: "S002", started: 100, minutes: 30, outcome: "success" },
-             { session: "S003", started: 200, minutes: 20, outcome: "error_during_execution" }],
+             { session: "S003", started: 200, minutes: 20, outcome: "error_during_execution",
+               operator: { enabled: true, sent: 2, delivered: 1 } }],  // one still queued
   decisions: [decision("D-01", "S001"), decision("D-02", "S003"), decision("D-03", null)],
   fights: [fight("S003", "2026-10-10T20:40:00", { died: ["Gale"] }), fight("S003", "2026-10-10T20:30:00"),
            fight("S002", "2026-10-10T19:00:00", { downed: 1 })],
@@ -28,6 +29,7 @@ describe("timeline rows", () => {
     expect(s3.items.map((i) => (i.kind === "choice" ? i.d.id : i.f.t))).toEqual([
       "D-02", "2026-10-10T20:30:00", "2026-10-10T20:40:00"]);
     expect([s3.choices, s3.fights, s3.deaths, s3.outcome]).toEqual([1, 2, 1, "error_during_execution"]);
+    expect(rows.map((r) => r.guided)).toEqual(["guided (1 message)", null, null]); // what the agent got
     expect(rows[2]!.started).toBeNull(); // S001: a decision from before the recorded sessions
   });
 

@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, cast
 
-from . import config
+from . import config, operator
 from .jsontypes import is_list, is_obj
 
 HISTORY_VERSION = 1
@@ -154,6 +154,7 @@ LAUNCH_KEYS: dict[str, tuple[str | None, str]] = {
     "max_cost": ("session", "max_cost_usd"),
     "keeper": ("keeper", "enabled"),
     "recording": ("recording", "enabled"),
+    "operator_messages": ("operator", "messages"),
 }
 
 
@@ -183,6 +184,15 @@ def read_history(path: Path) -> list[dict[str, Any]]:
         return []
     h = v.get("history") if is_obj(v) else None
     return [x for x in h if is_obj(x)] if is_list(h) else []
+
+
+def history_row(res: SessionResult, cfg: config.PlaythroughConfig, sdir: Path) -> dict[str, Any]:
+    """A session's supervisor.json row: its result, and `operator` {enabled, sent, delivered} when the playthrough
+    took operator messages for it (None when the option was off or the session never started)."""
+    row = asdict(res)
+    on = cfg.operator.messages and res.session != "?"
+    row["operator"] = operator.session_counts(sdir, res.session, res.started, res.ended) if on else None
+    return row
 
 
 def write_history(path: Path, history: list[dict[str, Any]]) -> None:
@@ -317,7 +327,7 @@ class Supervisor:
                 )
                 self._set(session=f"S{n:03d}", detail="playing" + nudge)
                 res = self.runner.run_session(req, self.stop_event)
-                hist.append(asdict(res))
+                hist.append(history_row(res, cfg, path.parent))
                 write_history(path, hist)
                 if cfg.keeper.enabled and res.outcome != "error" and not self.closing:
                     self._set(detail="memory keeper")

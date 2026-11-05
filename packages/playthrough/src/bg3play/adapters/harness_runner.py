@@ -66,7 +66,7 @@ from bg3harness.session import (
     run_session,
 )
 
-from .. import config
+from .. import config, operator
 from ..jsontypes import is_obj
 from ..memory import memlib
 from ..runner import memory_session, prompts
@@ -115,8 +115,9 @@ def session_env(
     req: SessionRequest, sid: str, start: float, runtime: Path, playthroughs: Path, keeper: bool
 ) -> dict[str, str]:
     """The session's clock (bg3play.runner.memory_session.clock_env, the runner's) and paths, for the agent, the bg3
-    server and session.py."""
+    server and session.py; the operator messages' dir only for a playthrough that takes them ([operator] messages)."""
     m = req.config.session.minutes
+    guided = {"BG3AI_OPERATOR_DIR": str(runtime / "sessions" / req.playthrough)} if req.config.operator.messages else {}
     return {
         "BG3AI_PLAYTHROUGH": req.playthrough,
         "BG3AI_SESSION": sid,
@@ -126,6 +127,7 @@ def session_env(
         **memory_session.clock_env(start + m * 60, m, keeper),
         "BG3AI_PROMPT_CONDITION": req.config.agent.condition,
         "BG3AI_AUTOSKIP": "1" if req.config.game.autoskip else "0",  # the bg3 server's movie skipper
+        **guided,
     }
 
 
@@ -153,13 +155,16 @@ def kickoff(
     save_why: str = "",
 ) -> str:
     """The runner's kickoff (prompts.build_kickoff) for an app session: the request's notes and the character, the
-    save the game was recovered to and the recovery's notes, the pace pre-flight when the condition has coaching."""
+    save the game was recovered to and the recovery's notes, the pace pre-flight when the condition has coaching, the
+    operator messages' statement when session_env gives the bg3 server their dir ([operator] messages)."""
     cfg = req.config
     notes = [*req.notes, *game_notes]
     if cfg.character.brief:
         notes.append(f"Your character: {cfg.character.brief} (roleplay: {cfg.character.roleplay}).")
     pace = client_setup.kickoff_pace(client, {"BG3AI_PROMPT_CONDITION": cfg.agent.condition})
-    return prompts.build_kickoff(sid, req.playthrough, loaded, notes, briefing.strip(), save_why, pace=pace)
+    return prompts.build_kickoff(
+        sid, req.playthrough, loaded, notes, briefing.strip(), save_why, pace=pace, operator=cfg.operator.messages
+    )
 
 
 def session_cap(client: str, max_cost: float, budget: Path) -> tuple[float, str | None]:
@@ -228,6 +233,11 @@ class AppSessionHooks:
             self.sdir, self.sid, prompt, minutes * 60 + self.grace_s, client_session or str(uuid.uuid4()), resume,
             self.env, max(self.max_cost_usd - spent, 1e-9) if self.max_cost_usd > 0 else 0.0,
         )  # fmt: skip
+        # a message a dead client's model never saw (this session's or an earlier one's) goes out again
+        if self.env.get("BG3AI_OPERATOR_DIR"):
+            lost = operator.redeliver(self.sdir, self.clock())
+            if lost:
+                self._log(f"{self.sid}: operator messages queued again (not in the client's stream): {', '.join(lost)}")
         res = self.agent.run(call)
         self.runs.append(res)
         self.recovered_last = False

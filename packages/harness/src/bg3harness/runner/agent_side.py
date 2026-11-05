@@ -93,6 +93,19 @@ class AgentSide:
                                 self.play_windows() if listed else [], after, getattr(self.opt, "start_save", None),
                                 getattr(self, "gates", None))
 
+    def facts_before_agent(self, label: str) -> None:
+        """The run's first facts read, before its agent starts. When it can't read (the game not answering, or at the
+        main menu of a new game, where the server context doesn't exist yet), the progress loop's first poll takes the
+        baseline; the main menu is logged as deferred, anything else as a failure."""
+        try:
+            self.facts_now()
+        except Exception as e:
+            if game.at_main_menu():
+                renv.log(f"{label}: facts read before the agent deferred: the game is at the main menu (no level "
+                         "loaded yet)")
+            else:
+                renv.log(f"{label}: facts read before the agent failed: {type(e).__name__}: {e}")
+
     def run_claude(self, sid: str, prompt: str, minutes: float, claude_session: str | None,
                    resume: bool = False, tag: str = "", needs_game: bool = True) -> rstate.SessionResult:
         """needs_game=False (the fix-notes pass edits memory only): a game crash meanwhile doesn't stop it (S027-fix
@@ -181,10 +194,7 @@ class AgentSide:
             # the game the agent got, and the referee ring syncs here, so what the agent does in the progress loop's
             # first story.POLL_S reaches facts.jsonl (launch-v1 sonnet act3_gold_max: a +18 sale at 13 s was in
             # neither; start read 428, the save's gold is 410)
-            try:
-                self.facts_now()
-            except Exception as e:  # the game not answering: the progress loop's first poll takes the baseline
-                renv.log(f"{sid}{tag}: facts read before the agent failed: {type(e).__name__}: {e}")
+            self.facts_before_agent(sid + tag)
         try:
             proc = subprocess.Popen(cmd, cwd=renv.PLAY_DIR, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     stdin=subprocess.DEVNULL, start_new_session=True, text=True, bufsize=1)

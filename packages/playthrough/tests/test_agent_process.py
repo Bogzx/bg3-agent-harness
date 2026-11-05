@@ -166,3 +166,33 @@ def test_the_stream_is_timed_into_turns_jsonl(tmp_path: Path):
     a.run(call(tmp_path))
     turns = [json.loads(ln) for ln in (tmp_path / "S004.turns.jsonl").read_text().splitlines()]
     assert [r["type"] for r in turns] == ["assistant", "session_result"] and {r["t"] for r in turns} == {1000.0}
+
+
+def test_the_shells_operator_dir_never_reaches_the_agent(tmp_path: Path, monkeypatch: Any):
+    # Only the runner's session env names the operator messages' dir (a playthrough with the option on)
+    monkeypatch.setenv("BG3AI_OPERATOR_DIR", "/elsewhere/sessions/other")
+    monkeypatch.setenv("BG3AI_OPERATOR_X", "1")
+    a, spawned = agent([SAY])
+    a.run(call(tmp_path))
+    assert not [k for k in spawned[0][2] if k.startswith("BG3AI_OPERATOR_")] and spawned[0][2]["FAKE"] == "1"
+    a, spawned = agent([SAY])
+    a.run(call(tmp_path, env={"BG3AI_SESSION": "S004", "BG3AI_OPERATOR_DIR": str(tmp_path)}))
+    assert spawned[0][2]["BG3AI_OPERATOR_DIR"] == str(tmp_path)
+
+
+def test_an_option_off_session_gives_its_bg3_server_no_operator_dir_from_the_apps_env(tmp_path: Path, monkeypatch: Any):
+    # REVIEW-CHAT-INT #2: the app started from a shell that exports BG3AI_OPERATOR_DIR. The bg3 server is the client's
+    # stdio child and inherits the client's env: the runner's session env (harness_runner.session_env, option off)
+    # plus the app's own env must not name another playthrough's dir
+    from bg3play import config
+    from bg3play.adapters import harness_runner as hr
+    from bg3play.supervisor import SessionRequest
+
+    monkeypatch.setenv("BG3AI_OPERATOR_DIR", "/elsewhere/sessions/other")
+    rt = tmp_path / "runtime"
+    for on in (False, True):
+        cfg = config.validate({"v": 1, "name": "ilse", "operator": {"messages": on}})
+        env = hr.session_env(SessionRequest("ilse", 1, cfg, False), "S001", 1000.0, rt, tmp_path / "pts", False)
+        a, spawned = agent([SAY])
+        a.run(call(tmp_path, env=env))
+        assert spawned[0][2].get("BG3AI_OPERATOR_DIR") == (str(rt / "sessions" / "ilse") if on else None)

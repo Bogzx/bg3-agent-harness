@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from bg3ai import operator as op
 from bg3harness.runner import env as renv
 from bg3harness.runner.policy import PACE_PREFLIGHT, PROGRESS_MIN_POINTS, ROLEPLAY_TEXT
 
@@ -17,11 +18,13 @@ def build_kickoff(
     briefing: str = "",
     save_why: str = "",
     pace: str = PACE_PREFLIGHT,
+    operator: bool = False,
 ) -> str:
     """The first message of a session. `briefing` is session.py start's memory injection (the runner opened the
     session): it leads the message, where the SessionStart hook used to put it. Without it (the runner couldn't open
     the session) the agent calls session_start. It names no deadline: every time shown before WRAP UP NOW was read
-    as a clock to beat (S066-S082 wrapped up 7-13 min early)."""
+    as a clock to beat (S066-S082 wrapped up 7-13 min early). `operator`: the session's bg3 server takes the app's
+    operator messages ($BG3AI_OPERATOR_DIR): the kickoff says so (bg3ai.operator.CHANNEL), else it is as before."""
     lines = [
         f"This is session {sid} of the BG3 playthrough '{playthrough}', started by the autonomous runner.",
         (
@@ -35,6 +38,7 @@ def build_kickoff(
         "the session-wrapup playbook; its last step is end_session, and you stop (no more tool calls) when that "
         "reports the commit. Nobody will answer questions: decide yourself and write down why.",
         *([pace] if pace else []),
+        *([op.CHANNEL] if operator else []),
     ]
     if briefing:
         lines.insert(0, briefing)

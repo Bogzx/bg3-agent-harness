@@ -29,6 +29,7 @@ session deadline, the port and the RPC pool). The ones a standalone client may w
 | `BG3AI_PROMPT_CONDITION` | `rules` | which rules text the server serves (below) |
 | `BG3AI_AUTOSKIP` | on | `0` = the run lets cutscenes play: the server starts no movie skipper (no shim ESCAPE) |
 | `BG3AI_TOOLS`, `BG3AI_TOOLS_OFF` | every tool | which tools it serves (below) |
+| `BG3AI_OPERATOR_DIR` | unset | the playthrough app's operator messages ([below](#operator-messages)); unset = none |
 
 ## A memory
 
@@ -90,6 +91,39 @@ Every tool belongs to one group. The `game` group is every tool in no other grou
   ```
 
 A model without image input should play with `BG3AI_TOOLS_OFF=screenshots`.
+
+## Operator messages
+
+The playthrough app ([APP.md](APP.md#operator-messages)) can pass a message from the person running a playthrough
+to its agent. The server does this only with `BG3AI_OPERATOR_DIR` set, and the app's runner sets it only for a
+playthrough with `[operator] messages = true`. Without it the server opens no file and adds nothing, and the tools,
+their descriptions and the rules text are the same either way.
+
+In that folder:
+
+- `operator.jsonl`: the app appends `{id, t, text}`, one line per message.
+- `operator.delivered.jsonl`: the server appends `{id, t, session, tool}` when a result carries the message. The
+  app's runner appends `{id, t, redeliver: true}` at an agent start for a message that a dead client's stream never
+  showed, which makes it pending again.
+
+A message is pending until a delivered row names it (and again after a later `redeliver` row). The next tool result
+the server finishes gets every pending message appended, after the tool's own text, one line each:
+
+```
+OPERATOR MESSAGE (from the person running this playthrough, sent HH:MM:SS): <text>
+```
+
+Each message goes out once. The block holds the message and the time it was sent, nothing else. Only the result the
+client gets takes messages (the MCP layer, after compaction): a tool that another tool calls inside itself, and a
+step of a batch, never does, so the batch carries it in its own end. `end_session`'s result never takes one either:
+the session ends before the model could act on it, so it goes out in the next session's first result. A metrics
+record `{"type": "operator", "t", "tool", "ids"}` lists the ids a result carried, and the session's `latency.json`
+counts them (`operator_messages`). When nothing changed, the check costs one `stat` per
+call.
+
+The server of the memory keeper never takes operator messages, and neither does a bench run: the keeper and the
+bench's `LiveRunHost` drop every `BG3AI_OPERATOR_*` from the env they pass on, even when the shell that started them
+exports it.
 
 ## What the agent never sees
 

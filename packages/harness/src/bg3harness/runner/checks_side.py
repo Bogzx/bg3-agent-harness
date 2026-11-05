@@ -58,7 +58,7 @@ class ChecksSide:
             report = json.loads(json_path.read_text())
         except (OSError, ValueError):
             report = None
-        res = rcode.check_all_result(rc, out, report)
+        res = rcode.check_all_result(rc, out, report, menu=rc == 2 and game.at_main_menu())
         session, triage_path = self.last_triage or (None, None)
         renv.log(res["line"] + (f" (after {session}, {secs:.0f} s)" if session else f" ({secs:.0f} s)"))
         if res["ok"]:

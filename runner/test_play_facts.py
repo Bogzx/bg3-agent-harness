@@ -70,6 +70,10 @@ class MenuMod:
         return {"ok": True, "result": result}
 
     def eval_raw(self, ctx, code):
+        if "GetGameState" in code:
+            return "Running" if self.loaded else "Menu"
+        if code == G.MOD_READY_LUA:
+            return "true"  # the mod's client side is up at the main menu
         return None
 
 
@@ -325,6 +329,30 @@ class FactsWiring(unittest.TestCase):
         )
         self.assertIn(
             "settings check passed: no game setting contradicts the scenario (deferred from the main menu)", self.logs
+        )
+
+    def test_the_first_read_at_the_main_menu_is_deferred(self):  # #101 naut-demo: "failed: LuaDebugError" each leg
+        r, _ = self.menu_runner(karmic=False)
+        r.facts_before_agent("S003")
+        self.assertEqual(
+            self.logs,
+            ["S003: facts read before the agent deferred: the game is at the main menu (no level loaded yet)"],
+        )
+
+    def test_the_first_read_failing_elsewhere_still_fails(self):
+        r, _ = self.menu_runner(karmic=False)
+        self.menu.loaded = True  # a loaded game whose read fails: a failure
+        with mock.patch.object(r, "facts_now", side_effect=RuntimeError("boom")):
+            r.facts_before_agent("S003")
+        self.fake.stop()  # no game at all: a failure too
+        with mock.patch.object(r, "facts_now", side_effect=ConnectionError("refused")):
+            r.facts_before_agent("S003-c1")
+        self.assertEqual(
+            self.logs,
+            [
+                "S003: facts read before the agent failed: RuntimeError: boom",
+                "S003-c1: facts read before the agent failed: ConnectionError: refused",
+            ],
         )
 
     def test_a_contradiction_found_after_the_load_stops_the_session(self):

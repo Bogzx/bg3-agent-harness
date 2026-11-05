@@ -1,4 +1,5 @@
 // Timeline rows: choices (decisions.md) and fights grouped by session, newest session first. Pure functions only.
+import { guidedLabel } from "./operator";
 import type { Decision, Fight, TimelinePayload } from "./types";
 
 export type Item = { kind: "choice"; d: Decision } | { kind: "fight"; f: Fight };
@@ -9,6 +10,7 @@ export interface SessionRow {
   started: number | null;
   minutes: number | null;
   outcome: string | null;
+  guided: string | null; // "guided (N messages)": operator messages were on
   items: Item[];
   choices: number;
   fights: number;
@@ -40,7 +42,7 @@ export function buildRows(t: TimelinePayload, filter: Filter): SessionRow[] {
   const row = (n: number): SessionRow => {
     let r = rows.get(n);
     if (!r) {
-      r = { session: sessionId(n), n, started: null, minutes: null, outcome: null, items: [], choices: 0,
+      r = { session: sessionId(n), n, started: null, minutes: null, outcome: null, guided: null, items: [], choices: 0,
             fights: 0, deaths: 0 };
       rows.set(n, r);
     }
@@ -49,7 +51,7 @@ export function buildRows(t: TimelinePayload, filter: Filter): SessionRow[] {
   for (const s of t.sessions) {
     const n = num(s.session);
     if (n === null) continue;
-    Object.assign(row(n), { started: s.started, minutes: s.minutes, outcome: s.outcome });
+    Object.assign(row(n), { started: s.started, minutes: s.minutes, outcome: s.outcome, guided: guidedLabel(s.operator) });
   }
   if (filter.choices) {
     for (const d of t.decisions) {

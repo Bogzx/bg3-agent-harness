@@ -4,7 +4,8 @@ import threading
 from pathlib import Path
 
 import pytest
-from bg3play import config, supervisor
+from bg3ai import operator as op
+from bg3play import config, operator, supervisor
 from bg3play.adapters import legacy_cli
 from bg3play.supervisor import SessionRequest, SessionResult, Supervisor, SupervisorError, oom_streak
 
@@ -67,6 +68,7 @@ def test_runs_sessions_to_the_budget_with_the_keeper_between(tmp_path: Path):
     assert [r.resume for r in runner.requests] == [False, True, True]
     hist = sup.history("ilse")
     assert [h["session"] for h in hist] == ["S001", "S002", "S003"] and hist[0]["started"] == 1000.0
+    assert hist[0]["operator"] is None  # the option is off: no guided mark
     assert sup.view() == {"playthrough": "ilse", "state": "idle", "detail": "hours budget spent", "session": "S003"}
     assert events[0]["state"] == "running" and events[-1]["state"] == "idle"
 
@@ -168,6 +170,26 @@ def test_launch_config_and_saved_on_start(tmp_path: Path):
         supervisor.launch_config(cfg, {"difficulty": "Nightmare"})
     sup.start("ilse", wait=True, cfg=cfg)
     assert config.load(tmp_path / "playthroughs" / "ilse") == cfg and runner.requests[0].record is False
+
+
+def test_a_guided_session_has_its_operator_counts_in_the_history(tmp_path: Path):
+    sup, runner, _, _ = make(tmp_path, [], hours=2.0)
+    cfg = supervisor.launch_config(config.load(tmp_path / "playthroughs" / "ilse"), {"operator_messages": True})
+    assert cfg.operator.messages is True
+    sdir = supervisor.history_path(sup.runtime, "ilse").parent
+
+    def guide():  # S001: one message sent and delivered into one of its results, one sent and still queued
+        assert operator.post(sdir, True, {"text": "rest first"}, sup.clock() + 1)[0] == 201
+        assert operator.post(sdir, True, {"text": "then go north"}, sup.clock() + 9)[0] == 201
+        row = {"id": "m1", "t": sup.clock() + 2, "session": "S001", "tool": "look"}
+        (sdir / op.DELIVERED).write_text(json.dumps(row) + "\n")
+
+    runner.during[1] = guide
+    sup.start("ilse", wait=True, cfg=cfg)
+    assert [h["operator"] for h in sup.history("ilse")] == [
+        {"enabled": True, "sent": 2, "delivered": 1},
+        {"enabled": True, "sent": 0, "delivered": 0},
+    ]
 
 
 # ------------------------------------------------------------ the legacy CLI adapter
@@ -280,6 +302,28 @@ def test_legacy_run_session_soft_stop(tmp_path: Path):
     assert res.session == "S002" and res.outcome == "stopped" and res.progress is False
     assert spawned[0][1] == tmp_path / "repo" and spawned[0][0][1].endswith("runner/play.py")
     assert spawned[0][2]["BG3AI_PROMPT_CONDITION"] == "rules+coaching"  # a playthrough's default condition
+
+
+@pytest.mark.parametrize("on", [True, False])
+def test_the_legacy_runner_gives_play_py_the_operator_dir_only_with_the_option(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, on: bool
+):
+    # Under the legacy CLI a queued message must reach play.py's bg3 server (it passes its BG3AI_* on), and a
+    # shell's export must not reach a playthrough without the option
+    monkeypatch.setenv("BG3AI_OPERATOR_DIR", "/elsewhere/sessions/other")
+    runtime = tmp_path / "runtime"
+    rj = runtime / "sessions" / "ilse" / "runner.json"
+    spawned = []
+
+    def spawn(args, cwd, log, env):
+        spawned.append(env)
+        rj.write_text(json.dumps({"history": [{"kind": "play", "session": "S001", "reason": "exited"}]}))
+        return FakeProc(lambda: None, timeouts=0)
+
+    cli = legacy_cli.LegacyCli(tmp_path / "repo", runtime, spawn_fn=spawn, poll_s=0)
+    assert cli.run_session(req(operator={"messages": on}), threading.Event()).session == "S001"
+    env = spawned[0]
+    assert env.get("BG3AI_OPERATOR_DIR") == (str(runtime / "sessions" / "ilse") if on else None)
 
 
 def test_sessions_the_runner_played_before_count(tmp_path: Path):

@@ -15,6 +15,8 @@ Three record streams, all JSONL:
       rt_n: the call's serial round trips to the game, on both of the bridge's connections (the main one and
       the interrupt watcher's), evals that overlapped (one parallel read) counted once; watch_n: how many of
       the call's evals went over the watcher connection (only when > 0; rpc_n/rpc_ms count the main one only).
+    {"type":"operator", "t", "tool", "ids"}
+      the app's operator messages a result carried (bg3ai.operator), after the call's tool record.
     {"type":"sample", "t", "moving", "job", "dlg", "combat", "pturn"} / {"type":"sample", "t", "load": true}
       ~1/s from the activity sampler (nav.activity on its own connection). pturn (in combat only, newer mods):
       a party member has the active turn; false means enemies/NPCs are acting and the agent can only wait.

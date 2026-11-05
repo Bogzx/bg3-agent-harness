@@ -1,5 +1,5 @@
 import type {
-  BenchPayload, ClientProfile, Commit, DiffLine, GoalsPayload, LatencyPayload, LivePayload, MemoryFile, ProgressPayload, StoryPayload, PlaythroughConfig, PlaythroughRow, Positions, RecorderState, ReplayPayload, Runner, Segment, SupervisorView,
+  BenchPayload, ClientProfile, Commit, DiffLine, GoalsPayload, LatencyPayload, LivePayload, MemoryFile, ProgressPayload, StoryPayload, PlaythroughConfig, PlaythroughRow, Positions, RecorderState, ReplayPayload, Runner, Segment, SessionRow, SupervisorView,
   TimelinePayload, WatchSnapshot,
 } from "./types";
 import { authHeaders } from "./auth";
@@ -41,10 +41,7 @@ export const api = {
       `${pt(name)}/memory/diff?path=${encodeURIComponent(path)}&sha=${encodeURIComponent(sha)}`,
     ),
   memoryLog: (name: string) => getJson<{ v: number; commits: Commit[] }>(`${pt(name)}/memory/log`),
-  sessions: (name: string) =>
-    getJson<{ v: number; sessions: { session: string; started: number | null; minutes: number | null }[] }>(
-      `${pt(name)}/sessions`,
-    ),
+  sessions: (name: string) => getJson<{ v: number; sessions: SessionRow[] }>(`${pt(name)}/sessions`),
   replay: (name: string, session: string) => getJson<ReplayPayload>(`${pt(name)}/replay/${encodeURIComponent(session)}`),
   timeline: (name: string) => getJson<TimelinePayload>(`${pt(name)}/timeline`),
   story: (name: string) => getJson<StoryPayload>(`${pt(name)}/story`),
@@ -66,9 +63,16 @@ export const api = {
       headers: { "Content-Type": "application/json", ...authHeaders(sessionStorage) },
       body: JSON.stringify(body),
     }),
+  /** An operator message for the agent: the bridge adds it to the agent's next tool result. */
+  message: (name: string, text: string) =>
+    getJson<{ id: string; t: number; status: "queued" }>(`${pt(name)}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders(sessionStorage) },
+      body: JSON.stringify({ text }),
+    }),
 };
 
-export const STREAM_TYPES = ["status", "session", "log", "action", "party", "memory", "position", "supervisor", "actions_reset", "hub_error"];
+export const STREAM_TYPES = ["status", "session", "log", "action", "party", "memory", "position", "supervisor", "actions_reset", "hub_error", "operator"];
 
 /** The SSE stream from `lastId` on. EventSource resends the last id it saw on reconnect by itself; a "reset" means
  * the server lost our place (it restarted): the caller reloads its snapshot. Returns a close function. */

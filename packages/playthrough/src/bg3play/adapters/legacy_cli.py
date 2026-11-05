@@ -23,7 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import IO, Any, Protocol
 
-from .. import client_profiles, config
+from .. import client_profiles, config, operator
 from ..jsontypes import is_obj
 from ..supervisor import SessionRequest, SessionResult, SupervisorError
 
@@ -98,11 +98,14 @@ def play_args(
     return args
 
 
-def condition_env(cfg: config.PlaythroughConfig) -> dict[str, str]:
+def condition_env(cfg: config.PlaythroughConfig, sdir: Path | None = None) -> dict[str, str]:
     """play.py's env: the config's prompt condition for the bg3 server and pi's system text (claude's play/CLAUDE.md
-    is rules+coaching whatever it says), and [game] autoskip (the runner's ui.config, its and the server's skipper)."""
-    return {**os.environ, "BG3AI_PROMPT_CONDITION": cfg.agent.condition,
-            "BG3AI_AUTOSKIP": "1" if cfg.game.autoskip else "0"}  # fmt: skip
+    is rules+coaching whatever it says), [game] autoskip (the runner's ui.config, its and the server's skipper), and
+    with [operator] messages the operator messages' dir `sdir` (play.py passes its BG3AI_* on to the bg3 server; its
+    keeper drops it). No restart redelivery here: play.py resumes a crashed client itself."""
+    guided = {"BG3AI_OPERATOR_DIR": str(sdir)} if cfg.operator.messages and sdir is not None else {}
+    return {**operator.runner_env(os.environ), "BG3AI_PROMPT_CONDITION": cfg.agent.condition,
+            "BG3AI_AUTOSKIP": "1" if cfg.game.autoskip else "0", **guided}  # fmt: skip
 
 
 def last_play(runner_json: Path) -> dict[str, Any] | None:
@@ -173,7 +176,7 @@ class LegacyCli:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         stopped = False
         with log_path.open("ab") as log:
-            proc = self.spawn(args, self.repo, log, condition_env(req.config))
+            proc = self.spawn(args, self.repo, log, condition_env(req.config, runner_json.parent))
             code: Any = None
             while code is None:
                 if stop.is_set() and not stopped:

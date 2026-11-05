@@ -266,6 +266,9 @@ class CheckAllBetweenSessions(unittest.TestCase):
             self.assertFalse(res["ok"])
             self.assertIn(want, res["line"])
         self.assertIn("Traceback boom", rcode.check_all_result(1, "x\nTraceback boom\n", None)["line"])
+        res = rcode.check_all_result(2, "", None, menu=True)  # the main menu: no server context yet
+        self.assertEqual((res["ok"], res["line"]), (False, "check_all: deferred (main menu: no level loaded yet)"))
+        self.assertIn("timed out", rcode.check_all_result(None, "", None, menu=True)["line"])  # only exit 2 is the menu
 
     def test_markdown(self):
         md = rcode.check_all_markdown(rcode.check_all_result(1, "", self.REPORT), time.time(), 25.4, "after the session ")
@@ -292,7 +295,7 @@ class CheckAllBetweenSessions(unittest.TestCase):
         r.last_triage = ("S004", triage_md)
         return r, triage_md
 
-    def _run(self, d: Path, r, report, rc=1, screen="game"):
+    def _run(self, d: Path, r, report, rc=1, screen="game", menu=False):
         logs, calls = [], []
 
         def fake_run(cmd, **kw):
@@ -302,7 +305,8 @@ class CheckAllBetweenSessions(unittest.TestCase):
             return mock.Mock(returncode=rc, stdout="", stderr="")
 
         with mock.patch.object(renv, "RUNTIME", d), mock.patch.object(renv, "log", logs.append), \
-                mock.patch.object(rcode.subprocess, "run", fake_run), mock.patch.object(G, "ui_screen", return_value=screen):
+                mock.patch.object(rcode.subprocess, "run", fake_run), mock.patch.object(G, "ui_screen", return_value=screen), \
+                mock.patch.object(G, "at_main_menu", return_value=menu):
             res = r.between_sessions_check()
         return res, logs, calls
 
@@ -335,6 +339,16 @@ class CheckAllBetweenSessions(unittest.TestCase):
             self.assertIn("not reachable", logs[0])
             self.assertLess(r.state["check_all_at"], time.time() - 3000)  # not recorded: retried next session
             self.assertIn("no verdict", triage_md.read_text())
+
+    def test_at_the_main_menu_it_is_deferred(self):  # #101 naut-demo: "no verdict (game/mod not reachable)"
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            r, triage_md = self._runner(d, last=time.time() - 3600)
+            res, logs, _ = self._run(d, r, None, rc=2, menu=True)
+            self.assertFalse(res["ok"])
+            self.assertEqual(logs[0], "check_all: deferred (main menu: no level loaded yet) (after S004, 0 s)")
+            self.assertLess(r.state["check_all_at"], time.time() - 3000)  # runs once a level is loaded
+            self.assertIn("deferred (main menu", triage_md.read_text())
 
     def test_screen_fail_is_loud(self):
         # S068 started on screen=map: a map check_all could not close fails the prep loudly and tells the session
