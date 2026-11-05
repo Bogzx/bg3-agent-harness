@@ -25,9 +25,11 @@ from typing import Any
 from bg3ai import progress as story  # pyright: ignore[reportMissingTypeStubs]
 from bg3ai.referee import Rpc  # pyright: ignore[reportMissingTypeStubs]
 from bg3harness import choices, events, facts, session_summary
+from bg3harness.runner import env as renv
 
 Log = Callable[[str], None]
-StoryRead = Callable[[], dict[str, Any] | None]  # one poll of the game (bg3ai.progress.read_game), None = no answer
+# one poll of the game (bg3ai.progress.read_game), None = no answer; timeout: each eval's (None = the reader's own)
+StoryRead = Callable[..., dict[str, Any] | None]
 LuaEval = Callable[[str, str], str]  # (code, context) -> the eval's JSON
 
 
@@ -47,12 +49,16 @@ class FactsFeed:
             self.writer.mark("run_start", run_start)  # pyright: ignore[reportUnknownMemberType]
         self.ring = facts.RingFeed(rpc, self.writer, sdir / "rolls.jsonl")
         self.lua_eval = lua_eval
+        # one poll at a time (play.py's FACTS_LOCK): an old session's pass still out on a hung game (past the 20 s
+        # join) overlapped the next session's poller on this feed (REVIEW-18s)
+        self.lock = threading.Lock()
 
     def poll(self, got: dict[str, Any] | None) -> None:
-        if got:
-            self.ring.poll()
-        inv: dict[str, Any] | None = facts.read_inventory(self.lua_eval, story.combined_code) if got else None  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportUnknownVariableType]
-        self.writer.observe(got, inv)  # pyright: ignore[reportUnknownMemberType]
+        with self.lock:
+            if got:
+                self.ring.poll()
+            inv: dict[str, Any] | None = facts.read_inventory(self.lua_eval, story.combined_code) if got else None  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportUnknownVariableType]
+            self.writer.observe(got, inv)  # pyright: ignore[reportUnknownMemberType]
 
     def choices(self, sid: str, base: Path, log: Log) -> None:
         """The session's dialogue choices (scene, options, pick, stated reason) from its <sid>.events.jsonl."""
@@ -75,12 +81,14 @@ class ProgressPoller:
         self.timeline = story.Timeline(sdir / f"{sid}.progress.jsonl", sdir / "progress_state.json", start)
         self.actions = story.actions_in(metrics_path(sdir, sid))
 
-    def poll(self, now: float | None = None) -> None:
+    def poll(self, now: float | None = None, last: bool = False) -> None:
+        """One read into the timeline and facts. last: the session's end state, progress only, with short evals
+        (renv.LAST_EVAL_TIMEOUT) that end within the session end's join; the end's facts are FactsFeed's own."""
         try:
-            got = self.read()
+            got = self.read(timeout=renv.LAST_EVAL_TIMEOUT) if last else self.read()
         except Exception:  # not answering: a poll without an answer
             got = None
-        if self.facts is not None:
+        if self.facts is not None and not last:
             try:
                 self.facts(got)
             except Exception as e:
@@ -94,8 +102,12 @@ class ProgressPoller:
             self.log(f"{self.sid}: progress poll failed: {e}")
 
     def loop(self, stop: threading.Event) -> None:
-        while not stop.wait(self.interval):
-            self.poll()
+        """Polls every `interval` s until `stop` is set, then once more: a story change after the last poll (a short
+        session's whole scene, v010 pilot choice_act2_nightsong sonnet: 0 points) is in the session's progress."""
+        last = False
+        while not last:
+            last = stop.wait(self.interval)
+            self.poll(last=last)
 
 
 def write_session_files(sdir: Path, sid: str, start: float, end: float, log: Log) -> None:

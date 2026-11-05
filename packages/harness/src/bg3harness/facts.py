@@ -175,8 +175,11 @@ def _hp(snap: dict) -> list:
 class FactsWriter:
     """Appends facts.jsonl records (thread-safe; a write failure is dropped, facts never break a session)."""
 
-    def __init__(self, path: Path, clock: Callable[[], float] = time.time, snapshot_s: float = SNAPSHOT_S):
-        self.path, self.clock, self.snapshot_s = Path(path), clock, snapshot_s
+    def __init__(self, path: Path, clock: Callable[[], float] = time.time, snapshot_s: float = SNAPSHOT_S,
+                 log: Callable[[str], None] | None = None):
+        self.path, self.clock, self.snapshot_s, self.log = Path(path), clock, snapshot_s, log
+        # this writer wrote run_end: nothing more (REVIEW-18s: a poll in flight at the run's end wrote after it)
+        self.ended = False
         self.t0: float | None = None
         self.last: dict | None = None        # the last read's snapshot fields
         self.snap_t: float | None = None     # when the last snapshot record was written
@@ -204,11 +207,17 @@ class FactsWriter:
         self.last_t = now
         game_t = None if self.t0 is None else round(max(0.0, now - self.t0), 1)
         line = {"v": VERSION, "kind": rec.pop("kind"), "t": round(now, 2), "game_t": game_t, **rec}
-        try:
-            with self.lock, open(self.path, "a") as f:
-                f.write(json.dumps(line, ensure_ascii=False, separators=(",", ":")) + "\n")
-        except OSError:
-            pass
+        with self.lock:
+            if self.ended:
+                if self.log:
+                    self.log(f"facts: a {line['kind']} record after run_end not written: {str(line)[:160]}")
+                return line
+            self.ended = line["kind"] == "mark" and line.get("mark") == "run_end"
+            try:
+                with open(self.path, "a") as f:
+                    f.write(json.dumps(line, ensure_ascii=False, separators=(",", ":")) + "\n")
+            except OSError:
+                pass
         return line
 
     def mark(self, mark: str, detail: Any = None, now: float | None = None) -> dict:

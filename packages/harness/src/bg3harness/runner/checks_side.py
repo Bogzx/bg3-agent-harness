@@ -86,16 +86,24 @@ class ChecksSide:
         return res
 
     def progress_loop(self, session: str, base: Path, start: float, stop: threading.Event, human=None) -> None:
-        """Poll story progress (fair journal/map/status data) into Sxxx.progress.jsonl until stop is set."""
+        """Poll story progress (fair journal/map/status data) into Sxxx.progress.jsonl until stop is set, then once
+        more: the session's end state (v010 pilot choice_act2_nightsong sonnet: the quests closed 4-11 s after the
+        last 15 s poll and the session ended, so its progress read 0 points and 0 events)."""
         tl = story.Timeline(Path(f"{base}.progress.jsonl"), self.state.dir / "progress_state.json", start)
         actions = story.actions_in(Path(f"{base}.metrics.jsonl"))
-        while not stop.wait(story.POLL_S):
+        last = False
+        while not last:
+            last = stop.wait(story.POLL_S)
+            # the last pass reads progress only, bounded within the session end's join (REVIEW-18r): end_facts
+            # does the end-state facts reads, and a hung game's 2 x 15 s evals outlived the join
+            t = renv.LAST_EVAL_TIMEOUT if last else EVAL_TIMEOUT
             try:
-                got = story.read_game(lambda code, ctx: game.lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
+                got = story.read_game(lambda code, ctx, t=t: game.lua_eval(code, ctx, timeout=t))
             except Exception:
                 got = None
             try:
-                self.facts_poll(got)
+                if not last:
+                    self.facts_poll(got)
             except Exception as e:
                 renv.log(f"{session}: facts poll failed: {e}")
             try:
@@ -164,7 +172,7 @@ class ChecksSide:
         """This playthrough's facts.jsonl (one per run); the first use writes its run_start mark."""
         w = getattr(self, "_facts", None)
         if w is None:
-            w = self._facts = facts.FactsWriter(self.state.dir / "facts.jsonl")
+            w = self._facts = facts.FactsWriter(self.state.dir / "facts.jsonl", log=renv.log)
             if w.t0 is None:
                 w.mark("run_start", {"playthrough": self.opt.playthrough, "client": self.opt.client,
                                      "model": self.opt.model})
