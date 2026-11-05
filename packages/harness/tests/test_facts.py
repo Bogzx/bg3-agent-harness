@@ -200,6 +200,23 @@ class Facts(unittest.TestCase):
         self.assertEqual([(r["ev"], r["game_t"]) for r in again], [("game_over", 7.0)])
         self.assertEqual(self.w.game_over, 2.0)  # the run's first
 
+    def test_nothing_is_written_after_run_end(self):
+        # REVIEW-18s: a facts poll in flight when end_facts wrote run_end (a hung game's ring rpcs) finished after it
+        # and wrote its records (referee_down, events, a snapshot) past the run's end
+        logged: list[str] = []
+        self.w.log = logged.append
+        self.w.mark("run_start", now=0.0)
+        self.w.observe(READ, INV, now=1.0)
+        self.w.mark("run_end", {"outcome": "passed"}, now=30.0)
+        later = copy.deepcopy(READ)
+        later["status"]["gold"] = 99
+        self.w.mark("referee_down", {"error": "TimeoutError"}, now=31.0)  # the in-flight poll's ring, then its read
+        self.w.observe(later, INV, now=31.0)
+        recs = self.records()
+        self.assertEqual((recs[-1]["kind"], recs[-1].get("mark")), ("mark", "run_end"))
+        self.assertEqual(len(logged), 2, logged)
+        self.assertIn("after run_end", logged[0])
+
     def test_no_session_and_failed_reads(self):
         self.assertEqual(self.w.observe(None, None, now=1.0), [])
         self.assertEqual(self.w.observe({"status": None, "ui": {"screen": "credits"}}, None, now=2.0), [])
@@ -382,6 +399,7 @@ class Facts(unittest.TestCase):
         except ImportError:
             self.skipTest("jsonschema not installed (uv run --with jsonschema python -m unittest runner/test_facts.py)")
         self.play()
+        self.w.ended = False  # play() wrote run_end (nothing is written after it); the kinds below are for the schema
         self.w.mark("settings", {"resolution": "1920x1080"}, now=1501.0)
         self.w.timed_events(
             [

@@ -172,7 +172,7 @@ class ChecksSide:
         """This playthrough's facts.jsonl (one per run); the first use writes its run_start mark."""
         w = getattr(self, "_facts", None)
         if w is None:
-            w = self._facts = facts.FactsWriter(self.state.dir / "facts.jsonl")
+            w = self._facts = facts.FactsWriter(self.state.dir / "facts.jsonl", log=renv.log)
             if w.t0 is None:
                 w.mark("run_start", {"playthrough": self.opt.playthrough, "client": self.opt.client,
                                      "model": self.opt.model})
