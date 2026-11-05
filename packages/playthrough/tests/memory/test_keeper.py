@@ -779,3 +779,19 @@ def test_a_set_stop_ends_the_client_call_like_a_timeout(tmp_path):
         [sys.executable, "-c", "import time; time.sleep(60)"], tmp_path, tmp_path / "k.jsonl", 60, stop=stop
     )
     assert timed_out and rc is not None and time.monotonic() - t0 < 30
+
+
+def test_the_keepers_client_and_server_never_get_operator_messages(tmp_path, monkeypatch):
+    # The keeper's bg3 server never takes the app's operator messages, even from a shell that exports the dir
+    monkeypatch.setenv("BG3AI_OPERATOR_DIR", str(tmp_path / "sessions" / "ilse"))
+    monkeypatch.setenv("BG3AI_OPERATOR_X", "1")
+    monkeypatch.setenv("BG3AI_PLAYTHROUGH", "ilse")
+    _, env = keeper.keeper_server_env(tmp_path / "mem", tmp_path / "kn", tmp_path / "S001.task.md")
+    assert not [k for k in env if k.startswith("BG3AI_OPERATOR_")] and env["BG3AI_PLAYTHROUGH"] == "ilse"
+    out = tmp_path / "env.json"
+    code = f"import json, os; open({str(out)!r}, 'w').write(json.dumps(dict(os.environ)))"
+    keeper._run_claude([sys.executable, "-c", code], tmp_path, tmp_path / "k.jsonl", 60,
+                       {"BG3AI_OPERATOR_DIR": "/x", "BG3AI_SESSION_DEADLINE": "1"})  # fmt: skip
+    child = json.loads(out.read_text())
+    assert not [k for k in child if k.startswith("BG3AI_OPERATOR_") or k == "BG3AI_SESSION_DEADLINE"]
+    assert child["BG3AI_PLAYTHROUGH"] == "ilse"
