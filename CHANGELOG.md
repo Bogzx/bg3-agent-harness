@@ -87,9 +87,9 @@ game unless it says so.
   required camp talks named, a misread variant list refused). bench-v0.10's release cites it; the list is under
   bench-v0.10 below.
 - 0.4.0 (2026-11-05): what a maximise run's agent is told changed: the kickoff states the end rule (a stretch with
-  no acting call since a restart ends the run) and names the tools that are acting calls, and the resume message no
-  longer says the run goes on until its time cap. It also covers the bg3 tool changes of bench-v0.11 (bridge/CHANGELOG.md,
-  2026-11-04 night and 2026-11-05 entries). bench-v0.11's release cites it.
+  no acting call since a restart ends the run) and names the served tools that are acting calls, and the resume
+  message no longer says the run goes on until its time cap. It also covers the bg3 tool changes of bench-v0.11
+  (bridge/CHANGELOG.md, 2026-11-04 night and 2026-11-05 entries). bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at

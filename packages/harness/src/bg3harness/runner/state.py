@@ -107,6 +107,7 @@ class Options:
     profile: object | None = None      # run --profile: profiles.Profile (pi: endpoint, model, effort)
     system_file: str | None = None     # pi: the system text, dumped once per run (client_setup.dump_server)
     tools_expected: int | None = None  # pi, claude: the bg3 tools every play process must get (else mcp_failed)
+    tools_served: tuple[str, ...] = ()  # their names (a maximise run's kickoff names its acting tools from them)
     manifest: dict[str, Any] | None = None  # pi, claude: run_manifest.manifest_fields (the run record's "manifest")
     pace: str | None = None            # the kickoff's pace pre-flight: client_setup.kickoff_pace ("": none); None: claude's
     seed: int | None = None            # run --seed (scenario game_settings.seed, D9): scn.seed once per run

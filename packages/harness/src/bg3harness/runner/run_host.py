@@ -44,7 +44,7 @@ import signal
 import threading
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -399,15 +399,16 @@ def maximised(sc: Json) -> str | None:
     return sc["maximise"]["fact"] if "maximise" in sc else None
 
 
-def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> str:
+def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "", served: Collection[str] = ()) -> str:
     """A bench run's first message: the task and how it is scored (the scenario's `task` and `scored_by`, first),
     when the run ends (once graded, or at the time cap), its start (`loaded`: the label of the save the harness
     loaded), the grader's exact goal (graders.grade: passed at the first instant it holds, failed by a "never" that
     happened before; a maximise scenario's score instead: the fact's gain at the time cap), the character. No memory
     or playbook steps (a bench run has no playthrough memory) and no "play until WRAP UP NOW": the run ends on its
     verdict (an until milestone, or GoalWatch), a maximise run at its time cap, at a wipe or by the end rule (a stretch
-    with no acting call: the kickoff states it and names the tools acted_since counts). `pace`: the coaching
-    condition's pre-flight ("" under rules)."""
+    with no acting call: the kickoff states it and names the tools acted_since counts that the run is `served`:
+    ISSUE_TOOLS also holds tools old records name, combat_turn since #98). `pace`: the coaching condition's
+    pre-flight ("" under rules). Raises ValueError for a maximise run served no acting tool."""
     char, start = sc["profile"]["character"], sc["start"]
     note: Json = start.get("note") or {}
     task = sc.get("task") or note.get("objective") or "Make the goal below hold."
@@ -430,10 +431,13 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> 
             f"The run has no pass: it is scored when it ends, after at most {cap} minutes of play (the time cap). A "
             "party wipe (the Game Over screen) ends it sooner."
         )
+        acting = sorted(bmetrics.ISSUE_TOOLS & set(served))
+        if not acting:
+            raise ValueError(f"{sc['name']}: a maximise run served no acting tool can't state its end rule")
         lines.append(
             "A stretch with no acting call since a restart also ends it sooner: when you end your turn with time "
             "left, the harness restarts you if you made an acting call since your start or last restart, and "
-            f"otherwise the run ends. Acting calls are calls of these tools: {', '.join(sorted(bmetrics.ISSUE_TOOLS))}."
+            f"otherwise the run ends. Acting calls are calls of these tools: {', '.join(acting)}."
         )
     if start["kind"] == "save":
         lines.append(
@@ -776,7 +780,7 @@ class LiveRunHost:
         # load; a new game's is written now, not at its first level's load 15 s into the run). wall_s, the facts'
         # game_t and the evidence video all count from it; the recording runs since ensure_game.
         r.facts_writer()
-        prompt = scenario_kickoff(sc, SID, loaded, opt.pace or "")
+        prompt = scenario_kickoff(sc, SID, loaded, opt.pace or "", opt.tools_served)
         minutes = opt.session_minutes
         # the manifest's prompt is what the client is served (run_manifest.manifest_fields; none without run files),
         # its parts that text's and the kickoff's (live9: it was the kickoff's hash alone, no tools, no version)

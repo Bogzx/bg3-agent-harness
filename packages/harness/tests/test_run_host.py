@@ -57,6 +57,7 @@ UNTIL_SC: dict[str, Any] = {k: v for k, v in NEW_SC.items() if k != "goal"} | {
     "name": "nautiloid",
     "until": "nautiloid_escaped",
 }
+SERVED = ("get_status", "move_to", "trade")  # the tools the rig's run_files says the run is served
 JOB = {
     "model": "opus",
     "client": "claude",
@@ -216,7 +217,7 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig:
 
     def run_files(d: Path, client: str, seed: int | None, timing: str | None) -> dict[str, Any]:
         rig.dumped.append((d, client, seed, timing))
-        return {"tools_expected": 90, "manifest": {"m": 1}}
+        return {"tools_expected": 90, "tools_served": SERVED, "manifest": {"m": 1}}
 
     rig.h = H.LiveRunHost(make, run_files=run_files, env=rig.env, clock=lambda: 1000.0)
     monkeypatch.setattr(renv, "SAVE_DIR", tmp_path / "Story")
@@ -431,6 +432,7 @@ def test_a_bench_runs_served_text_and_tools_have_no_memory(rig: Rig, monkeypatch
     assert gone <= registry  # the dump lists the whole registry; the run is served the rest
     (r,) = host.runs.values()
     assert r[0].opt.tools_expected == len(registry - gone)
+    assert r[0].opt.tools_served == tuple(sorted(registry - gone))  # what the maximise kickoff names tools from
     assert r[0].opt.manifest is not None and r[0].opt.manifest["prompt"]["sha256"]  # rules: no capability needed
     for name in ("pi-system.txt", "bg3-instructions.txt"):
         text = (d / name).read_text()
@@ -843,6 +845,10 @@ def test_an_agent_that_keeps_ending_its_turn_is_recorded_as_an_early_exit_not_a_
     )
 
 
+def acting_tools(kickoff: str) -> list[str]:
+    return kickoff.split("Acting calls are calls of these tools: ")[1].split(".")[0].split(", ")
+
+
 MAX_SC: dict[str, Any] = {k: v for k, v in SAVE_SC.items() if k != "goal"} | {
     "name": "act1_gold_max",
     "maximise": {"fact": "gold"},
@@ -851,7 +857,7 @@ MAX_SC: dict[str, Any] = {k: v for k, v in SAVE_SC.items() if k != "goal"} | {
 
 
 def test_the_kickoff_of_a_maximise_scenario_says_its_time_cap_and_how_it_is_scored():
-    text = H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000")
+    text = H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000", served=SERVED)
     assert "The run has no pass: it is scored when it ends, after at most 45 minutes of play (the time cap)." in text
     assert "plays all" not in text  # a run that stops acting ends sooner (pilot: Sonnet act3_gold_max at 16 of 45 min)
     assert "A party wipe (the Game Over screen) ends it sooner." in text  # graders.measure stops there
@@ -861,10 +867,29 @@ def test_the_kickoff_of_a_maximise_scenario_says_its_time_cap_and_how_it_is_scor
 
 def test_the_kickoff_of_a_maximise_scenario_states_the_end_rule_and_what_an_acting_call_is():
     # v010 pilot: Sonnet's act3_gold_max ended by this rule with 29 min of the cap left, a rule it was never told
-    text = H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000")
+    text = H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000", served=SERVED)
     assert "A stretch with no acting call since a restart also ends it sooner" in text
-    listed = text.split("Acting calls are calls of these tools: ")[1].split(".")[0].split(", ")
-    assert listed == sorted(H.bmetrics.ISSUE_TOOLS)  # the set acted_since reads, so the text can't drift from it
+    assert acting_tools(text) == ["move_to", "trade"]  # get_status is served but is no acting call
+
+
+def test_the_kickoff_lists_only_acting_tools_the_run_is_served():
+    # REVIEW-v011 R1: ISSUE_TOOLS still holds combat_turn (#98 removed it; old records count), and a condition can
+    # remove more. The real registry, minus what a bench run's env takes off: the set client_setup.run_files gives
+    registry = [t["name"] for t in json.loads((renv.REPO / "tools/pi/conformance/tools.json").read_text())]
+    served = client_setup.served_tools(registry, {"BG3AI_TOOLS_OFF": f"{H.NO_MEMORY},trade"})
+    listed = acting_tools(H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000", served=served))
+    assert listed == sorted(H.bmetrics.ISSUE_TOOLS & set(served)) and "move_to" in listed
+    assert "combat_turn" not in listed and "combat_turn" in H.bmetrics.ISSUE_TOOLS
+    assert "trade" not in listed
+
+
+def test_a_maximise_kickoff_refuses_a_run_served_no_acting_tool():
+    with pytest.raises(ValueError, match="no acting tool"):
+        H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000", served=["get_status"])
+
+
+def test_a_maximise_runs_kickoff_lists_what_its_run_files_serve(rig: Rig):
+    assert acting_tools(rig.h.start(JOB, MAX_SC, run_dir("m-gold")).prompt) == ["move_to", "trade"]
 
 
 def test_a_goal_run_is_not_told_the_maximise_end_rule():
