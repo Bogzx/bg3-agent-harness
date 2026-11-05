@@ -194,6 +194,11 @@ game unless it says so.
   every `BG3AI_OPERATOR_*` from the env a run gets, whatever the shell that started the bench exports.
   The harness version stays: the block appears only with the playthrough's option on. A session's `latency.json`
   has `operator_messages`: how many message ids its `operator` metrics records carried (0 without the option).
+- The play `claude` gets `play/.claude/settings.json` through `--settings` (the container sandbox already did).
+  Issue #101: Claude Code ignores a project's `permissions.allow` while its folder isn't trusted ("Ignoring 1
+  permissions.allow entry from .claude/settings.json: this workspace has not been trusted"), so in a clone nobody
+  had opened interactively every `mcp__bg3__*` call was refused and the session ended at once. The allow, the deny
+  list and `--tools ToolSearch` are the same as before; the bg3 tools served don't change.
 
 ### Benchmark (`packages/bench`)
 

@@ -279,14 +279,19 @@ def check_all_due(last: float | None, now: float, interval: float = renv.CHECK_A
     return last is None or now - last >= interval
 
 
-def check_all_result(rc: int | None, out: str, report: dict | None) -> dict:
+def check_all_result(rc: int | None, out: str, report: dict | None, menu: bool = False) -> dict:
     """{ok, counts, line, rows, why} from check_all's exit code, stdout and --json report. ok=False: no verdict
-    (refused, game unreachable, timed out or crashed), which doesn't count as a run for the 30-min spacing."""
+    (refused, game unreachable, timed out or crashed), which doesn't count as a run for the 30-min spacing. menu: the
+    game is at the main menu (io.at_main_menu), so check_all's "not reachable" (exit 2: no server context) is
+    deferred, not a fault."""
     if report and isinstance(report.get("counts"), dict):
         c = {k: int(report["counts"].get(k, 0)) for k in ("PASS", "WARN", "FAIL", "SKIP")}
         line = f"check_all: {c['PASS']} pass, {c['WARN']} warn, {c['FAIL']} fail" + (
             f", {c['SKIP']} skip" if c["SKIP"] else "")
         return {"ok": True, "counts": c, "line": line, "rows": report.get("rows") or [], "why": None}
+    if rc == 2 and menu:
+        why = "main menu: no level loaded yet"
+        return {"ok": False, "counts": None, "line": f"check_all: deferred ({why})", "rows": [], "why": why}
     why = {None: f"timed out after {renv.CHECK_ALL_TIMEOUT} s", 2: "game/mod not reachable",
            3: "refused: a session is playing"}.get(rc)
     if why is None:
