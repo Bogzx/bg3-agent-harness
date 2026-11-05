@@ -106,6 +106,17 @@ class ClaudeDropIn(unittest.TestCase):
                     self.assertEqual(client.command(_req(r, prompt, sid, resume, tag)),
                                      TP.legacy_claude_cmd(r, prompt, sid, resume, tag))
 
+    def test_play_permissions_need_no_trusted_folder(self):
+        # #101: Claude Code ignores play/.claude/settings.json's permissions.allow while play/ is an untrusted folder
+        # ("Ignoring 1 permissions.allow entry ... this workspace has not been trusted"), and every mcp__bg3__* call
+        # was refused. The command itself carries the play settings, the same allow and deny, whatever its cwd.
+        cmd = C.ClaudeClient().command(C.Request("go", "opus", Path("/tmp"), session="1"))
+        settings = json.loads(cmd[cmd.index("--settings") + 1])
+        play = json.loads((C.PLAY_DIR / ".claude" / "settings.json").read_text())
+        self.assertEqual(settings["permissions"], play["permissions"])
+        self.assertEqual(settings["permissions"]["allow"], ["mcp__bg3__*"])
+        self.assertEqual(cmd[cmd.index("--tools") + 1], "ToolSearch")
+
     def test_rate_limit_reset(self):
         # RUN-7: the reset time of a rejected rate limit reaches the runner (it waits until then)
         ev = {"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": 1791590400}}
