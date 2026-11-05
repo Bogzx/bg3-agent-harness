@@ -932,9 +932,10 @@ MAX_SC: dict[str, Any] = {k: v for k, v in SAVE_SC.items() if k != "goal"} | {
 }
 
 
-def test_the_kickoff_of_a_maximise_scenario_says_it_plays_its_whole_cap_and_how_it_is_scored():
+def test_the_kickoff_of_a_maximise_scenario_says_its_time_cap_and_how_it_is_scored():
     text = H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000")
-    assert "The run has no pass: it plays all 45 minutes of its time cap, then it is scored." in text
+    assert "The run has no pass: it is scored when it ends, after at most 45 minutes of play (the time cap)." in text
+    assert "plays all" not in text  # a run that stops acting ends sooner (pilot: Sonnet act3_gold_max at 16 of 45 min)
     assert "A party wipe (the Game Over screen) ends it sooner." in text  # graders.measure stops there
     assert "the party's gold when the run ends minus its gold at the start save" in text
     assert "as soon as the task is decided" not in text and "exact goal" not in text

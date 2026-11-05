@@ -543,8 +543,8 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> 
         )
     else:
         lines.append(
-            f"The run has no pass: it plays all {cap} minutes of its time cap, then it is scored. A party wipe (the "
-            "Game Over screen) ends it sooner."
+            f"The run has no pass: it is scored when it ends, after at most {cap} minutes of play (the time cap). A "
+            "party wipe (the Game Over screen) ends it sooner."
         )
     if start["kind"] == "save":
         lines.append(
