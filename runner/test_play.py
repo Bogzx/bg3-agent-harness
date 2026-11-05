@@ -639,6 +639,40 @@ class Progress(unittest.TestCase):
             s = lpt.Runner.write_progress(FakeRunner(), "S001", base, 0.0, 57.0)
             self.assertEqual((s["points"], s["by_kind"]), (2, {"quest_step": 1}))
 
+    def test_last_pass_is_bounded_and_progress_only(self):
+        # REVIEW-18r: on a hung game (the eval connects, Lua never answers) each eval takes its whole timeout; the last
+        # pass (after the stop) must end within the session end's join, and leave facts to end_facts
+        import tempfile
+        import threading
+
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            stop = threading.Event()
+            spent = {False: 0.0, True: 0.0}  # simulated seconds in evals, before / after the stop
+            facts = []
+
+            def hung_eval(code, ctx, timeout):
+                spent[stop.is_set()] += timeout  # sleeps its timeout, then gives up
+                raise TimeoutError("no answer")
+
+            class FakeRunner:
+                state = type("S", (), {"dir": d})()
+                check_until = lambda self, seen, session: None   # noqa: E731 - no run --until here
+
+                def facts_poll(self, got):
+                    facts.append(stop.is_set())
+                    stop.set()  # the session ends after this pass
+
+            orig_eval, orig_poll = rchecks.game.lua_eval, rchecks.story.POLL_S
+            rchecks.game.lua_eval, rchecks.story.POLL_S = hung_eval, 0.001
+            try:
+                lpt.Runner.progress_loop(FakeRunner(), "S001", d / "S001", 0.0, stop, None)
+            finally:
+                rchecks.game.lua_eval, rchecks.story.POLL_S = orig_eval, orig_poll
+            self.assertEqual(facts, [False], "facts only from the pass before the stop")
+            self.assertGreater(spent[True], 0, "the last pass read")
+            self.assertLess(spent[True], renv.POLL_JOIN_S, "the last pass ends within the join")
+
     def test_wired_into_run_claude(self):
         src = Path(ragent.__file__).read_text()
         self.assertIn('progress=f"{base}.progress.jsonl"', src)

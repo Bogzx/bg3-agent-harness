@@ -94,12 +94,16 @@ class ChecksSide:
         last = False
         while not last:
             last = stop.wait(story.POLL_S)
+            # the last pass reads progress only, bounded within the session end's join (REVIEW-18r): end_facts
+            # does the end-state facts reads, and a hung game's 2 x 15 s evals outlived the join
+            t = renv.LAST_EVAL_TIMEOUT if last else EVAL_TIMEOUT
             try:
-                got = story.read_game(lambda code, ctx: game.lua_eval(code, ctx, timeout=EVAL_TIMEOUT))
+                got = story.read_game(lambda code, ctx, t=t: game.lua_eval(code, ctx, timeout=t))
             except Exception:
                 got = None
             try:
-                self.facts_poll(got)
+                if not last:
+                    self.facts_poll(got)
             except Exception as e:
                 renv.log(f"{session}: facts poll failed: {e}")
             try:
