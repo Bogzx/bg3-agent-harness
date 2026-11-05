@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
-from test_run_host import JOB, SAVE_SC, Rig, outcome, rig, run_dir  # noqa: F401  (rig: fixture)
+from typing import Any
+
+# rig: the fixture, taken by name
+from test_run_host import JOB, SAVE_SC, Rig, outcome, rig, run_dir  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 
 def test_record_carries_the_referee_rings_health(rig: Rig):
@@ -12,7 +15,12 @@ def test_record_carries_the_referee_rings_health(rig: Rig):
     h = rig.h
     h.start(JOB, SAVE_SC, run_dir("m-grove"))
     r = rig.runners[-1]
-    r.ring_health = lambda: rig.calls.append("ring_health") or {"ring_lost": 3, "never_fired": ["Osiris:ShortRested"]}
+
+    def health() -> dict[str, Any]:
+        rig.calls.append("ring_health")
+        return {"ring_lost": 3, "never_fired": ["Osiris:ShortRested"]}
+
+    r.ring_health = health
     rig.calls.clear()
     rec = h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())
     assert rec["referee"] == {"ring_lost": 3, "never_fired": ["Osiris:ShortRested"]}
