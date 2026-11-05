@@ -115,9 +115,10 @@ OPERATOR MESSAGE (from the person running this playthrough, sent HH:MM:SS): <tex
 
 Each message goes out once. The block holds the message and the time it was sent, nothing else. Only the result the
 client gets takes messages (the MCP layer, after compaction): a tool that another tool calls inside itself, and a
-step of a batch, never does, so the batch carries it in its own end. A metrics record
-`{"type": "operator", "t", "tool", "ids"}` lists the ids a result carried, and the session's `latency.json` counts
-them (`operator_messages`). When nothing changed, the check costs one `stat` per
+step of a batch, never does, so the batch carries it in its own end. `end_session`'s result never takes one either:
+the session ends before the model could act on it, so it goes out in the next session's first result. A metrics
+record `{"type": "operator", "t", "tool", "ids"}` lists the ids a result carried, and the session's `latency.json`
+counts them (`operator_messages`). When nothing changed, the check costs one `stat` per
 call.
 
 The server of the memory keeper never takes operator messages, and neither does a bench run: the keeper and the
