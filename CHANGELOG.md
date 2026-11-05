@@ -178,6 +178,13 @@ game unless it says so.
   run loop retries like a Steam or display refusal and the bench records no attempt), the log line, event and alert
   say "launcher refused: game build X, pinned Y" from the launcher's refusal line. Before, it counted as a launch
   that died and was retried until the crash-loop stop.
+- bg3le patch 0013: bg3se's globals (`gStaticSymbols`, `gExtender`) are created at the end of bg3le's own setup
+  (the first Osiris callback, once the engine heap is installed), not only by the ImGui overlay from bg3le's
+  `vkCreateInstance` export. Issue #101: where the overlay never built (`BG3LE_IMGUI=0`, or Vulkan calls that
+  don't reach bg3le's exports), the first entity read of a still-pending component crashed at the first server
+  tick after Running (SIGSEGV at 0xa0 in `ThreadRegistry::RequestThreadIndex`); reproduced with `BG3LE_IMGUI=0`.
+  bg3le with 0001-0013: sha256 e84d6044c057f3d8e3c4d8ce2259bac944fe873a18f6d5603d891a98e0be0f95, pinned by
+  `releases/bench-v0.11.json` (was b7ecfd06, untagged and ungraded); `releases/bench-v0.10.json` is unchanged.
 
 ### Benchmark (`packages/bench`)
 
