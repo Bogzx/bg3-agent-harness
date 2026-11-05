@@ -405,8 +405,9 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> 
     loaded), the grader's exact goal (graders.grade: passed at the first instant it holds, failed by a "never" that
     happened before; a maximise scenario's score instead: the fact's gain at the time cap), the character. No memory
     or playbook steps (a bench run has no playthrough memory) and no "play until WRAP UP NOW": the run ends on its
-    verdict (an until milestone, or GoalWatch), a maximise run at its time cap. `pace`: the coaching condition's
-    pre-flight ("" under rules)."""
+    verdict (an until milestone, or GoalWatch), a maximise run at its time cap, at a wipe or by the end rule (a stretch
+    with no acting call: the kickoff states it and names the tools acted_since counts). `pace`: the coaching
+    condition's pre-flight ("" under rules)."""
     char, start = sc["profile"]["character"], sc["start"]
     note: Json = start.get("note") or {}
     task = sc.get("task") or note.get("objective") or "Make the goal below hold."
@@ -428,6 +429,11 @@ def scenario_kickoff(sc: Json, sid: str, loaded: str | None, pace: str = "") -> 
         lines.append(
             f"The run has no pass: it is scored when it ends, after at most {cap} minutes of play (the time cap). A "
             "party wipe (the Game Over screen) ends it sooner."
+        )
+        lines.append(
+            "A stretch with no acting call since a restart also ends it sooner: when you end your turn with time "
+            "left, the harness restarts you if you made an acting call since your start or last restart, and "
+            f"otherwise the run ends. Acting calls are calls of these tools: {', '.join(sorted(bmetrics.ISSUE_TOOLS))}."
         )
     if start["kind"] == "save":
         lines.append(
@@ -506,19 +512,16 @@ def acted_since(since: float) -> bool:
     return any(a.get("tool") in bmetrics.ISSUE_TOOLS for a in actions)
 
 
-def undecided_why(r: RunRunner, sc: Json, session_end: float, now: float, acted: bool = True) -> str | None:
+def undecided_why(r: RunRunner, sc: Json, session_end: float, now: float) -> str | None:
     """Why the run's agent can't end its turn yet (run_session's stop check): its goal isn't decided (no until
-    milestone or live verdict yet; a maximise scenario's never is) with time left, and no operator stop or cap; a
-    maximise run's agent also made an acting call since its last resume (`acted`): a stretch without one ends the
-    run (its session has no count on stop resumes). None: it may end."""
+    milestone or live verdict yet; a maximise scenario's never is) with time left, and no operator stop or cap. None:
+    it may end. A maximise run's end rule is LiveRunHost.undecided's (its session has no count on stop resumes)."""
     if r.until_hit or r.cap_hit or r.stop_requested or stop_file().exists() or now >= session_end:
         return None
     if (fact := maximised(sc)) is not None:
-        if not acted:
-            return None
         return (
-            f"The run isn't over: it has no pass, it scores the party's {fact} gained by its time cap, and goes on "
-            "until then."
+            f"The run isn't over: it has no pass and scores the party's {fact} gained when it ends: at its time cap, "
+            "at a party wipe, or after a stretch with no acting call since a restart (this restart begins a new one)."
         )
     return (
         "The run isn't decided: the grader hasn't seen its goal "
@@ -546,8 +549,8 @@ def run_failures(
     time ran out (fixlive D4: "the run's time ran out" at 7.9 of 240 min). `start`: (run_start, start save): a launch
     recovered before it is the run's note, not a failure (runs.recovered_launch). `maximise`: the run has no goal or
     milestone, so its ending says what happened (its stop check ended it at a turn's end with no acting call since
-    the agent's last (re)start, or the cap) instead of "before the goal / the milestone" (v010 pilot: Sonnet
-    act3_gold_max read "ended its turn with 29.1 min of the run left, before the goal")."""
+    the agent's last (re)start: `ended_by_agent`, or the cap) instead of "before the goal / the milestone" (v010 pilot:
+    Sonnet act3_gold_max read "ended its turn with 29.1 min of the run left, before the goal")."""
     res = outcome.result
     logged: list[Json] = runs.read_jsonl(state_dir / "runner_events.jsonl")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     events = [e for e in logged if e.get("t", 0) >= t0 - 1 and not runs.recovered_launch(e, *start)]  # pyright: ignore[reportUnknownMemberType]
@@ -558,15 +561,17 @@ def run_failures(
     session |= {"reason": res.reason, "exit": res.exit_code, "game_calls_ok": runs.game_calls_ok(actions)}
     ending = (res.reason, why)
     ending_why = why or res.reason if name == "gave_up" else ""  # a time-out or a cap says its own why
+    if name == "ended_by_agent" and session_minutes is not None:
+        left = round((outcome.started + session_minutes * 60 - res.ended) / 60, 1)
+        ending_why = (
+            f"{SID}: the run ended at its turn's end with no acting call since its last (re)start, {left} min of "
+            "the cap left"
+        )
     if name == "timeout" and session_minutes is not None:
         left = rpolicy.early_exit_minutes(res.reason, outcome.started, res.ended, session_minutes)
-        if left is not None and maximise:
-            ending_why = (
-                f"{SID}: the run ended at its turn's end with no acting call since its last (re)start, {left} min of "
-                "the cap left"
-            )
-        elif left is not None:
-            ending_why = f"{SID}: the agent ended its turn with {left} min of the run left, before the goal"
+        if left is not None:
+            ending_why = f"{SID}: the agent ended its turn with {left} min of the run left"
+            ending_why += "" if maximise else ", before the goal"
         elif maximise:
             ending_why = "the run's time cap was reached"
     if name == "over_budget" and maximise:
@@ -605,6 +610,7 @@ class LiveRunHost:
         self.runs: dict[Path, tuple[RunRunner, float, list[str]]] = {}
         self.watches: dict[Path, GoalWatch] = {}  # the run's live verdict (a goal, a wipe) while it plays
         self.saves: dict[Path, SaveWatch] = {}  # the save each run plays
+        self.ended_by_agent: set[Path] = set()  # the maximise runs the end rule ended (undecided)
         self.pins: dict[Path, Json] = {}  # what each run plays with (read_pins at its start)
         self.recording = recording
         self.recordings: dict[Path, hrec.RunRecording] = {}  # each run's, while it plays
@@ -800,17 +806,20 @@ class LiveRunHost:
         story.POLL_S, the verdict every GOAL_POLL_S) ends the run instead of resuming its agent (B3 job 10: the
         agent's wait_for saw the Game Over box at 16:23:40, the runner resumed it at 16:23:45 as undecided, the wipe
         stop came at 16:24:07). A failed read leaves the verdict to the facts already written. A maximise run's
-        agent is resumed only if it made an acting call since `since` (its play process's start: acted_since)."""
+        agent is resumed only if it made an acting call since `since` (its play process's start: acted_since); a run
+        that ends here, with nothing else ending it, is recorded as ended_by_agent."""
         if (w := self.watches.get(run_dir)) is not None and not r.until_hit:
             try:
                 r.facts_now()
             except Exception as e:  # the game not answering: the stop check still decides on what it has
                 renv.log(f"{SID}: stop check: facts read failed: {type(e).__name__}: {e}")
             w.check()
-        acted = maximised(sc) is None or acted_since(since)
-        if not acted:
-            renv.log(f"{SID}: no acting call since the agent's last (re)start: the maximise run ends at its turn's end")
-        return undecided_why(r, sc, session_end, now, acted)
+        why = undecided_why(r, sc, session_end, now)
+        if why is None or maximised(sc) is None or acted_since(since):
+            return why
+        renv.log(f"{SID}: no acting call since the agent's last (re)start: the maximise run ends at its turn's end")
+        self.ended_by_agent.add(run_dir)
+        return None
 
     def record(self, job: Json, sc: Json, run_dir: Path, outcome: SessionOutcome) -> Json:
         r, t0, moved = self.runs.pop(run_dir)
@@ -834,7 +843,8 @@ class LiveRunHost:
         elif goal:
             name = "reached" if goal["verdict"] == "passed" else "failed"  # the live verdict ended the run
         else:
-            name = "reached" if hit else "over_budget" if r.cap_hit else "timeout"
+            early = run_dir in self.ended_by_agent
+            name = "reached" if hit else "over_budget" if r.cap_hit else "ended_by_agent" if early else "timeout"
         referee_health = None
         try:
             ended = r.end_facts(name)

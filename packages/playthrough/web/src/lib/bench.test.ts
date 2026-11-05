@@ -14,6 +14,7 @@ describe("bench", () => {
   it("gives the verdict: pass, fail with the outcome, invalid with the reason", () => {
     expect(verdict(claude)).toEqual({ text: "pass", level: "ok" });
     expect(verdict(pi)).toEqual({ text: "fail (over budget)", level: "bad" });
+    expect(verdict({ ...pi, outcome: "ended_by_agent" }).text).toBe("fail (ended by agent)");
     expect(verdict({ ...pi, valid: false, invalid_reason: "harness_failure" })).toEqual({
       text: "invalid (harness_failure)", level: "warn",
     });

@@ -410,6 +410,16 @@ def test_a_maximise_result_has_no_pass_and_carries_its_score():
     assert "score" not in results.from_record(records[0], "r")
 
 
+def test_a_maximise_run_the_end_rule_ended_keeps_its_score_and_an_old_timeout_stays_one():
+    _, records = load_series()
+    res = results.from_record({**records[0], "outcome": "ended_by_agent"}, "r", grade=NO_PASS, score=SCORE)
+    assert (res["outcome"], res["valid"], res["passed"], res["score"]) == ("ended_by_agent", True, None, SCORE)
+    assert_valid("result.v1.schema.json", res)
+    old = results.from_record({**records[0], "outcome": "timeout"}, "r", grade=NO_PASS, score=SCORE)
+    assert old["outcome"] == "timeout"  # a run recorded before the outcome existed is never renamed
+    assert_valid("result.v1.schema.json", old)
+
+
 def test_a_result_carries_the_agents_first_end_of_turn():
     _, records = load_series()
     res = results.from_record({**records[0], "first_stop_s": 1254.3}, "r")

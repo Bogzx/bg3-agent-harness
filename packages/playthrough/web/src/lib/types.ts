@@ -575,7 +575,7 @@ export interface ChoicePick {
 
 export interface BenchResult {
   run_id: string;
-  outcome: "reached" | "timeout" | "over_budget" | "gave_up" | "runner_error";
+  outcome: "reached" | "timeout" | "ended_by_agent" | "over_budget" | "gave_up" | "runner_error";
   valid: boolean;
   invalid_reason: string | null;
   passed: boolean;

@@ -7,7 +7,7 @@ export type Level = "ok" | "bad" | "warn";
 export function verdict(r: BenchResult): { text: string; level: Level } {
   if (!r.valid) return { text: `invalid${r.invalid_reason ? ` (${r.invalid_reason})` : ""}`, level: "warn" };
   if (r.passed) return { text: "pass", level: "ok" };
-  return { text: `fail (${r.outcome.replace("_", " ")})`, level: "bad" };
+  return { text: `fail (${r.outcome.replace(/_/g, " ")})`, level: "bad" };
 }
 
 /** Seconds as "17m 23s" / "45s"; "–" for null. */

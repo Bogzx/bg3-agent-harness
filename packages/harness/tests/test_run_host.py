@@ -859,6 +859,18 @@ def test_the_kickoff_of_a_maximise_scenario_says_its_time_cap_and_how_it_is_scor
     assert "as soon as the task is decided" not in text and "exact goal" not in text
 
 
+def test_the_kickoff_of_a_maximise_scenario_states_the_end_rule_and_what_an_acting_call_is():
+    # v010 pilot: Sonnet's act3_gold_max ended by this rule with 29 min of the cap left, a rule it was never told
+    text = H.scenario_kickoff(MAX_SC, "S001", "SCN-act1_gold_1000")
+    assert "A stretch with no acting call since a restart also ends it sooner" in text
+    listed = text.split("Acting calls are calls of these tools: ")[1].split(".")[0].split(", ")
+    assert listed == sorted(H.bmetrics.ISSUE_TOOLS)  # the set acted_since reads, so the text can't drift from it
+
+
+def test_a_goal_run_is_not_told_the_maximise_end_rule():
+    assert "acting call" not in H.scenario_kickoff(SAVE_SC, "S001", "SCN-act1_gold_1000")
+
+
 def test_a_maximise_run_resumes_an_agent_that_ends_its_turn_until_the_time_cap(rig: Rig):
     # a maximise goal is never reached: the stop check must not read "no goal yet" as "may end" or as decided
     def play(r: FakeRunner, tag: str) -> tuple[str, float]:
@@ -868,7 +880,9 @@ def test_a_maximise_run_resumes_an_agent_that_ends_its_turn_until_the_time_cap(r
     rig.prepare = lambda r: setattr(r, "play", play)
     r, out = play_session(rig, MAX_SC, "m-gold")
     assert [t for t, _, _ in r.plays] == ["", "-c1", "-c2", "-c3", "-c4"] and out.stop_resumes == 4
-    assert "it has no pass, it scores the party's gold gained by its time cap" in r.plays[1][1]
+    assert "it has no pass and scores the party's gold gained when it ends" in r.plays[1][1]
+    assert "goes on until then" not in r.plays[1][1]  # a stretch with no acting call ends it sooner
+    assert "a stretch with no acting call since a restart" in r.plays[1][1]
     assert [round(m) for _, _, m in r.plays[1:]] == [35, 25, 15, 5]  # each resume gets the time left
 
 
@@ -899,16 +913,44 @@ def test_a_maximise_run_ends_after_a_stretch_with_no_acting_call(rig: Rig):
     r, out = play_session(rig, MAX_SC, "m-gold")
     assert [t for t, _, _ in r.plays] == ["", "-c1", "-c2", "-c3"] and out.result.reason == "exited"
     rec = rig.h.record(JOB, MAX_SC, run_dir("m-gold"), out)
-    assert (rec["first_stop_s"], rec["wall_min"], rec["outcome"]) == (120.0, 8.0, "timeout")
+    assert (rec["first_stop_s"], rec["wall_min"], rec["outcome"]) == (120.0, 8.0, "ended_by_agent")
     # what happened, not "before the goal" (a maximise run has none; v010 pilot Sonnet act3_gold_max)
     assert [(f["kind"], f["class"], f["detail"]) for f in rec["failures"]] == [
         (
-            "timeout",
+            "ended_by_agent",
             "agent",
             "S001: the run ended at its turn's end with no acting call since its last (re)start, 37.0 min of the "
             "cap left",
         )
     ]
+
+
+def test_the_end_rule_is_named_however_little_of_the_cap_is_left(rig: Rig):
+    # under EARLY_EXIT_MINUTES left the old check called this "the run's time cap was reached"
+    def play(r: FakeRunner, tag: str) -> tuple[str, float]:
+        called(r, "get_status", "move_to") if not r.plays[1:] else called(r, "get_status")
+        return "exited", (42 if not r.plays[1:] else 1) * 60.0
+
+    rig.prepare = lambda r: setattr(r, "play", play)
+    _, out = play_session(rig, MAX_SC, "m-gold")
+    rec = rig.h.record(JOB, MAX_SC, run_dir("m-gold"), out)
+    assert (rec["outcome"], rec["wall_min"]) == ("ended_by_agent", 43.0)
+    assert [f["detail"] for f in rec["failures"]] == [
+        "S001: the run ended at its turn's end with no acting call since its last (re)start, 2.0 min of the cap left"
+    ]
+
+
+def test_a_maximise_run_that_reaches_its_cap_without_acting_is_a_timeout(rig: Rig):
+    # the cap ended it, not the rule: the stop check sees no time left before it looks at the acting calls
+    def play(r: FakeRunner, tag: str) -> tuple[str, float]:
+        called(r, "get_status")
+        return "exited", 45 * 60.0
+
+    rig.prepare = lambda r: setattr(r, "play", play)
+    _, out = play_session(rig, MAX_SC, "m-gold")
+    rec = rig.h.record(JOB, MAX_SC, run_dir("m-gold"), out)
+    assert rec["outcome"] == "timeout"
+    assert [(f["kind"], f["detail"]) for f in rec["failures"]] == [("timeout", "the run's time cap was reached")]
 
 
 def test_a_goal_run_keeps_its_stop_resume_count_however_much_it_acts(rig: Rig):

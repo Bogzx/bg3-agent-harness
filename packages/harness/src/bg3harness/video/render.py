@@ -2,7 +2,7 @@
 
     python -m bg3harness.video <run_dir> --index <recording>/index.json --out <dir> --run-id ID --run-hash SHA256 \
         [--site HOST] [--title T] [--task T] [--cap-min N] [--cost-kind billed] [--t-pass-s S] [--pilot] \
-        [--ending WIPED|"COST CAP"|"TIME CAP"] [--sample-s N] [--encoder libx264|h264_nvenc]
+        [--ending WIPED|"COST CAP"|"TIME CAP"|"ENDED BY AGENT"] [--sample-s N] [--encoder libx264|h264_nvenc]
 
 It reads only files that also go into the run's bundle (every Sxxx*.events.jsonl, facts.jsonl) and the recorder's
 segments, and writes into --out: render.json (the sync table), evidence.mp4 (1920x1080) and frames/*.jpg (the
@@ -183,7 +183,9 @@ def main(argv: Sequence[str] | None = None, ffmpeg: compose.Ffmpeg = compose.run
     ap.add_argument("--cost-kind", default="billed", choices=("billed", "notional", "estimated"))
     ap.add_argument("--t-pass-s", type=float)
     ap.add_argument("--pilot", action="store_true", help="a pilot run: the header carries a pilot badge")
-    ap.add_argument("--ending", default="", help="how a run that didn't pass ended (WIPED, COST CAP, TIME CAP)")
+    ap.add_argument(
+        "--ending", default="", help="how a run that didn't pass ended (WIPED, COST CAP, TIME CAP, ENDED BY AGENT)"
+    )
     ap.add_argument("--sample-s", type=float, help="render only the run's first N seconds")
     ap.add_argument(
         "--encoder", default="libx264", choices=sorted(compose.ENCODERS), help="h264_nvenc: an NVIDIA GPU encodes"

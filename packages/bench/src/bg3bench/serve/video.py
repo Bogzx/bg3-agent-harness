@@ -47,7 +47,7 @@ class Job:
     t_pass_s: float | None = None
     site: str = ""
     pilot: bool = False  # the header's pilot badge
-    ending: str = ""  # how a run that didn't pass ended: WIPED, COST CAP or TIME CAP ("" none of them)
+    ending: str = ""  # how a run that didn't pass ended: WIPED, COST CAP, TIME CAP or ENDED BY AGENT ("" none of them)
 
 
 class Renderer(Protocol):
@@ -62,11 +62,14 @@ class Renderer(Protocol):
 
 
 def ending(res: Mapping[str, Any]) -> str:
-    """The renderer's --ending for a run that didn't pass (result.v1): its time or cost cap, else a party wipe."""
+    """The renderer's --ending for a run that didn't pass (result.v1): its time or cost cap, a maximise run's end rule,
+    else a party wipe."""
     if res.get("passed") is True:
         return ""
     if res.get("outcome") == "timeout":
         return "TIME CAP"
+    if res.get("outcome") == "ended_by_agent":
+        return "ENDED BY AGENT"
     if res.get("outcome") == "over_budget":
         return "COST CAP"
     return "WIPED" if ((res.get("deaths") or {}).get("wipes") or 0) > 0 else ""
