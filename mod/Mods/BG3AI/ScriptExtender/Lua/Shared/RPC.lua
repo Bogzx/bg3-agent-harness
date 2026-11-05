@@ -28,6 +28,9 @@ if not RPC.eventFirst then
     RPC.events, RPC.eventFirst = keyed, RPC.events[1] and RPC.events[1].seq or RPC.eventSeq + 1
 end
 RPC.EVENT_CAP = 4000
+-- A8 (audit S3-4): the seq of the last event the ring dropped, so events.since can say a slow reader lost some
+-- (events_lost)
+RPC.eventLost = RPC.eventLost or 0
 RPC.JOB_CAP = 200
 
 local CONTEXT = Ext.IsServer() and "server" or "client"
@@ -115,6 +118,7 @@ function RPC.push(kind, data)
     local ev = { seq = RPC.eventSeq, t = now_ms(), kind = kind, data = data }
     RPC.events[ev.seq] = ev
     while RPC.eventSeq - RPC.eventFirst >= RPC.EVENT_CAP do
+        if RPC.events[RPC.eventFirst] then RPC.eventLost = RPC.eventFirst end
         RPC.events[RPC.eventFirst] = nil
         RPC.eventFirst = RPC.eventFirst + 1
     end
@@ -128,12 +132,21 @@ function RPC.push(kind, data)
     return ev.seq
 end
 
+-- A8 (audit S3-4): the first row when the ring dropped events newer than the reader's cursor (a slow reader): its
+-- seq is the last dropped one, so the reader's cursor moves past the loss and it is said once.
+local function lost_row(since)
+    if RPC.eventLost <= since then return nil end
+    return { seq = RPC.eventLost, t = now_ms(), kind = "events_lost",
+        data = "some events before these were dropped (the game's event buffer was full) and can't be shown" }
+end
+
 RPC.register("events.since", function(args)
     local since = tonumber(args.seq) or 0
     local limit = tonumber(args.limit) or 200
     local out = {}
     local first = math.max(math.floor(since) + 1, RPC.eventFirst)
-    for seq = first, math.min(RPC.eventSeq, first + limit - 1) do
+    out[1] = lost_row(since)
+    for seq = first, math.min(RPC.eventSeq, first + limit - #out - 1) do
         out[#out + 1] = RPC.events[seq]
     end
     return { latest = RPC.eventSeq, events = out }
@@ -281,8 +294,9 @@ end
 local BOOT = string.format("%d-%d", math.floor(now_ms()), math.random(1, 1000000000))
 RPC.BOOT = BOOT
 
+-- No version field: the mod's identity is its tree's sha1 (mod.sha1 in a release; REVIEW-16 A6).
 RPC.register("sys.ping", function()
-    return { context = CONTEXT, t = now_ms(), version = BG3AI.VERSION, boot = BOOT }
+    return { context = CONTEXT, t = now_ms(), boot = BOOT }
 end)
 
 RPC.register("sys.info", function()
@@ -291,7 +305,6 @@ RPC.register("sys.info", function()
     table.sort(ops)
     return {
         context = CONTEXT,
-        version = BG3AI.VERSION,
         game_version = Ext.Utils.GameVersion and Ext.Utils.GameVersion() or nil,
         extender_version = Ext.Utils.Version(),
         game_state = tostring(Ext.Utils.GetGameState and Ext.Utils.GetGameState() or "?"),

@@ -47,6 +47,8 @@ HEALTH_INTERVAL = 30           # seconds between liveness evals during a session
 HEALTH_RETRY_INTERVAL = 10     # ... and after a failed one (a hang is declared within ~2 min, see detect_budget_s)
 HEALTH_FAILURES = 3            # consecutive failed evals → hung
 HEALTH_EVAL_TIMEOUT = 8        # a liveness eval slower than this counts as failed
+POLL_JOIN_S = 20.0            # a session's end waits this long for the progress loop's last pass
+LAST_EVAL_TIMEOUT = 5.0       # that last pass's evals: 2 of them (+ a connect) end within POLL_JOIN_S
 
 AGENT_SILENT_MINUTES = float(os.environ.get("BG3AI_AGENT_SILENT_MIN", "4"))  # no claude output this long → hung
                                # (bridge tools cap their waits at ~60 s; a model turn is seconds to ~1 min)

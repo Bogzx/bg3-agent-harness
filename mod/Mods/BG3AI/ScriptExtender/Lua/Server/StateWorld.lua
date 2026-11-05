@@ -92,6 +92,9 @@ local function itemStats(ie, o)
         if not st then return false end
         f = {}
         statsFacts(st, f)
+        -- A dye by its stats entry (OBJ_Dye_<colour>, OBJ_Dye_Remover: all from _Dyes): the Dye Remover blanks its
+        -- ObjectCategory, so `cat` can't tell it (w14 L2: cat none, tab Misc, value 1, sold as junk)
+        if tostring(sid):find("^OBJ_Dye_") then f.dye = true end
         S.statsFactsMemo[tostring(sid)] = f
     end
     for k, v in pairs(f) do o[k] = v end
@@ -506,7 +509,7 @@ function S.combat(ctx)
                                 if okd then o.disabled = d end
                             end
                         end
-                        o.concentration = concentration(me)
+                        o.concentration = concentration(me, ctx.is_party[u])
                         if o.concentration then noteConcentration(ctx, u, me) end
                         out.order[#out.order + 1] = o
                     end
@@ -756,7 +759,7 @@ function S.nearby(ctx, args)
                         statuses = V.statuses(e) }
                     if #o.statuses == 0 then o.statuses = nil end
                     -- the concentration icon over a visible creature (bridge CHANGES: "concentrating on Cloudkill")
-                    o.concentration = concentration(e)
+                    o.concentration = concentration(e, false) -- not the party's (the loop's own check)
                     if o.concentration then noteConcentration(ctx, u, e) end
                     local dead = truthy(osi(Osi.IsDead, u))
                     if dead then o.dead = true end

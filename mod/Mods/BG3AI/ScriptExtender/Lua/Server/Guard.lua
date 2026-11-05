@@ -309,6 +309,34 @@ G.tb_flags = tb_flags
 -- over until that character's own TurnStarted, or until the game shows it inactive, or TURN_OVER_TTL_MS.
 G.turn_over = G.turn_over or {}
 G.TURN_OVER_TTL_MS = 90000
+-- Osiris TurnStarted / TurnEnded pair up per character, but not always in order. Live 2026-11-02 (arena, every round,
+-- phases4): when a shared group's close ends the round, the game fires CombatRoundStarted and the new round's
+-- TurnStarted for the group's members, then (same ms burst, ~5 ms later) the old round's TurnEnded for them. Taken as
+-- this turn's end, it marked the new turn over for TURN_OVER_TTL_MS: nobody acted for 90 s each round. A TurnStarted
+-- while the character's previous turn has had no TurnEnded leaves that TurnEnded owed (g -> the start's time); the
+-- next TurnEnded within TURN_BURST_MS of it is the older turn's and leaves the new turn open. In order (start, end,
+-- start, end) nothing is ever owed.
+-- A combat that ends during a turn may leave that turn without a TurnEnded (REVIEW-18h §3: the bench plays many fights
+-- per session, most ending in the party's turn): G.combat_ended drops that combat's open turns, so the next fight's
+-- first quick TurnEnded is not taken as the old turn's.
+G.turn_open = G.turn_open or {} -- g -> {round = the round it started in, combat = its combat guid} until its TurnEnded
+G.end_owed = G.end_owed or {}   -- g -> {t, round} of a TurnStarted that came with the previous turn's end to come
+-- combat guid -> its round, from CombatRoundStarted (fired before the round's TurnStarted burst; live 2026-11-02)
+G.combat_round = G.combat_round or {}
+function G.combat_of(g)
+    return G.q("CombatGetGuidFor", g)
+end
+function G.round_of(g)
+    local c = G.combat_of(g)
+    return c and G.combat_round[c] or nil
+end
+-- CombatEnded(c): the turns still open in c, the TurnEnded they owe and c's round are forgotten.
+function G.combat_ended(c)
+    for g, o in pairs(G.turn_open) do
+        if o.combat == c then G.turn_open[g], G.end_owed[g] = nil, nil end
+    end
+    G.combat_round[c] = nil
+end
 function G.turn_is_over(uuid)
     local g = G.guid(uuid) or uuid
     local t = g and G.turn_over[g]
@@ -482,9 +510,7 @@ function G.last_seen_hint(target)
     if type(V) ~= "table" or type(V.lastSeen) ~= "function" then return "" end
     local okv, gone, mv = pcall(V.vanished or function() return false end, G.guid(target))
     if okv and gone and type(mv) == "table" and type(mv.pos) == "table" then
-        return string.format("; it turned invisible %ds ago (last seen @(%.1f,%.1f,%.1f)); See Invisibility,"
-            .. " Faerie Fire or an area attack on that spot reveal it, and it shows itself when it attacks",
-            mv.ago_s or 0,
+        return string.format("; it turned invisible %ds ago (last seen @(%.1f,%.1f,%.1f))", mv.ago_s or 0,
             mv.pos[1], mv.pos[2], mv.pos[3])
     end
     local ok, m = pcall(V.lastSeen, G.guid(target))

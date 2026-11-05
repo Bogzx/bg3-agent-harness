@@ -601,6 +601,78 @@ class Progress(unittest.TestCase):
             self.assertEqual(row["session"], "S004")
             self.assertTrue((d / "progress_state.json").exists())
 
+    def test_poller_reads_once_more_at_the_stop(self):
+        # v010 pilot choice_act2_nightsong sonnet (57 s): the quests closed after the last 15 s poll and the session
+        # ended before the next one; its progress read 0 points, 0 events (haiku's 72 s run of it: 50, 13)
+        import json
+        import tempfile
+        import threading
+
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            base = d / "S001"
+            world = {"status": {"region": "Shadow-Cursed Lands", "party": [{"name": "Claude", "level": 5}]},
+                     "journal": [{"title": "The Chosen of Shar", "steps": ["a"]}], "map": {"waypoints": []},
+                     "markers": {"markers": []}, "ui": {"screen": "game", "region": "Shadow-Cursed Lands"}}
+            polls = []
+            stop = threading.Event()
+
+            def fake_read(_eval):
+                polls.append(1)
+                got = json.loads(json.dumps(world))
+                if len(polls) == 1:  # after this poll: the scene resolves and the session ends before the next
+                    world["journal"][0]["steps"].append("I freed Nightsong")
+                    stop.set()
+                return got
+
+            class FakeRunner:
+                state = type("S", (), {"dir": d})()
+                check_until = lambda self, seen, session: None   # noqa: E731 - no run --until here
+
+            orig_read, orig_poll = rchecks.story.read_game, rchecks.story.POLL_S
+            rchecks.story.read_game, rchecks.story.POLL_S = fake_read, 0.001
+            try:
+                lpt.Runner.progress_loop(FakeRunner(), "S001", base, 0.0, stop, None)
+            finally:
+                rchecks.story.read_game, rchecks.story.POLL_S = orig_read, orig_poll
+            self.assertEqual(len(polls), 2)
+            s = lpt.Runner.write_progress(FakeRunner(), "S001", base, 0.0, 57.0)
+            self.assertEqual((s["points"], s["by_kind"]), (2, {"quest_step": 1}))
+
+    def test_last_pass_is_bounded_and_progress_only(self):
+        # REVIEW-18r: on a hung game (the eval connects, Lua never answers) each eval takes its whole timeout; the last
+        # pass (after the stop) must end within the session end's join, and leave facts to end_facts
+        import tempfile
+        import threading
+
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            stop = threading.Event()
+            spent = {False: 0.0, True: 0.0}  # simulated seconds in evals, before / after the stop
+            facts = []
+
+            def hung_eval(code, ctx, timeout):
+                spent[stop.is_set()] += timeout  # sleeps its timeout, then gives up
+                raise TimeoutError("no answer")
+
+            class FakeRunner:
+                state = type("S", (), {"dir": d})()
+                check_until = lambda self, seen, session: None   # noqa: E731 - no run --until here
+
+                def facts_poll(self, got):
+                    facts.append(stop.is_set())
+                    stop.set()  # the session ends after this pass
+
+            orig_eval, orig_poll = rchecks.game.lua_eval, rchecks.story.POLL_S
+            rchecks.game.lua_eval, rchecks.story.POLL_S = hung_eval, 0.001
+            try:
+                lpt.Runner.progress_loop(FakeRunner(), "S001", d / "S001", 0.0, stop, None)
+            finally:
+                rchecks.game.lua_eval, rchecks.story.POLL_S = orig_eval, orig_poll
+            self.assertEqual(facts, [False], "facts only from the pass before the stop")
+            self.assertGreater(spent[True], 0, "the last pass read")
+            self.assertLess(spent[True], renv.POLL_JOIN_S, "the last pass ends within the join")
+
     def test_wired_into_run_claude(self):
         src = Path(ragent.__file__).read_text()
         self.assertIn('progress=f"{base}.progress.jsonl"', src)

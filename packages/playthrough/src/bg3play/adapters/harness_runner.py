@@ -54,6 +54,7 @@ from typing import Any, Protocol
 
 from bg3harness import client_setup, spend
 from bg3harness.game.host import append_event
+from bg3harness.runner import env as renv
 from bg3harness.runner import policy
 from bg3harness.session import (
     RecoverFailure,
@@ -426,9 +427,11 @@ class HarnessRunner:
         if feed is None and self.facts_for is not None:
             run_start = {"playthrough": pt, "client": agent.client_name, "model": agent.model}
             feed = self._facts[pt] = self.facts_for(sdir, run_start)
+        polled: threading.Thread | None = None
         if self.read_story is not None:
             poller = ProgressPoller(sdir, sid, start, self.read_story, self.log, facts=feed and feed.poll)
-            threading.Thread(target=poller.loop, args=(polling,), name="progress", daemon=True).start()
+            polled = threading.Thread(target=poller.loop, args=(polling,), name="progress", daemon=True)
+            polled.start()
         try:
             out = run_session(spec, hooks)
             if out.result.reason not in ("crash", "hang") and not self._abort.is_set():
@@ -440,6 +443,10 @@ class HarnessRunner:
             None if out.result.reason in ("crash", "hang") else policy.made_progress(start_sig, self.game.progress())  # pyright: ignore[reportUnknownMemberType]
         )
         ended = out.result.ended
+        if polled is not None:  # its last read (the session's end state) goes into the session files
+            polled.join(timeout=renv.POLL_JOIN_S)
+            if polled.is_alive():
+                self.log(f"{sid}: the progress poller's last read outlived the {renv.POLL_JOIN_S:.0f} s join")
         if feed is not None:
             feed.choices(sid, sdir / sid, self.log)
         write_session_files(sdir, sid, out.started, ended, self.log)
@@ -528,14 +535,14 @@ class AttachedGame:
         )
         return sig
 
-    def story(self) -> dict[str, Any] | None:
+    def story(self, timeout: float | None = None) -> dict[str, Any] | None:
         """One story-progress poll (bg3ai.progress.read_game, play.py's) over the bridge's eval: HarnessRunner's
-        read_story."""
+        read_story. timeout: each eval's (None: EVAL_TIMEOUT)."""
         from bg3ai import progress  # pyright: ignore[reportMissingTypeStubs]
         from bg3harness.game.io import EVAL_TIMEOUT
 
         def lua_eval(code: str, ctx: str) -> str:
-            return self.g.eval(code, ctx, timeout=EVAL_TIMEOUT)
+            return self.g.eval(code, ctx, timeout=timeout or EVAL_TIMEOUT)
 
         got: dict[str, Any] | None = progress.read_game(lua_eval)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         return got

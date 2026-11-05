@@ -379,7 +379,9 @@ class AgentSide:
             detail = f"{client.name} ended by a signal from outside the runner (exit {proc.returncode})"
             renv.log(f"{sid}{tag}: {detail}")
         poll_stop.set()
-        poller.join(timeout=20)
+        poller.join(timeout=renv.POLL_JOIN_S)
+        if poller.is_alive():  # its last read still out: progress written after this may miss the summary
+            renv.log(f"{sid}{tag}: the progress poller's last read outlived the {renv.POLL_JOIN_S:.0f} s join")
         end = self.clock()
         rstate.write_status(session_ended=end)
         human.write(f"===== {sid}{tag} ended: {reason}, exit {proc.returncode}, "

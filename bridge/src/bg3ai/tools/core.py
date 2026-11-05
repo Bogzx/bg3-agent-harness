@@ -385,7 +385,7 @@ def _events_text(body: str = "", job: str | None = None, max_wait: float | None 
             reporting._note_dialogue_speaker(evs)
             reporting.OFFLIMITS.feed(evs)
             parts.append(render.render_events(evs, H, body=body, job=job, flap=render.FLAP, party=turn_plan._party_cached(),
-                                              echo=render.ECHO, limit=_event_limit(evs)))
+                                              echo=render.ECHO, turn_ends=render.STALE_ENDS, limit=_event_limit(evs)))
     fight = reporting._fight_feed(seen)
     if fight:
         parts.append(fight)

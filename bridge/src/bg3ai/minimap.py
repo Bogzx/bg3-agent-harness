@@ -1,6 +1,6 @@
 """The minimap block: what a player reads off the HUD's compass and minimap at any moment, as three lines.
 
-    OBJECTIVES o1 Escape the ship 16m W (3m down) [Escape the Nautiloid] | o2 Find the helm 40m N | +2 more
+    OBJECTIVES o1 Escape the ship 16m W [Escape the Nautiloid] | o2 Find the helm 40m N | +2 more
     WAYS walkable: N 20m+, E 8m | blocked: S W
     LEADS (unvisited; get_frontier lists all): e529 Damaged Vase <usable> 8.3m E | e12 Door <door> 14m N | +4 more
 
@@ -9,7 +9,8 @@ every `look`, always, not only when something changed (human-gap research 2026-1
 walk ends the next call asked where things were: get_frontier, get_layout, a map screenshot). One renderer for
 every caller. Its inputs come from reads the result makes anyway (delta.fetch: state.status, nav.markers, and
 nav.frontier in the same eval), so it adds no RPC of its own. Facts only: the active objective markers (distance,
-compass direction, height), the open directions, and the nearest things not walked to yet.
+compass direction; no height: the HUD's quest diamonds show none, live window 2026-11-03), the open
+directions, and the nearest things not walked to yet.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from .render import Handles
 
 MAX_OBJECTIVES = 3  # objective markers shown (here first, nearest first: the mod's order), then "+N more"
 MAX_LEADS = 3  # unvisited leads shown, nearest first, then "+N more"
-DY_MIN_M = 1.5  # a height difference this big is shown ("3m down"), as get_frontier shows a lead's
+DY_MIN_M = 1.5  # a height difference this big is shown ("3m down") on a PASSED row, as get_frontier shows a lead's
 
 
 def here(status: Any) -> Sequence[Any] | None:
@@ -43,8 +44,9 @@ def _height(m: dict, at: Sequence[Any] | None) -> str:
     return f" ({render.num(round(abs(dy), 1))}m {'up' if dy > 0 else 'down'})" if abs(dy) >= DY_MIN_M else ""
 
 
-def objectives_line(markers: Any, at: Sequence[Any] | None) -> str:
-    """'OBJECTIVES o1 <label> 16m W (3m down) [quest] | ... | +2 more'; '' when the markers weren't read."""
+def objectives_line(markers: Any) -> str:
+    """'OBJECTIVES o1 <label> 16m W [quest] | ... | +2 more'; '' when the markers weren't read. No height: the
+    compass and minimap show none for a quest marker (live window 2026-11-03), so it would be a fact off the screen."""
     if not isinstance(markers, list):
         return ""
     shown: list[str] = []
@@ -55,7 +57,7 @@ def objectives_line(markers: Any, at: Sequence[Any] | None) -> str:
             continue
         label = render.objective_label(m)
         if m.get("here") and m.get("dist") is not None:
-            s = f"{label} {render.num(m['dist'])}m {m.get('dir') or ''}".rstrip() + _height(m, at)
+            s = f"{label} {render.num(m['dist'])}m {m.get('dir') or ''}".rstrip()
         else:
             s = f"{label} (another area)"
         quest = m.get("quest")
@@ -94,7 +96,7 @@ def block(got: dict, handles: Handles) -> str:
     """The block from one delta.fetch() result (parts status, markers, frontier); '' when none of them was read."""
     frontier = got.get("frontier")
     lines = [
-        objectives_line(got.get("markers"), here(got.get("status"))),
+        objectives_line(got.get("markers")),
         render.render_ways(frontier.get("ways")) if isinstance(frontier, dict) else "",
         leads_line(frontier, handles),
     ]

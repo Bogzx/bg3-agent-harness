@@ -21,6 +21,9 @@ function entity(u)
     if not w then error("no entity " .. tostring(u)) end
     local e = {}
     for k, v in pairs(w.comps or {}) do e[k] = v end
+    -- as the game: a spellbook comes with its SpellBookCooldowns, empty until a cooldown runs (live: Cedar's n=0);
+    -- a test sets it false for a component that doesn't read
+    if e.SpellBook and e.SpellBookCooldowns == nil then e.SpellBookCooldowns = { Cooldowns = {} } end
     function e:Replicate() end
     if w.comp_names then -- a test's component name list (otherwise the read errors, as other tests expect)
         e.GetAllComponentNames = function() return w.comp_names end
@@ -149,6 +152,9 @@ dofile(LUA .. "/Shared/Util.lua")
 dofile(LUA .. "/Shared/RPC.lua")
 BG3AI.Nav = { path = function(char, pos) return nav.fn(char, pos) end,
     known = function(_, p) return not (nav.unseen and nav.unseen(p)) end } -- N.known: all in view unless nav.unseen
+-- Events.lua's turn push (Actions.dispatch calls it after its turn pairing): recorded, {kind, char, round} each
+turn_pushes = {}
+BG3AI.Events = { turn = function(kind, char, round) turn_pushes[#turn_pushes + 1] = { kind, char, round } end }
 dofile(LUA .. "/Server/Guard.lua")
 dofile(LUA .. "/Server/Actions.lua")
 G, A, RPC = BG3AI.Guard, BG3AI.Actions, BG3AI.RPC
@@ -176,6 +182,8 @@ function reset()
     if A then A.CAST_DROP_EXTRA = A.CAST_DROP_CHECKS end
     if G then G.turn_over = {} end -- TurnEnded's marker (turn over until TurnStarted) is per test
     if G then G.turn_start, G.foe_start = {}, {} end -- TurnStarted records (Guard.turn_moved_on) too
+    if G then G.turn_open, G.end_owed, G.combat_round = {}, {}, {} end -- the TurnStarted/TurnEnded pairing too
+    turn_pushes = {}
     if A then A.hit_ms = {} end -- AttackedBy on a party member (cast re-order window) is per test
     if A then A.casts, A.hits, A.interrupts = {}, {}, {} end -- a move's reactions: casts, hits, interrupts per test
     -- the stub world moves in synthetic multi-metre steps per 60 ms tick: NAV-8's small-step rule off (own tests)

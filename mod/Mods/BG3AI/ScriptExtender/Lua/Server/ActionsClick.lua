@@ -129,9 +129,10 @@ reg("loot_corpse", function(args)
     G.combat_gate(char, "turn")
     local corpse = G.guid(args.corpse or args.target) -- bridge sends {target}
     if not corpse or not G.b(G.q("IsCharacter", corpse)) then G.refuse("that is not a body") end
+    -- Sight first: an out-of-sight character's dead/alive state is not on screen (fairness audit 2026-10-10 #18).
+    G.target_visible(corpse)
     if not G.is_dead(corpse) then G.refuse("they are not dead") end
     if G.is_party(corpse) then G.refuse("cannot loot a party member") end
-    G.target_visible(corpse)
     local story_cares = G.db_has("DB_CustomLootCorpseResponse", 3, char, corpse)
         or G.db_has("DB_OwnedCorpse", 2, corpse)
         or G.db_has("DB_LOW_PhilgravesMansion_LairEntities", 1, corpse)
@@ -197,9 +198,10 @@ reg("pickpocket", function(args)
     G.not_in_dialogue(char)
     G.combat_gate(char, "no_combat")
     local npc = G.guid(args.npc or args.target)
-    if not npc or not G.b(G.q("IsCharacter", npc)) or G.is_dead(npc) then G.refuse("nobody to pickpocket") end
+    if not npc or not G.b(G.q("IsCharacter", npc)) then G.refuse("nobody to pickpocket") end
+    G.target_visible(npc) -- before the dead check: an unseen character's state is not on screen (audit #18)
+    if G.is_dead(npc) then G.refuse("nobody to pickpocket") end
     if G.is_party(npc) then G.refuse("cannot pickpocket a party member") end
-    G.target_visible(npc)
     return approach("pickpocket", char, npc, function(job)
         job.requested_at = RPC.now_ms()
         G.osi("RequestPickpocket", char, npc)

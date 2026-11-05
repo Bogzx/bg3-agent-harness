@@ -175,8 +175,11 @@ def _hp(snap: dict) -> list:
 class FactsWriter:
     """Appends facts.jsonl records (thread-safe; a write failure is dropped, facts never break a session)."""
 
-    def __init__(self, path: Path, clock: Callable[[], float] = time.time, snapshot_s: float = SNAPSHOT_S):
-        self.path, self.clock, self.snapshot_s = Path(path), clock, snapshot_s
+    def __init__(self, path: Path, clock: Callable[[], float] = time.time, snapshot_s: float = SNAPSHOT_S,
+                 log: Callable[[str], None] | None = None):
+        self.path, self.clock, self.snapshot_s, self.log = Path(path), clock, snapshot_s, log
+        # this writer wrote run_end: nothing more (REVIEW-18s: a poll in flight at the run's end wrote after it)
+        self.ended = False
         self.t0: float | None = None
         self.last: dict | None = None        # the last read's snapshot fields
         self.snap_t: float | None = None     # when the last snapshot record was written
@@ -204,11 +207,17 @@ class FactsWriter:
         self.last_t = now
         game_t = None if self.t0 is None else round(max(0.0, now - self.t0), 1)
         line = {"v": VERSION, "kind": rec.pop("kind"), "t": round(now, 2), "game_t": game_t, **rec}
-        try:
-            with self.lock, open(self.path, "a") as f:
-                f.write(json.dumps(line, ensure_ascii=False, separators=(",", ":")) + "\n")
-        except OSError:
-            pass
+        with self.lock:
+            if self.ended:
+                if self.log:
+                    self.log(f"facts: a {line['kind']} record after run_end not written: {str(line)[:160]}")
+                return line
+            self.ended = line["kind"] == "mark" and line.get("mark") == "run_end"
+            try:
+                with open(self.path, "a") as f:
+                    f.write(json.dumps(line, ensure_ascii=False, separators=(",", ":")) + "\n")
+            except OSError:
+                pass
         return line
 
     def mark(self, mark: str, detail: Any = None, now: float | None = None) -> dict:
@@ -312,13 +321,16 @@ class RingFeed:
     """The mod's hidden rings into this run's files: the referee (ref.since) as facts events, the roll log
     (roll.since) as rolls.jsonl rows. A reader starts at the ring's current end (sync): what happened before this
     run, or before a runner restart, isn't this run's. A failed poll marks the referee not live, so the poll diff
-    writes REFEREE_KINDS again until it answers."""
+    writes REFEREE_KINDS again until it answers. Each change is a facts mark (REVIEW-16 A1): `referee_down` with the
+    error, `referee_up` when it answers again; while it is down trade, theft, crime, kill, loot and approval events
+    are not in facts.jsonl."""
 
     def __init__(self, rpc: referee.Rpc, writer: FactsWriter, rolls_path: Path,
                  wall: Callable[[], float] = time.time):
         self.rpc, self.writer, self.rolls_path, self.wall = rpc, writer, Path(rolls_path), wall
         self.ref: referee.RingReader | None = None
         self.roll: referee.RingReader | None = None
+        self.live: bool | None = None  # the referee's last poll answered (None: no poll yet)
 
     def _reader(self, make: Callable) -> referee.RingReader:
         r = make(self.rpc, self.wall)
@@ -331,9 +343,13 @@ class RingFeed:
         try:
             self.ref = self.ref or self._reader(referee.referee)
             n_facts = len(self.writer.timed_events([referee.to_fact(r) for r in self.ref.poll()]))
-            self.writer.referee_live = True
-        except Exception:  # noqa: BLE001 - loading screens, an old mod: the poll diff covers the kinds
-            self.writer.referee_live = False
+            if self.live is False:
+                self.writer.mark("referee_up")
+            self.live = self.writer.referee_live = True
+        except Exception as e:  # noqa: BLE001 - loading screens, an old mod: the poll diff covers the kinds
+            if self.live is not False:
+                self.writer.mark("referee_down", {"error": f"{type(e).__name__}: {e}"[:200]})
+            self.live = self.writer.referee_live = False
         try:
             self.roll = self.roll or self._reader(referee.rolls)
             rows = [referee.to_roll(r) for r in self.roll.poll()]
@@ -344,6 +360,16 @@ class RingFeed:
         except Exception:  # noqa: BLE001 - rolls never break a session
             pass
         return n_facts, n_rolls
+
+    def health(self) -> dict[str, Any]:
+        """For the run record at the run's end (the game still up): {ring_lost: referee records the ring dropped
+        before a poll read them (None: never read), never_fired: listeners that registered and never fired this
+        Lua state (ref.snapshot; None: it didn't answer)}."""
+        try:
+            never = referee.selfcheck(self.rpc("ref.snapshot", {}))["never"]
+        except Exception:  # noqa: BLE001 - a stopped game or an old mod: unknown
+            never = None
+        return {"ring_lost": self.ref.lost if self.ref else None, "never_fired": never}
 
 
 def read_inventory(lua_eval: Callable[..., str], combined_code: Callable[[list], str]) -> dict | None:

@@ -136,19 +136,30 @@ test("an invisible-platform helper (the Faith-Leap path) is never perceived (S03
     eq(visible("D2"), true, "a plain door still is")
 end)
 
-test("vanished: a character seen moments ago that is invisible now (S030 Soft-Step Shadow)", function()
+test("vanished: a character seen as it turned invisible (S030 Soft-Step Shadow)", function()
     setup()
     world.SH = { pos = { 2, 0, 0 }, comps = { ServerCharacter = {} } }
-    V.memory = {}
-    V.remember("SH", "Shadow", { 2, 0, 0 }, "neutral")
+    V.vanishes, V.invisibleNow = {}, {}
+    -- the vanish is noted at StatusApplied (V.noteVanish, arena A7 + REVIEW-18e), where the side sees the spot then:
+    -- P1 2 m off with line of sight (8726553f, fairness audit S2-4). The stub's Osi answers nil to anything not set.
     osiv[key("IsInvisible", "SH")] = 1
+    V.noteVanish("SH", "INVISIBILITY")
+    eq((V.vanished("SH")), false, "no line of sight as it vanished: not seen to vanish")
+    osiv[key("HasLineOfSight", "P1", "SH")] = 1
+    V.noteVanish("SH", "WET")
+    eq((V.vanished("SH")), false, "in view now, still invisible: a later status is no vanish (A7)")
+    osiv[key("IsInvisible", "SH")] = 0
+    V.noteVisible("SH")
+    osiv[key("IsInvisible", "SH")] = 1
+    V.noteVanish("SH", "INVISIBILITY")
     local gone, m = V.vanished("SH")
-    eq(gone, true, "vanished"); eq(m.ago_s, 0, "ago")
+    eq(gone, true, "seen to vanish"); eq(m.ago_s, 0, "ago"); eq(m.pos[1], 2, "where")
     osiv[key("IsInvisible", "SH")] = 0
     eq((V.vanished("SH")), false, "visible again (or just out of sight): not vanished")
     osiv[key("IsInvisible", "SH")] = 1
     clock = clock + (V.INVISIBLE_SEEN_S + 1) * 1000
     eq((V.vanished("SH")), false, "seen too long ago")
+    V.vanishes, V.invisibleNow = {}, {}
 end)
 
 test("itemVisible without pos (Guard's call) uses the item's own position", function()

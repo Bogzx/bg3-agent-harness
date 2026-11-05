@@ -91,15 +91,21 @@ listen("CombatEnded", 1, function(combat)
     if c and c.announced then RPC.push("combat_ended", {}) end
 end)
 
-listen("TurnStarted", 1, function(char)
-    local u = visibleChar(char)
-    if u then RPC.push("turn_started", ref(u)) end
-end)
-
-listen("TurnEnded", 1, function(char)
-    local u = visibleChar(char)
-    if u then RPC.push("turn_ended", ref(u)) end
-end)
+-- turn_started / turn_ended {uuid, name, round}: round = the combat round the turn STARTED in (nil when the mod never
+-- saw that combat's CombatRoundStarted, e.g. a save loaded mid-combat). The game fires a round's last group's
+-- TurnEnded after the next round's TurnStarted (live 2026-11-02): that turn_ended carries the older round. Pushed by
+-- Actions.dispatch after its TurnStarted/TurnEnded pairing (Guard.turn_open / end_owed), not by a listener here, so
+-- the round never depends on which listener runs first.
+function E.turn(kind, char, round)
+    local ok, err = pcall(function()
+        local u = visibleChar(char)
+        if not u then return end
+        local d = ref(u)
+        d.round = round
+        RPC.push(kind, d)
+    end)
+    if not ok then Ext.Utils.PrintWarning("[BG3AI] event " .. kind .. ": " .. tostring(err)) end
+end
 
 -- AttackedBy(defender, attackerOwner, attacker, damageType, damageAmount, damageCause, storyActionID)
 listen("AttackedBy", 7, function(defender, attackerOwner, attacker, dtype, amount, cause, _)

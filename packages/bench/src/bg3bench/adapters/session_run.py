@@ -184,6 +184,16 @@ class SessionRun:
         path.write_text(json.dumps(meta, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
         return []
 
+    def _next_run(self, job: JSON) -> tuple[int, Path]:
+        """The job's next run: its number in the series and its run directory."""
+        name = series_name(self.matrix, job)
+        k = series.next_run_index(series.series_records(self.sessions / name / "runs.jsonl", name))
+        return k, self.sessions / series.run_name(name, k)
+
+    def run_dir(self, job: JSON) -> Path:
+        """Where the job's next run plays (the matrix's start record: an interrupted run's spend is read there)."""
+        return self._next_run(job)[1]
+
     def __call__(self, job: JSON) -> RunResult:
         if job["scenario"] not in self.scenarios:
             raise ValueError(f"no scenario {job['scenario']!r}")
@@ -191,8 +201,7 @@ class SessionRun:
         name = series_name(self.matrix, job)
         meta = self._series(name, job, sc)
         runs = self.sessions / name / "runs.jsonl"
-        k = series.next_run_index(series.series_records(runs, name))
-        run_dir = self.sessions / series.run_name(name, k)
+        k, run_dir = self._next_run(job)
         run_dir.mkdir(parents=True, exist_ok=True)
         profile = profile_ref(job.get("profile"))  # as the run starts: what it played with
         try:

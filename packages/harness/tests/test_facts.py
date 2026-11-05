@@ -65,13 +65,18 @@ class FakeRing:
         self.ref = [{"seq": n, "t": 100 * n, "ev": "crime", "type": "old"} for n in (1, 2, 3)]
         self.rolls = [{"seq": 1, "t": 50, "roller": "old"}]
         self.fail = False
+        self.first = 1  # the oldest seq the referee ring still holds
+        self.fired = {"Osiris:Died": 2, "Osiris:ShortRested": 0}  # ref.snapshot's listener counts
 
     def __call__(self, op, args):
         if self.fail:
             raise OSError("no game")
+        if op == "ref.snapshot":
+            return {"fired": self.fired}
         ring = self.ref if op == "ref.since" else self.rolls
         evs = [r for r in ring if r["seq"] > args["seq"]][: args["limit"]]
-        return {"boot": "b1", "now": 10_000, "first": 1, "latest": ring[-1]["seq"], "events": evs}
+        first = self.first if op == "ref.since" else 1
+        return {"boot": "b1", "now": 10_000, "first": first, "latest": ring[-1]["seq"], "events": evs}
 
 
 class Facts(unittest.TestCase):
@@ -194,6 +199,23 @@ class Facts(unittest.TestCase):
         again = self.w.observe({"status": None, "ui": over["ui"]}, None, now=7.0)  # no session: still written
         self.assertEqual([(r["ev"], r["game_t"]) for r in again], [("game_over", 7.0)])
         self.assertEqual(self.w.game_over, 2.0)  # the run's first
+
+    def test_nothing_is_written_after_run_end(self):
+        # REVIEW-18s: a facts poll in flight when end_facts wrote run_end (a hung game's ring rpcs) finished after it
+        # and wrote its records (referee_down, events, a snapshot) past the run's end
+        logged: list[str] = []
+        self.w.log = logged.append
+        self.w.mark("run_start", now=0.0)
+        self.w.observe(READ, INV, now=1.0)
+        self.w.mark("run_end", {"outcome": "passed"}, now=30.0)
+        later = copy.deepcopy(READ)
+        later["status"]["gold"] = 99
+        self.w.mark("referee_down", {"error": "TimeoutError"}, now=31.0)  # the in-flight poll's ring, then its read
+        self.w.observe(later, INV, now=31.0)
+        recs = self.records()
+        self.assertEqual((recs[-1]["kind"], recs[-1].get("mark")), ("mark", "run_end"))
+        self.assertEqual(len(logged), 2, logged)
+        self.assertIn("after run_end", logged[0])
 
     def test_no_session_and_failed_reads(self):
         self.assertEqual(self.w.observe(None, None, now=1.0), [])
@@ -332,12 +354,52 @@ class Facts(unittest.TestCase):
         r["status"]["gold"] = 50
         self.assertEqual([x["ev"] for x in self.w.observe(r, INV, now=2100.0)], ["gold"])
 
+    def test_ring_feed_marks_its_outages_and_reports_its_health(self):
+        # REVIEW-16 A1: a failing poll only flipped referee_live; facts.jsonl had no trace of the window in which
+        # trade, theft, crime, kill, loot and approval events were missing
+        ring = FakeRing()
+        feed = F.RingFeed(ring, self.w, self.path.with_name("rolls.jsonl"), wall=lambda: 2000.0)
+        self.w.mark("run_start", now=1000.0)
+        feed.poll()
+        ring.fail = True
+        feed.poll()
+        feed.poll()  # still down: one mark per change
+        ring.fail = False
+        feed.poll()
+        feed.poll()
+        marks = [(r["mark"], r.get("detail")) for r in self.records() if r["kind"] == "mark"]
+        self.assertEqual(
+            marks, [("run_start", None), ("referee_down", {"error": "OSError: no game"}), ("referee_up", None)]
+        )
+        # the ring dropped seq 4-9 before a poll read them; one listener never fired
+        ring.ref = [{"seq": n, "t": 9_000, "ev": "crime", "type": "x"} for n in (10, 11)]
+        ring.first = 10
+        feed.poll()
+        self.assertEqual(feed.health(), {"ring_lost": 6, "never_fired": ["Osiris:ShortRested"]})
+        ring.fail = True
+        self.assertEqual(feed.health(), {"ring_lost": 6, "never_fired": None})
+        self.assertEqual(F.RingFeed(ring, self.w, self.path).health(), {"ring_lost": None, "never_fired": None})
+        try:
+            import jsonschema
+        except ImportError:
+            return
+        v = jsonschema.Draft202012Validator(json.loads(SCHEMA.read_text()))
+        for r in self.records():
+            v.validate(r)
+
+    def test_ring_feed_down_from_the_first_poll_is_marked(self):
+        ring = FakeRing()
+        ring.fail = True
+        F.RingFeed(ring, self.w, self.path.with_name("rolls.jsonl")).poll()
+        self.assertEqual([r["mark"] for r in self.records() if r["kind"] == "mark"], ["referee_down"])
+
     def test_schema(self):
         try:
             import jsonschema
         except ImportError:
             self.skipTest("jsonschema not installed (uv run --with jsonschema python -m unittest runner/test_facts.py)")
         self.play()
+        self.w.ended = False  # play() wrote run_end (nothing is written after it); the kinds below are for the schema
         self.w.mark("settings", {"resolution": "1920x1080"}, now=1501.0)
         self.w.timed_events(
             [

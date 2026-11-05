@@ -119,14 +119,29 @@ local function relation(ctx, uuid)
     return "neutral"
 end
 
-local function concentration(e)
+-- A concentration spell whose shown name didn't read, and why, logged once per spell and reason. w14 L1 try 1
+-- (2026-11-04): Balthazar's row read concentration=Target_SHA_Necromancer_Cloudkill once, `Cloudkill` in tries 2-3;
+-- the cause isn't known (no log). The id stays the fallback for the reader's own characters (`own`: its party, a
+-- side's team); for anyone else it is OTHER_CONCENTRATION, the id only in the log: an id can carry hints the name
+-- doesn't (Target_SHA_Necromancer_Cloudkill vs Cloudkill; REVIEW-18c, as for an enemy's cast in Events.lua).
+S.nameMiss = S.nameMiss or {}
+S.OTHER_CONCENTRATION = "a spell" -- the bridge shows "concentrating on a spell"
+local function concentration(e, own)
     local c = comp(e, "Concentration")
     if not c then return nil end
     local ok, sid = pcall(function() return c.SpellId.Prototype end)
     if not ok or not sid or sid == "" then return nil end
-    local st = osi(Ext.Stats.Get, sid)
+    local oks, st = pcall(Ext.Stats.Get, sid)
     local okn, dn = pcall(function() return st.DisplayName end)
-    return (okn and U.loca(dn)) or sid
+    local name = okn and U.loca(dn)
+    if name then return name end
+    local why = not oks and ("Ext.Stats.Get raised: " .. tostring(st)) or st == nil and "no stats entry"
+        or not okn and ("DisplayName raised: " .. tostring(dn)) or ("no string for DisplayName " .. tostring(dn))
+    if not S.nameMiss[tostring(sid) .. "|" .. why] then
+        S.nameMiss[tostring(sid) .. "|" .. why] = true
+        pcall(Ext.Utils.PrintWarning, "[BG3AI] concentration name of " .. tostring(sid) .. " didn't read: " .. why)
+    end
+    return own and sid or S.OTHER_CONCENTRATION
 end
 
 local function selectedCharacter(party)
@@ -289,7 +304,7 @@ function S.examine(ctx, uuid, e)
     if ok then out.initiative = ini end
     local okd, dv = pcall(function() return e.Sight.DarkvisionRange end)
     if okd and dv and dv > 0 then out.darkvision_m = round(dv, 1) end
-    out.concentration = concentration(e)
+    out.concentration = concentration(e, ctx.is_party[uuid])
     return out
 end
 
@@ -309,7 +324,7 @@ local function partyBrief(ctx, uuid, active)
     if inCombat(uuid) then o.in_combat = true end
     if uuid == active then o.active = true end
     if not truthy(osi(Osi.IsOnStage, uuid)) then o.off_stage = true end
-    o.concentration = concentration(e)
+    o.concentration = concentration(e, true)
     o.level_up = levelUpTo(e)  -- bridge: "LEVEL UP: Gale (2)"
     -- The "!" the game shows over a companion who wants to talk (eoc::tag::HasExclamationDialog; live
     -- 2026-10-10: Wyll at camp). Bridge: "TALK: Wyll wants to talk" (S023 Gale, S026 Withers took screenshots).
@@ -484,10 +499,13 @@ local function spellInfo(id)
     return c or nil
 end
 
--- The guard's own cooldown rule (Guard.cooldowns): what this lists UNAVAILABLE is what a cast is refused for.
+-- The guard's own cooldown rule (Guard.cooldown_block over Guard.cooldowns): what this lists UNAVAILABLE is what a
+-- cast is refused for, unread rows included. id -> nil, or kind and the fact (kind false: the rows didn't read).
 local function cooldowns(e)
     local Gc = BG3AI.Guard
-    return Gc and Gc.cooldowns and Gc.cooldowns(e) or {}
+    if not (Gc and Gc.cooldowns and Gc.cooldown_block) then return function() return nil end end
+    local cds, read = Gc.cooldowns(e)
+    return function(id) return Gc.cooldown_block(id, cds, read) end
 end
 
 -- Footprint radius (m), as Guard.radius: AIBounds.Stand, then Move, then 0.5.
@@ -527,7 +545,7 @@ function S.actions(uuid)
     if not e then error("unknown character", 0) end
     local wranges = weaponRanges(e)
     local res = resources(e)
-    local cds = cooldowns(e)
+    local cooldown = cooldowns(e)
     local book = comp(e, "SpellBook")
     if not book then return {} end
     local byId, order, upcasts, variants = {}, {}, {}, {}
@@ -598,7 +616,8 @@ function S.actions(uuid)
             end
         end
         local ok, why = canPay(pay, res)
-        if cds[id] then ok, why = false, "cooldown (" .. cds[id] .. ")" end
+        local kind, fact = cooldown(id)
+        if kind then ok, why = false, "cooldown (" .. kind .. ")" elseif kind == false then ok, why = false, fact end
         local Gi = BG3AI.Guard
         local ik = Gi and Gi.item_cd_key and Gi.item_cd_key(uuid, id)
         if ik and Gi.item_uses()[ik] then ok, why = false, "used until the next rest (once per rest, its item)" end

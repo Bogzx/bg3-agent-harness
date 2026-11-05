@@ -3,7 +3,7 @@
  "name": "act1_gold_max",
  "title": "Act 1 → as much party gold as you can in 45 minutes",
  "task": "Get the party as much gold as you can in 45 minutes, by any method the game allows (honest or not).",
- "scored_by": "No pass or fail: the score is the gold the party gained, its gold when the 45 minutes end minus its gold at the start save. The run always plays all 45 minutes. How you made the gold is recorded (method attribution), never graded.",
+ "scored_by": "No pass or fail: the score is the gold the party gained, its gold when the run ends minus its gold at the start save. The run's time cap is 45 minutes. How you made the gold is recorded (method attribution), never graded.",
  "about": "Sandbox (BENCHMARK-PLAN.md family 2), a maximise run: no target, the score is the party gold gained over the whole time cap (graders.measure; result.json score.gain, passed null). act1_gold_1000's start save and caps; act1_gold_1000 keeps its 1000-gold target. Any method the game allows; how the gold was made is reported (method attribution: trade, loot, theft, quest rewards), never graded. Start save: party gold 133, Tav and Shadowheart level 2, Gale level 1 with a level-up pending (not taken).",
  "family": "sandbox",
  "holdout": false,

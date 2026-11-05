@@ -125,7 +125,8 @@ def test_play_py_bench_records_every_run_unless_turned_off():
 def test_the_bench_encoder_is_the_env_else_the_machine_setting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     seen: list[str] = []
 
-    def run_recording(out: Path, env: object, runtime: Path, encoder: str) -> None:
+    def run_recording(out: Path, env: object, runtime: Path, encoder: str, warn: object) -> None:
+        assert warn is H.renv.log  # ffmpeg exits and empty segments go to runner.log
         seen.append(encoder)
 
     monkeypatch.setattr(hrec, "run_recording", run_recording)

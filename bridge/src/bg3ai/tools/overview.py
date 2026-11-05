@@ -239,7 +239,7 @@ def _area_alert(st: Any) -> str:
 @reporting._guard
 def look(full: bool = False) -> str:
     """The cheap way to keep your bearings: what CHANGED since your last look, in a few lines. Party moves (12m NW), HP, conditions gained/lost, characters and objects that appeared, left view or changed (hostile, dead, opened, unlocked), items gained/lost, gold, mode, new objectives and quest entries, and any new prompt (dialogue, roll, popup).
-    Every look ends with the minimap block, changed or not: OBJECTIVES (distance, direction, height), WAYS, and the 3 nearest unvisited LEADS.
+    Every look ends with the minimap block, changed or not: OBJECTIVES (distance, direction), WAYS, and the 3 nearest unvisited LEADS.
     full=true (or the first call, or a new area): the full status plus everything visible nearby."""
     t0 = time.monotonic()
     # one game tick, events included; the frontier is the minimap block's (leads, WAYS)

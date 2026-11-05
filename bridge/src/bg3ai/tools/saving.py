@@ -120,7 +120,9 @@ def _save_menus(label: str) -> tuple[bool, str]:
         # An in-game key/text didn't land: send it through the input shim, then let the mod continue.
         inp = world_tools._inp()
         if inp is None:
-            return False, "the save menus need the input shim (" + (r.error or "needs_text") + "); save_game(label=\"quicksave\") needs no typed name"
+            # the fact only, for the branch that got here (REVIEW-18b NOTE 1: no clause about another route)
+            what = "type the save's name" if res.get("needs_text") else f"press {res.get('needs_key') or 'RETURN'}"
+            return False, f"the save menus need the input shim to {what}" + (f" ({r.error})" if r.error else "")
         if res.get("needs_text"):
             inp.text(label)
         inp.key(res.get("needs_key") or "RETURN")

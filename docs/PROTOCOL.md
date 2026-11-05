@@ -88,8 +88,8 @@ Context: **S** = server, **C** = client. `uuid` = entity GUID string. `pos` = `[
 ### Core (`Shared/RPC.lua`, done)
 | op | ctx | args | result |
 |---|---|---|---|
-| `sys.ping` | S,C | – | `{context,t,version}` |
-| `sys.info` | S,C | – | `{context,version,game_version,game_state,ops[],event_seq}` |
+| `sys.ping` | S,C | – | `{context,t,boot}` |
+| `sys.info` | S,C | – | `{context,game_version,extender_version,game_state,ops[],event_seq}` |
 | `events.since` | S,C | `{seq,limit}` | `{latest, events:[{seq,t,kind,data}]}` |
 | `job.poll` / `job.cancel` | S,C | `{id}` | `{id,kind,status,result,error,elapsed_ms}` |
 | `job.notify` | S,C | `{id}` | same view; a still-running job announces its end as `job_finished` (a waited call that outlived its wait) |
@@ -123,7 +123,7 @@ casters, `spell_info` (a string: an enemy spell's tooltip text from its stats, t
 in view or on a row's concentration), `walk_fell{uuid,from,to,m}` (our walk dropped m metres: no teleport), and
 `moved_done{uuid,move_id}`.
 
-### Navigation (`Server/Navigation.lua` + `NavigationReach.lua`, `NavigationTerrain.lua`, `NavigationRoute.lua`, `NavigationOps.lua`, `NavigationDoors.lua`; owner: **vis**)
+### Navigation (`Server/Navigation.lua` + `NavigationReach.lua`, `NavigationTerrain.lua`, `NavigationRoute.lua`, `NavigationOps.lua`, `NavigationDoors.lua`, `NavigationSpots.lua`; owner: **vis**)
 | op | ctx | args | result (sketch) |
 |---|---|---|---|
 | `nav.path` | S | `{char?, pos \| target}` | `{reachable, length_m, nodes, needs_jump?, within_movement?, movement_left, approach_pos?}` or `{reachable:false, straight_m, error_cause}`; points > 80 m → `{estimate:true, straight_m}`; a pos the party hasn't seen or walked (`N.known`) → `{unknown_goal:true, straight_m, dir, dy}` |

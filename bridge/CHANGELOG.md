@@ -5,6 +5,24 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-04: EVENTS leaves out the old round's turn ends
+
+- When a turn group closes, the game starts the new round's turns before it ends the old round's, so EVENTS could
+  show `turn_ended X` after X's new turn started, in the same result or in the next one. When the mod tags a turn
+  event with its `round`, a `turn_ended` of a round older than that member's last `turn_started` is left out. The
+  tag itself is not printed. Turn events without a round are shown as before. Port of arena ad8fc751, with the mod's
+  pairing and round tag (arena eac2da4a, 00cf506f).
+
+## 2026-11-05: fairness: nothing about a character or marker the screen doesn't show
+
+- `loot_corpse` / `pickpocket` on a character out of the party's sight answer `target is not visible` (with the
+  last-seen hint) before any dead/alive check. Before, a stale id answered `they are not dead` or `nobody to
+  pickpocket`, which told the agent whether an unseen character was alive (fairness audit 2026-10-10 #18).
+- The minimap block's OBJECTIVES line gives no height: `o1 Escape the ship 16m W [Escape the Nautiloid]`, no
+  `(3m down)`. The HUD's compass and minimap show a quest marker's direction and distance only (live window
+  2026-11-03: a marker 7.7 m down showed no arrow or number). LEADS, WAYS and PASSED keep their heights (seen
+  ground). `look`'s description and the rules text say "(distance, direction)".
+
 ## 2026-11-04 (w15): one record per partial-stack move; path_preview to a creature asks the spots around it
 
 - A partial-stack trade (count=N of a bigger stack) names the deal once: `BOUGHT e127 Muddy Red Dye x2 12 g` (w15 a2
@@ -40,6 +58,13 @@ Facts stay; the call the agent might make next goes (no-coaching rule). Tool des
   <trader>) opens it again`).
 - create_character's first look and first save failures: `(first look failed: <error>)` (was `...; call look`) and
   `first save not started (<error>): no 'S001-start' save was made` (was `...: save_game(label="S001-start")`).
+- level_up: a camp member with no room says why (`'Halsin' is not in the party` / `the party is full and no member
+  but the avatar is alive`; was `level_up(who=..., out=<companion>)`); a level-up page the game opens after the
+  finish is said as closed with its level up still pending, and a page that stays as `another level up may be
+  pending` (mod; was `level_up(who) opens it again` / `call level_up again`).
+- save_game without the input shim: `...; a quicksave needs no typed name` (was `save_game(label="quicksave") ...`).
+- The junk rule keeps the Dye Remover (w14 L2: sold by sell=junk): state.inventory marks `dye` from the stats entry
+  (OBJ_Dye_*; OBJ_Dye_Remover blanks its ObjectCategory, so `cat` was empty) (mod + bridge).
 
 ## 2026-11-04 (night): REVIEW-17 F1/F2/F4/F5
 

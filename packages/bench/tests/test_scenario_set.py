@@ -243,7 +243,7 @@ def test_each_scenario_tells_the_agent_its_task_and_how_it_is_scored(path):
     head = text.split("\n\n")
     assert head[1] == f"YOUR TASK: {sc['task']}" and head[2] == f"How it is scored: {sc['scored_by']}"
     cap = round(sc["caps"]["run_hours"] * 60)
-    assert (f"plays all {cap} minutes" if "maximise" in sc else f"after {cap} minutes of play") in head[3]
+    assert (f"after at most {cap} minutes of play" if "maximise" in sc else f"after {cap} minutes of play") in head[3]
     assert "WRAP UP" not in text
 
 

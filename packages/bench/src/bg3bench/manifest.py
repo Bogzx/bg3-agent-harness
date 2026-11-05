@@ -94,6 +94,7 @@ def from_series(
         "sandbox": series.get("sandbox"),
         "judge": {"model": judge} if (judge := judge_model(series, record)) else None,
         "record_encoder": record.get("record_encoder"),
+        "referee": record.get("referee"),  # the referee ring's health (REVIEW-16 A1); the validity rule comes later
     }
 
 

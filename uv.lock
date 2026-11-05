@@ -272,7 +272,7 @@ requires-dist = [
 
 [[package]]
 name = "bg3bench"
-version = "0.10.0"
+version = "0.11.0"
 source = { editable = "packages/bench" }
 dependencies = [
     { name = "bg3-agent-harness" },

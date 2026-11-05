@@ -526,6 +526,10 @@ class Recorder:
     guard_until: float = 0.0
     segments: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     events: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    # the runner log (a bench run: runner.env.log): ffmpeg exits and restarts, and finished 0-byte segments (r13 a1:
+    # the capture broke 80 s before the game died and nothing but index.json said so)
+    warn: Callable[[str], None] = lambda _msg: None
+    empty_warned: set[str] = field(default_factory=set[str])
 
     def __post_init__(self) -> None:
         self.out.mkdir(parents=True, exist_ok=True)
@@ -586,6 +590,8 @@ class Recorder:
         args = ffmpeg_args(self.spec, capture, prefix, self.ffmpeg)
         proc = self.spawn(args, self.out / "ffmpeg.log")
         self.run = Run(prefix, now, capture, proc, self.spec)
+        if self.reason.startswith(("ffmpeg exited", "restart backoff")):
+            self.warn(f"recorder: ffmpeg restarted after it exited ({self.last_exit}, {self.crashes} crash(es))")
         self._event(now, "start", after=self.reason)
         if self.spec.live and proc.stdout is not None:
             self.run.pump = threading.Thread(
@@ -629,6 +635,10 @@ class Recorder:
             self.last_exit = run.proc.poll()
             self.reason = f"ffmpeg exited ({self.last_exit})"
             self._event(now, "exit", code=self.last_exit, restart_in=round(delay, 1))
+            self.warn(
+                f"recorder: ffmpeg exited ({self.last_exit}) after {now - run.t0:.0f} s, restart in {delay:.0f} s "
+                f"(see {self.out / 'ffmpeg.log'})"
+            )
 
     # -------------------------------------------------- index, cap
 
@@ -649,6 +659,11 @@ class Recorder:
             except OSError:
                 sizes[f] = 0
         rows = run_segments(run.prefix, run.t0, listed, files, sizes, run.ended_at)
+        for r in rows:
+            # a listed segment the size cap deleted has no size either: only a file still on disk is empty
+            if r["end"] is not None and not r["bytes"] and r["file"] in files and r["file"] not in self.empty_warned:
+                self.empty_warned.add(r["file"])
+                self.warn(f"recorder: segment {r['file']} is empty (0 bytes; see {self.out / 'ffmpeg.log'})")
         self.segments = [s for s in self.segments if s["run"] != run.prefix] + rows
         self._write_index()
 
@@ -752,12 +767,18 @@ class RunRecording:
 RUN_W, RUN_H = 1408, 792
 
 
-def run_recording(out_dir: Path, env: Mapping[str, str], runtime: Path, encoder: str = "h264_nvenc") -> RunRecording:
+def run_recording(
+    out_dir: Path,
+    env: Mapping[str, str],
+    runtime: Path,
+    encoder: str = "h264_nvenc",
+    warn: Callable[[str], None] = lambda _msg: None,
+) -> RunRecording:
     """A bench run's recording into out_dir: the game's window on env's DISPLAY at RUN_W x RUN_H, no live view, the
     resource guard on runtime/thermal.log and out_dir's free space (low RAM, heat or under 1 GB free stops it until it
     clears: the run's video then has a gap with its reason in index.json's events, which the evidence video shows as
-    a pause card; bg3harness.video.timeline.cuts)."""
+    a pause card; bg3harness.video.timeline.cuts). warn: the runner log (Recorder.warn)."""
     spec = RecordSpec(out_dir, RUN_W, RUN_H, encoder=encoder, live=False)
     probe = game_probe(env.get("DISPLAY") or ":1")
     guard = resource_guard(runtime / "thermal.log", disk=out_dir)
-    return RunRecording(Recorder(spec, probe, time.time, guard))
+    return RunRecording(Recorder(spec, probe, time.time, guard, warn=warn))

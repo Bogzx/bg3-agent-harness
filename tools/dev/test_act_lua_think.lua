@@ -728,7 +728,8 @@ test("target not visible: one that turned invisible says so (S030 Soft-Step Shad
     }
     local ok, err = pcall(function()
         refused(function() G.target_visible(NPC) end, "target is not visible; it turned invisible 2s ago")
-        refused(function() G.target_visible(NPC) end, "Faerie Fire or an area attack on that spot reveal it")
+        -- the fact only (no-coaching rule, user 2026-10-24; REVIEW-18e): no reveal advice
+        eq(G.last_seen_hint(NPC), "; it turned invisible 2s ago (last seen @(-806.7,-6.5,-746.3))", "the hint")
         assert(not G.last_seen_hint(NPC):find("travel_to"), "no walk advice for an invisible one")
         BG3AI.Visibility.vanished = function() return false end
         eq(G.last_seen_hint(NPC):find("travel_to", 1, true), nil, "a plain out-of-sight one: the fact only")
