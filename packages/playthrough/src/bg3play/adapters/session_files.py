@@ -25,9 +25,11 @@ from typing import Any
 from bg3ai import progress as story  # pyright: ignore[reportMissingTypeStubs]
 from bg3ai.referee import Rpc  # pyright: ignore[reportMissingTypeStubs]
 from bg3harness import choices, events, facts, session_summary
+from bg3harness.runner import env as renv
 
 Log = Callable[[str], None]
-StoryRead = Callable[[], dict[str, Any] | None]  # one poll of the game (bg3ai.progress.read_game), None = no answer
+# one poll of the game (bg3ai.progress.read_game), None = no answer; timeout: each eval's (None = the reader's own)
+StoryRead = Callable[..., dict[str, Any] | None]
 LuaEval = Callable[[str, str], str]  # (code, context) -> the eval's JSON
 
 
@@ -75,12 +77,14 @@ class ProgressPoller:
         self.timeline = story.Timeline(sdir / f"{sid}.progress.jsonl", sdir / "progress_state.json", start)
         self.actions = story.actions_in(metrics_path(sdir, sid))
 
-    def poll(self, now: float | None = None) -> None:
+    def poll(self, now: float | None = None, last: bool = False) -> None:
+        """One read into the timeline and facts. last: the session's end state, progress only, with short evals
+        (renv.LAST_EVAL_TIMEOUT) that end within the session end's join; the end's facts are FactsFeed's own."""
         try:
-            got = self.read()
+            got = self.read(timeout=renv.LAST_EVAL_TIMEOUT) if last else self.read()
         except Exception:  # not answering: a poll without an answer
             got = None
-        if self.facts is not None:
+        if self.facts is not None and not last:
             try:
                 self.facts(got)
             except Exception as e:
@@ -94,8 +98,12 @@ class ProgressPoller:
             self.log(f"{self.sid}: progress poll failed: {e}")
 
     def loop(self, stop: threading.Event) -> None:
-        while not stop.wait(self.interval):
-            self.poll()
+        """Polls every `interval` s until `stop` is set, then once more: a story change after the last poll (a short
+        session's whole scene, v010 pilot choice_act2_nightsong sonnet: 0 points) is in the session's progress."""
+        last = False
+        while not last:
+            last = stop.wait(self.interval)
+            self.poll(last=last)
 
 
 def write_session_files(sdir: Path, sid: str, start: float, end: float, log: Log) -> None:

@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from bg3harness import clients, events
+from bg3harness.runner import env as renv
 from bg3play.adapters import harness_runner as hr
 from bg3play.adapters.session_files import FactsFeed, ProgressPoller
 
@@ -81,14 +82,37 @@ def test_the_poller_loop_polls_until_stopped(tmp_path: Path):
     stop = threading.Event()
     n: list[int] = []
 
-    def read() -> dict[str, Any] | None:
+    def read(timeout: float | None = None) -> dict[str, Any] | None:
         n.append(1)
         if len(n) == 3:
             stop.set()
         return poll("TUT_Avernus_C")
 
     ProgressPoller(tmp_path, "S002", 1000.0, read, lambda m: None, interval=0.0).loop(stop)
-    assert len(n) == 3
+    assert len(n) == 4  # 3, then the last read at the stop
+
+
+def test_the_poller_reads_once_more_at_the_stop_progress_only(tmp_path: Path):
+    # v010 pilot choice_act2_nightsong sonnet: the story changed after the last poll and the session ended (0 points).
+    # REVIEW-18r: that last read is progress only (the end's facts are FactsFeed's), with evals that end within the join
+    stop = threading.Event()
+    timeouts: list[float | None] = []
+    fed: list[Any] = []
+    region = ["TUT_Avernus_C"]
+
+    def read(timeout: float | None = None) -> dict[str, Any] | None:
+        timeouts.append(timeout)
+        got = poll(region[0])
+        if len(timeouts) == 1:  # after this poll: the scene resolves and the session ends before the next
+            region[0] = "WLD_Main_A"
+            stop.set()
+        return got
+
+    ProgressPoller(tmp_path, "S001", 1000.0, read, lambda m: None, interval=0.0, facts=fed.append).loop(stop)
+    assert timeouts == [None, renv.LAST_EVAL_TIMEOUT] and 2 * renv.LAST_EVAL_TIMEOUT < renv.POLL_JOIN_S
+    assert len(fed) == 1  # the poll before the stop only
+    recs = [json.loads(ln) for ln in (tmp_path / "S001.progress.jsonl").read_text().splitlines()]
+    assert ("progress", "region", "WLD_Main_A") in [(r["type"], r.get("kind"), r.get("what")) for r in recs]
 
 
 class FakeRings:
