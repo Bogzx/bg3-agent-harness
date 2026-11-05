@@ -155,13 +155,16 @@ def kickoff(
     save_why: str = "",
 ) -> str:
     """The runner's kickoff (prompts.build_kickoff) for an app session: the request's notes and the character, the
-    save the game was recovered to and the recovery's notes, the pace pre-flight when the condition has coaching."""
+    save the game was recovered to and the recovery's notes, the pace pre-flight when the condition has coaching, the
+    operator messages' statement when session_env gives the bg3 server their dir ([operator] messages)."""
     cfg = req.config
     notes = [*req.notes, *game_notes]
     if cfg.character.brief:
         notes.append(f"Your character: {cfg.character.brief} (roleplay: {cfg.character.roleplay}).")
     pace = client_setup.kickoff_pace(client, {"BG3AI_PROMPT_CONDITION": cfg.agent.condition})
-    return prompts.build_kickoff(sid, req.playthrough, loaded, notes, briefing.strip(), save_why, pace=pace)
+    return prompts.build_kickoff(
+        sid, req.playthrough, loaded, notes, briefing.strip(), save_why, pace=pace, operator=cfg.operator.messages
+    )
 
 
 def session_cap(client: str, max_cost: float, budget: Path) -> tuple[float, str | None]:

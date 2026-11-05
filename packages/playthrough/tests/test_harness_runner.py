@@ -186,6 +186,7 @@ def test_two_sessions_with_the_keeper_between_and_the_files_the_store_reads(tmp_
     assert first.env["BG3AI_PROMPT_CONDITION"] == "rules+coaching" and first.env["BG3AI_SESSION"] == "S001"
     assert first.env["BG3AI_SESSION_DEADLINE"] == str(1000 + 30 * 60) and first.env["BG3_WRAP_MINUTES"] == "27.0"
     assert "BG3AI_OPERATOR_DIR" not in first.env  # the option is off: the bg3 server never looks for messages
+    assert op.CHANNEL not in first.prompt and "operator messages" not in first.prompt  # nor does the kickoff say so
     # the game's save identity reaches the bg3 server (live9 S002: without it list_saves was empty)
     assert (first.env["BG3AI_SAVE_OWNER"], first.env["BG3AI_SAVE_PREFIX"]) == ("Ilse", "Ilse-")
     assert [k for k, _ in memory.log] == ["start", "stop", "end", "start", "stop", "end"]
@@ -256,6 +257,8 @@ def test_a_guided_session_gives_the_bg3_server_the_dir_and_a_restart_queues_an_u
     config.save(tmp_path / "playthroughs" / PT, dataclasses.replace(cfg, operator=config.Operator(messages=True)))
     sup.start(PT, wait=True)
     assert [c.env["BG3AI_OPERATOR_DIR"] for c in agent.calls] == [str(sdir)] * 2 and agent.calls[1].resume
+    assert op.CHANNEL in agent.calls[0].prompt  # the kickoff says the channel exists (live chat-on S003: without it
+    # the agent took the block for a prompt injection); the resume continues that conversation
     assert seen == [["delivered", "delivered"], ["delivered", "queued"]]  # m2 is pending again for the restart
     assert op.read_rows(sdir / op.DELIVERED)[-1] == {"id": "m2", "t": 1000.0 + 5 * 60, "redeliver": True}
 
@@ -622,6 +625,20 @@ def test_the_kickoff_is_the_runners():
     assert "First call session_start" in text and 'already loaded save "S002-end"' in text
     rules = config.validate({"v": 1, "name": PT, "agent": {"condition": "rules"}})
     assert "PACE PRE-FLIGHT" not in hr.kickoff(SessionRequest(PT, 1, rules, False), "S001", "BRIEFING")
+
+
+def test_the_kickoff_states_the_operator_channel_only_with_the_option():
+    off = config.validate({"v": 1, "name": PT})
+    on = dataclasses.replace(off, operator=config.Operator(messages=True))
+    text_off = hr.kickoff(SessionRequest(PT, 3, off, True), "S003", "BRIEFING", "S002-end")
+    text_on = hr.kickoff(SessionRequest(PT, 3, on, True), "S003", "BRIEFING", "S002-end")
+    pace = client_setup.kickoff_pace("claude", {"BG3AI_PROMPT_CONDITION": "rules+coaching"})
+    assert text_off == prompts.build_kickoff("S003", PT, "S002-end", [], "BRIEFING", pace=pace)  # as before
+    assert op.CHANNEL not in text_off and text_on.replace(op.CHANNEL + "\n\n", "", 1) == text_off
+    assert text_on.count(op.CHANNEL) == 1 and op.CHANNEL.startswith("This playthrough takes operator messages: ")
+    # the sentence names the block's start as the bg3 server writes it (op.head), a fact and no advice
+    assert f'"{op.PREFIX}HH:MM:SS):"' in op.CHANNEL and op.head(0.0).startswith(op.PREFIX)
+    assert not [w for w in ("follow", "reply", "answer", "obey", "should", "must") if w in op.CHANNEL.lower()]
 
 
 def test_the_keeper_runs_for_every_client(tmp_path: Path):

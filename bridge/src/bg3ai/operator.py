@@ -25,6 +25,10 @@ from typing import Any
 INBOX = "operator.jsonl"
 DELIVERED = "operator.delivered.jsonl"
 PREFIX = "OPERATOR MESSAGE (from the person running this playthrough, sent "
+# The kickoff's statement for a session that takes operator messages (bg3play.runner.prompts.build_kickoff, from the
+# app's runner and play.py alike): that the channel exists and what the block's start is, a fact and no advice.
+CHANNEL = (f'This playthrough takes operator messages: a tool-result line starting "{PREFIX}HH:MM:SS):" comes from '
+           "the person running this playthrough.")  # fmt: skip
 
 
 def clock(t: float) -> str:

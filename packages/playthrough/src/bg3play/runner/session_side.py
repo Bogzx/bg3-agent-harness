@@ -40,6 +40,11 @@ GAME_OVER_NOTE = (
 
 
 class SessionSide:
+    def takes_operator_messages(self) -> bool:
+        """The bg3 server gets $BG3AI_OPERATOR_DIR (the app's legacy_cli sets it for a playthrough with [operator]
+        messages; run_claude passes the runner's BG3AI_* on): the kickoff says the channel exists."""
+        return bool(self.environ.get("BG3AI_OPERATOR_DIR"))
+
     def plan_dry_run(self, minutes: float) -> rstate.SessionResult:
         """Print what the next session would do; touches neither the game nor the memory."""
         save = self.choose_save()
@@ -76,6 +81,7 @@ class SessionSide:
             list(self.pending_notes),
             save_why=self.loaded_why(save.label if save else None),
             pace=self.kickoff_pace(),
+            operator=self.takes_operator_messages(),
         )
         return self.run_claude(sid, prompt, minutes, str(uuid.uuid4()))
 
@@ -137,7 +143,14 @@ class SessionSide:
         if opened and opened != predicted:
             renv.log(f"session.py start opened {opened} (predicted {predicted})")
         prompt = prompts.build_kickoff(
-            sid, self.opt.playthrough, loaded, notes, briefing, self.loaded_why(loaded), self.kickoff_pace()
+            sid,
+            self.opt.playthrough,
+            loaded,
+            notes,
+            briefing,
+            self.loaded_why(loaded),
+            self.kickoff_pace(),
+            operator=self.takes_operator_messages(),
         )
         recovery = Recovery(renv.MAX_RESUMES, renv.RESUME_MIN_MINUTES, renv.MAX_STOP_RESUMES, renv.HARD_STOP_GRACE)
         out = run_session(
