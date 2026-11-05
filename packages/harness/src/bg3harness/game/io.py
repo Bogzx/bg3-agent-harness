@@ -210,6 +210,12 @@ def game_state(timeout: float = EVAL_TIMEOUT) -> str | None:
         return None
 
 
+def at_main_menu(timeout: float = EVAL_TIMEOUT) -> bool:
+    """The game is at the main menu with the mod up: the client context answers GetGameState "Menu" (no level is
+    loaded, so the server context doesn't exist yet) and the mod's RPC is loaded there."""
+    return game_state(timeout) == "Menu" and mod_loaded(timeout) is True
+
+
 def available_ops(context: str) -> set[str]:
     try:
         return set((rpc("sys.info", context=context) or {}).get("ops") or [])
