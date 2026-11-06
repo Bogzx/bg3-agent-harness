@@ -62,10 +62,11 @@ from urllib.parse import unquote, urlparse
 from bg3harness import bg3le_buildinfo, steam_paths
 from bg3harness.client_setup import read_dotenv
 
-from bg3bench import __version__, accepted, preflight, suite
+from bg3bench import __version__, accepted, preflight, suite, tickets
 from bg3bench.adapters.legacy_cli import REPO
 from bg3bench.serve import auto, launch, panel, security, submit, video
 from bg3bench.serve.settings import Settings, SettingsError
+from bg3bench.submission import pack
 
 API_VERSION = 1
 HOST = "127.0.0.1"
@@ -98,6 +99,8 @@ class App:
         runner: launch.Runner | None = None,
         bundler: submit.Bundler | None = None,
         site_client: Callable[[str], submit.Site] = submit.HttpSite,
+        ticket_client: Callable[[str], tickets.Site] = lambda base: tickets.http_site(base, os.environ),
+        release: Path | None = None,
         renderer: video.Renderer | None = None,
         now: Callable[[], float] = time.time,
         proc: launch.ProcReader = launch.read_proc,
@@ -108,6 +111,7 @@ class App:
         self.site = site  # the submissions site's URL (--site)
         self.runner, self.now = runner, now  # runner None: this panel starts no run
         self.bundler, self.site_client, self.renderer = bundler, site_client, renderer
+        self.ticket_client, self.release = ticket_client, release
         self.proc, self.doctor = proc, doctor
         self.prepare_lock = threading.Lock()  # the ticker and a Validate click never pack the same run at once
         self.port = 0  # set once bound (serve)
@@ -255,9 +259,23 @@ class App:
 
     def literals(self) -> list[str]:
         """Values the pack scrubs verbatim and the validator must not find: the .env values and the site token."""
-        vals = [v for v in read_dotenv(self.settings.dotenv).values() if v]
+        return tickets.literals(self.settings.dotenv, self.settings.site_token())
+
+    def ticket_view(self) -> dict[str, bool]:
+        """What New run says: the suite's runs need a ticket, and whether Start gives them one (a token and a site)."""
+        required = self.release is not None and pack.requires_ticket(self.release.stem, self.release.parent)
+        ready = bool(self.settings.site_token() and self.site)
+        token, site = bool(self.settings.site_token()), bool(self.site)
+        return {"required": required, "token": token, "site": site, "will": required and ready}
+
+    def resend_end(self, run: str) -> None:
+        """A ticketed run's end the site never got: one more try. It never stands in the way of the panel's step."""
+        try:
+            client = self.ticket_client(tickets.base_url(self.site))
+        except ValueError:  # no usable site URL: Upload says so
+            return
         token = self.settings.site_token()
-        return vals + ([token] if token else [])
+        tickets.deliver_end(self.runtime / "sessions" / run, client, token, self.literals(), self.now)
 
     def need(self, what: Any, name: str) -> Any:
         if what is None:
@@ -278,6 +296,7 @@ class App:
                 attempt_n=n,
                 unsubmitted_valid=unsubmitted,
                 literals=self.literals(),
+                resend_end=self.resend_end,
             )
 
     def render(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -301,13 +320,14 @@ class App:
         return {"render": renderer.state()}
 
     def plan(self, body: dict[str, Any]) -> dict[str, Any]:
-        return panel.plan_run(
+        plan = panel.plan_run(
             body,
             scenarios=panel.load_scenarios(self.scenarios_dir),
             prof_dir=self.profiles_dir(),
             budget=self.budget(),
             youtube_verified=self.settings.prefs()["youtube_verified"],
         )
+        return {**plan, "ticket": self.ticket_view()}
 
     def budget(self) -> Path:
         return self.runtime / "budget.json"
@@ -332,6 +352,7 @@ class App:
                 record=launch.flag(body, "record", True),
                 submit_when_done=launch.flag(body, "submit_when_done", False),
                 proc=self.proc,
+                ticket=self.ticket_view()["will"],
             )
         if path == "/api/v1/run/stop":
             return self.stop()
@@ -364,6 +385,7 @@ class App:
                 bundle_sha256=body.get("bundle_sha256"),
                 token=self.settings.site_token(),
                 site=self.site_client(submit.site_url(self.site)),
+                resend_end=self.resend_end,
             )
         if path == "/api/v1/submit/status":
             return submit.poll(
@@ -560,6 +582,7 @@ def main(argv: list[str] | None = None) -> int:
     runtime = (opt.runtime or repo / "runtime").absolute()
     config_dir = opt.config_dir.absolute()
     token = security.issue_token(config_dir)
+    run_env = {**os.environ, tickets.CONFIG_ENV: str(config_dir), **({tickets.SITE_ENV: opt.site} if opt.site else {})}
     app = App(
         token=token,
         repo=repo,
@@ -569,8 +592,9 @@ def main(argv: list[str] | None = None) -> int:
         checks=default_checks(repo, runtime),
         web_dir=opt.web,
         site=opt.site,
-        runner=launch.MatrixProcess(repo, runtime=runtime),
+        runner=launch.MatrixProcess(repo, runtime=runtime, environ=run_env),
         bundler=submit.BenchSubmission(opt.release, __version__),
+        release=opt.release,
         renderer=video.VideoProcess(),
     )
     srv = serve(app, opt.port, opt.verbose)

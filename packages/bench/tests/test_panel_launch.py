@@ -91,6 +91,16 @@ def test_matrix_file_plays_exactly_the_plans_jobs(repo, form):
     assert m["budget"] == budget and m["allow_gaps"] is False and m["skipped"] == {}
 
 
+def test_the_matrix_file_asks_for_tickets_only_when_told(repo):
+    p, budget = plan(repo), repo / "runtime" / "budget.json"
+    f = repo / "m.toml"
+    f.write_text(launch.matrix_toml("panel-20261028-180000", p, budget=budget, allow_unverified=False))
+    assert matrix_cli.load(f, repo)["ticket"] is None
+    f.write_text(launch.matrix_toml("panel-20261028-180000", p, budget=budget, allow_unverified=False, ticket=True))
+    m = matrix_cli.load(f, repo)
+    assert m["ticket"] == "required" and m["budget"] == budget  # above [budget]: a top-level key
+
+
 def test_refusal_of_plans_that_cant_start(repo):
     ok = plan(repo)
     assert launch.refusal(ok) is None

@@ -535,9 +535,10 @@ def _tool_sequence(b: Loaded) -> list[tuple[str, str]]:
 # -------------------------------------------------------------------------------------------------- run tickets
 
 
-def t03_recompute(raw: dict[str, bytes], env: Json) -> Outcome:
+def t03_recompute(raw: dict[str, bytes], env: Json, local_end: Json | None = None) -> Outcome:
     """root and lines from the bundle's own files. A valid last line with no newline would be read by the graders and
-    counted by no hash, so every stream must end in a complete line."""
+    counted by no hash, so every stream must end in a complete line. `local_end`: the end the run reported (the
+    panel's copy of ticket.json), caught here because the job's T04 would reject it after the upload."""
     t = env["ticket"]
     if torn := sorted(n for n, d in raw.items() if ticket_hash.is_stream(n) and d and not d.endswith(b"\n")):
         return False, f"bytes after the last complete line of {', '.join(torn)}"
@@ -547,6 +548,11 @@ def t03_recompute(raw: dict[str, bytes], env: Json) -> Outcome:
         return False, f"lines differ from the files: {', '.join(differ)}"
     if ticket_hash.root_at(t["nonce"], raw, want) != t["root"]:
         return False, "the root doesn't recompute from the files (a line edited, or the scrub differs from the run's)"
+    if local_end and local_end.get("root") != t["root"]:
+        return False, (
+            "these lines hash differently from what the run reported to the site: a .env value that occurs in them"
+            " changed since the run. Put the old value back and validate again"
+        )
     return True, ""
 
 
@@ -669,7 +675,9 @@ def t07_gaps(b: Loaded, ticket: Json) -> Outcome:
     return True, ""
 
 
-def _ticket_checks(b: Loaded, ticket: Json | None, where: codes.Where) -> list[tuple[str, Outcome]]:
+def _ticket_checks(
+    b: Loaded, ticket: Json | None, where: codes.Where, local_end: Json | None
+) -> list[tuple[str, Outcome]]:
     """T01 and T03-T07 (T02 is the Worker's, at the verdict: the job reports it null, as D01). `ticket`: what the site
     stored, None when the job got none. The panel has no server data; the job fails closed without it."""
     env = b.envelope
@@ -677,7 +685,7 @@ def _ticket_checks(b: Loaded, ticket: Json | None, where: codes.Where) -> list[t
     out: list[tuple[str, Outcome]] = [
         ("T01", (True, "") if named else (False, "bundle.json names no ticket")),
         ("T02", (None, "the site checks this at the verdict")),
-        ("T03", _guarded(t03_recompute, b.raw, env) if named else (False, "no ticket to recompute")),
+        ("T03", _guarded(t03_recompute, b.raw, env, local_end) if named else (False, "no ticket to recompute")),
     ]
     if where != "job":
         return [*out, *((c, (None, "no server data here")) for c in ("T04", "T05", "T06", "T07"))]
@@ -723,12 +731,14 @@ def validate(
     literals: Sequence[str] = (),
     version: str = bg3bench.__version__,
     ticket: Json | None = None,
+    local_end: Json | None = None,
 ) -> Verdict:
     """Check the bundle in bundle_dir against the release. `where`: which checks run (codes.Check.where).
     `submission`: the video, render.json and frames.tar are required (False: before rendering, they are not run).
     `scenarios`: the suite's scenario files by name (default the installed ones). `literals`: values S01 must not
     find (the submitter's .env values). `ticket`: what the site stored for the bundle's ticket (a release with
-    `tickets`; the job's T04-T06 fail without it)."""
+    `tickets`; the job's T04-T06 fail without it). `local_end`: the end the run reported, from its ticket.json (the
+    panel: T03)."""
     d = Path(bundle_dir)
     scenarios = pack.load_scenarios() if scenarios is None else scenarios
     env, raw = _read(d)
@@ -809,7 +819,7 @@ def validate(
     add("E04", _guarded(e04_frames, b, submission))
     add("S02", _guarded(s02_reasoning, b))
     if release.tickets is not None:
-        for code, outcome in _ticket_checks(b, ticket, where):
+        for code, outcome in _ticket_checks(b, ticket, where, local_end):
             add(code, outcome)
     return _ordered(verdict)
 

@@ -518,8 +518,18 @@ def test_deliver_end_with_unreadable_files_stays_undelivered(tmp_path):
     (tmp_path / tickets.TICKET_FILE).write_text(json.dumps({"id": TICKET_ID}))  # no nonce: can't hash
     site = FakeSite()
     client = tickets.Site("https://site.test", site)
+    assert tickets.deliver_end(tmp_path, client, TOKEN, (), lambda: T0, close=True) is False
+    assert site.ends == []
+
+
+def test_deliver_end_makes_up_no_end_unless_told_to_close(tmp_path):
+    (tmp_path / tickets.TICKET_FILE).write_text(json.dumps({"id": TICKET_ID, "nonce": NONCE}))
+    site = FakeSite()
+    client = tickets.Site("https://site.test", site)
     assert tickets.deliver_end(tmp_path, client, TOKEN, (), lambda: T0) is False
     assert site.ends == []
+    assert tickets.deliver_end(tmp_path, client, TOKEN, (), lambda: T0, close=True) is True
+    assert site.ends[0]["reason"] == "interrupted"
 
 
 def test_last_seq_reads_past_a_torn_log(tmp_path):
@@ -756,3 +766,32 @@ def test_the_token_is_never_in_the_runs_environment(tmp_path):
     for p in (tmp_path / "runs").rglob("*"):
         if p.is_file():
             assert TOKEN not in p.read_text()
+
+
+def test_the_matrix_process_sends_the_access_headers_of_a_site_behind_access(tmp_path):
+    repo = fake_repo(tmp_path)
+    save_token(tmp_path)
+    seen = []
+
+    class Site(FakeSite):
+        def __call__(self, req, timeout=None):
+            seen.append(req.get_header("Cf-access-client-id"))
+            return super().__call__(req, timeout)
+
+    env = {tickets.ACCESS_ID_ENV: "id.access", tickets.ACCESS_SECRET_ENV: "secret"}
+    code, _ = cli(repo, tmp_path, "run", run_one=FakeRun(tmp_path / "runs"), site=Site(), env=env)
+    assert code == 0 and seen and set(seen) == {"id.access"}
+
+
+def test_view_of_a_run_with_no_log_or_ticket(tmp_path):
+    assert tickets.view(tmp_path) is None
+    (tmp_path / tickets.TICKET_FILE).write_text(json.dumps({"id": "i", "beats_stopped": 410}))
+    assert tickets.view(tmp_path) == {
+        "id": "i",
+        "issued_at": None,
+        "expires_at": None,
+        "beats_sent": 0,
+        "beats_landed": 0,
+        "beats_stopped": 410,
+        "end": None,
+    }

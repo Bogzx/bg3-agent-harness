@@ -47,6 +47,7 @@ JOIN_S = TIMEOUT_S + 5  # how long the end waits for a beat that is still being 
 SITE_ENV = "BG3BENCH_SITE"
 CONFIG_ENV = "BG3BENCH_CONFIG_DIR"  # where the panel keeps the site token (its --config-dir)
 SITE_TOKEN = "site-token"
+ACCESS_ID_ENV, ACCESS_SECRET_ENV = "CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET"
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 HEX64 = re.compile(r"[0-9a-f]{64}")
 # The site's reasons. An invalid run's free-text reason maps onto them (reason_of), so no path or message reaches it.
@@ -68,12 +69,18 @@ STOP_BEATS = (401, 410)  # revoked, closed or expired: no later beat can land
 def base_url(url: str | None) -> str:
     """The site's base URL: https, or http on this machine only (a local copy of the site). ValueError otherwise."""
     if not url:
-        raise ValueError(f"no site URL: start the panel with --site or set ${SITE_ENV}")
+        raise ValueError(f"no site URL: start the panel with --site or ${SITE_ENV}")
     u = urlparse(url)
     local = u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost")
     if not (u.scheme == "https" or local) or not u.hostname or u.path not in ("", "/") or u.query:
         raise ValueError(f"bad site URL {url!r}: https://<host> only")
     return f"{u.scheme}://{u.netloc}"
+
+
+def access_headers(environ: Mapping[str, str]) -> dict[str, str]:
+    """The Access service token for a site behind Cloudflare Access (staging): both variables or neither."""
+    cid, secret = environ.get(ACCESS_ID_ENV), environ.get(ACCESS_SECRET_ENV)
+    return {"CF-Access-Client-Id": cid, "CF-Access-Client-Secret": secret} if cid and secret else {}
 
 
 def config_dir(environ: Mapping[str, str]) -> Path:
@@ -316,11 +323,18 @@ def _last_seq(run_dir: Path) -> int:
 
 
 def deliver_end(
-    run_dir: Path, site: Site, token: str | None, values: Sequence[str], now: Callable[[], float] = time.time
+    run_dir: Path,
+    site: Site,
+    token: str | None,
+    values: Sequence[str],
+    now: Callable[[], float] = time.time,
+    *,
+    close: bool = False,
 ) -> bool | None:
-    """Try again to tell the site how a run ended, from its ticket.json: the end kept there, or (a run that stopped
-    without one: a crash, a power cut) an `interrupted` end over the lines the files hold. True when the site has the
-    end, False when it couldn't be delivered, None when the run has no ticket. Never raises."""
+    """Try again to tell the site how a run ended, from its ticket.json: the end kept there. With `close` (a matrix
+    restart, whose queue shows that the attempt never ended) a run with no end kept sends an `interrupted` one over the
+    lines the files hold. True when the site has the end, False when it hasn't, None when the run has no ticket.
+    Never raises."""
     ticket = _read_json(run_dir / TICKET_FILE)
     if ticket is None:
         return None
@@ -331,6 +345,8 @@ def deliver_end(
         return False
     if isinstance(kept, dict):
         doc = {k: v for k, v in cast(Json, kept).items() if k != "delivered"}
+    elif not close:
+        return False
     else:
         try:
             lines, root = Tail(run_dir, ticket["nonce"], values).read()
@@ -454,7 +470,44 @@ class Ticketed:
             run_dir = st["attempts"][-1]["run_dir"] if st["status"] == "interrupted" else None
             if run_dir:
                 token = self.token()
-                deliver_end(Path(run_dir), self.site, token, self.values(token), self.now)
+                deliver_end(Path(run_dir), self.site, token, self.values(token), self.now, close=True)
+
+
+def view(run_dir: Path) -> Json | None:
+    """A run's ticket as the panel shows it (no nonce), or None: {"id", "issued_at", "expires_at", "beats_sent",
+    "beats_landed", "beats_stopped", "end": {"outcome", "reason", "delivered"} or None}."""
+    ticket = _read_json(run_dir / TICKET_FILE)
+    if ticket is None:
+        return None
+    sent = landed = 0
+    try:
+        rows = (run_dir / BEATS_FILE).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        rows = []
+    for row in rows:
+        try:
+            rec: Any = json.loads(row)
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and "kind" not in rec:
+            sent += 1
+            landed += cast(Json, rec).get("status") == 204
+    end: Any = ticket.get("end")
+    return {
+        "id": ticket.get("id"),
+        "issued_at": ticket.get("issued_at"),
+        "expires_at": ticket.get("expires_at"),
+        "beats_sent": sent,
+        "beats_landed": landed,
+        "beats_stopped": ticket.get("beats_stopped"),
+        "end": {k: cast(Json, end).get(k) for k in ("outcome", "reason", "delivered")}
+        if isinstance(end, dict)
+        else None,
+    }
+
+
+def http_site(base: str, environ: Mapping[str, str], urlopen: Open | None = None) -> Site:
+    return Site(base, urlopen or urlrequest.urlopen, access_headers(environ))
 
 
 def from_env(
@@ -466,6 +519,6 @@ def from_env(
 ) -> Ticketed:
     """Ticketed against the site this machine was told about ($BG3BENCH_SITE), the token from its file. ValueError for
     a missing or bad URL."""
-    site = Site(base_url(environ.get(SITE_ENV)), urlopen or urlrequest.urlopen)
+    site = http_site(base_url(environ.get(SITE_ENV)), environ, urlopen)
     path = config_dir(environ) / SITE_TOKEN
     return Ticketed(run_one, site, token=lambda: read_token(path), values=lambda t: literals(repo / ".env", t), now=now)

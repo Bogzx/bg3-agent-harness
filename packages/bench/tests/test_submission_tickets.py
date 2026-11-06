@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 import pytest
+from test_submission_pack import mp4
 from test_submission_validate import (
     FIGHT,
     GOLD,
@@ -20,6 +21,7 @@ from test_submission_validate import (
     edit_json,
     env_of,
     good_run,
+    jpeg,
     jsonl,
     rehash,
     release_for,
@@ -365,3 +367,87 @@ def test_the_shipped_bench_v011_release_has_no_tickets_and_no_t_checks(tmp_path)
     v = validate.validate(bdir, release, where="job")
     assert not {r.code for r in v.checks} & set(TICKET_CODES)
     assert [r.code for r in v.checks] == NOT_TICKET_CODES
+
+
+# ---------------------------------------------------------------------------------------------------------- pack
+
+
+def run_with_ticket(tmp_path: Path, name: str = FIGHT) -> Path:
+    d = good_run(tmp_path, name)
+    (d / pack.TICKET).write_text(json.dumps({"id": TICKET_ID, "nonce": NONCE, "issued_at": 1, "expires_at": 2}))
+    return d
+
+
+def test_pack_names_the_ticket_and_recomputes_it_from_the_scrubbed_files(tmp_path):
+    d = run_with_ticket(tmp_path)
+    p = pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1), ticket_required=True)
+    raw = streams_of(p.bundle_dir)
+    lines = ticket_hash.counts(raw)
+    assert p.envelope["ticket"] == {
+        "id": TICKET_ID,
+        "nonce": NONCE,
+        "root": ticket_hash.root_at(NONCE, raw, lines),
+        "lines": lines,
+    }
+    assert pack.TICKET not in {f["name"] for f in p.envelope["files"]}
+    assert not (p.bundle_dir / pack.TICKET).exists()
+    assert (tmp_path / "out" / pack.TICKET).is_file()  # beside the bundle dir: the panel's T03 reads the run's end
+    release = dataclasses.replace(release_for(d), tickets={"version": 1})
+    v = validate.validate(p.bundle_dir, release, where="panel", submission=False)
+    assert ok_of(v, "F03") is True and ok_of(v, "T01") is True and ok_of(v, "T03") is True
+
+
+@pytest.mark.parametrize("ticket", [None, "not json", "[]", '{"id": "only an id"}'])
+def test_pack_refuses_a_run_without_a_ticket_when_the_suite_requires_one(tmp_path, ticket):
+    d = good_run(tmp_path, FIGHT)
+    if ticket:
+        (d / pack.TICKET).write_text(ticket)
+    with pytest.raises(pack.PackError, match="takes only runs played with a ticket"):
+        pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1), ticket_required=True)
+    assert not (tmp_path / "out").exists()
+
+
+def test_pack_leaves_the_ticket_out_for_a_suite_that_has_none(tmp_path):
+    """A validator from before tickets, at that suite's own commit, would reject the key (F03)."""
+    d = run_with_ticket(tmp_path)
+    p = pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1), ticket_required=False)
+    assert "ticket" not in p.envelope and not (tmp_path / "out" / pack.TICKET).exists()
+
+
+def test_requires_ticket_reads_the_suites_shipped_release_file(tmp_path, monkeypatch):
+    assert pack.requires_ticket("bench-v0.11") is False
+    assert pack.requires_ticket("bench-v99.0") is False
+    (tmp_path / "bench-v9.9.json").write_text('{"tickets": {"version": 1}}')
+    (tmp_path / "bench-v9.8.json").write_text("not json")
+    assert pack.requires_ticket("bench-v9.9", tmp_path) is True
+    assert pack.requires_ticket("bench-v9.8", tmp_path) is False
+    d = run_with_ticket(tmp_path)  # a v0.8 fixture run: the default asks its suite's file
+    monkeypatch.setattr(pack, "RELEASES", tmp_path)
+    assert "ticket" not in pack.pack(d, tmp_path / "out1", attempt=pack.Attempt(1)).envelope
+    (tmp_path / "bench-v0.8.json").write_text('{"tickets": {"version": 1}}')
+    assert "ticket" in pack.pack(d, tmp_path / "out2", attempt=pack.Attempt(1)).envelope
+
+
+def test_the_ticket_stays_through_the_render_and_the_video(tmp_path):
+    d = run_with_ticket(tmp_path)
+    render = json.loads((d / "render.json").read_text())
+    (d / "render.json").unlink()
+    (d / bundle.FRAMES_TAR).unlink()
+    p = pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1), ticket_required=True)
+    rdir = tmp_path / "render"
+    (rdir / "frames").mkdir(parents=True)
+    (rdir / "render.json").write_text(json.dumps(render | {"run_hash": p.envelope["run_hash"]}))
+    (rdir / "frames" / "0.jpg").write_bytes(jpeg())
+    q = pack.add_render(rdir, tmp_path / "out")
+    assert q.envelope["ticket"] == p.envelope["ticket"]
+    (rdir / pack.VIDEO).write_bytes(mp4(render["video_end"] - render["video_start"]))
+    assert pack.add_video(rdir, tmp_path / "out", "dQw4w9WgXcQ").envelope["ticket"] == p.envelope["ticket"]
+
+
+def test_t03_compares_the_end_the_run_reported(ticketed):
+    bdir, release, _ = ticketed
+    root = env_of(bdir)["ticket"]["root"]
+    same = validate.validate(bdir, release, where="panel", local_end={"root": root})
+    assert ok_of(same, "T03") is True
+    other = validate.validate(bdir, release, where="panel", local_end={"root": "0" * 64})
+    assert ok_of(other, "T03") is False and ".env value" in detail_of(other, "T03")

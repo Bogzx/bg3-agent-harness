@@ -1,4 +1,5 @@
 # pyright: basic
+import dataclasses
 import email.message
 import hashlib
 import io
@@ -8,8 +9,11 @@ from pathlib import Path
 from urllib import error as urlerror
 
 import pytest
+from test_submission_validate import FIGHT, good_run, jsonl, release_for, write_jsonl
 
+from bg3bench import tickets
 from bg3bench.serve import panel, submit, video
+from bg3bench.submission import validate
 
 SHA = "ab" * 32
 VID = "dQw4w9WgXcQ"
@@ -244,6 +248,36 @@ def test_http_site_posts_the_archive_with_its_checksum_and_the_bearer_token():
     assert req.data == b"\x1f\x8bgzip bytes"  # the body is the archive itself: no multipart, no youtube_url
 
 
+def test_http_site_sends_the_access_headers_of_a_site_behind_access():
+    seen = []
+
+    def urlopen(req, timeout):
+        seen.append(req)
+        return FakeResponse(200, b"{}")
+
+    access = {"CF-Access-Client-Id": "id.access", "CF-Access-Client-Secret": "secret"}
+    site = submit.HttpSite("https://staging.example", urlopen=urlopen, headers=access)
+    site.post_submission("bgb_tok", b"x")
+    site.get_submission("bgb_tok", "sub1")
+    for req in seen:
+        assert req.get_header("Cf-access-client-id") == "id.access"
+        assert req.get_header("Cf-access-client-secret") == "secret"
+        assert req.get_header("Authorization") == "Bearer bgb_tok"
+
+
+def test_http_site_takes_the_access_headers_from_the_environment(monkeypatch):
+    monkeypatch.delenv("CF_ACCESS_CLIENT_ID", raising=False)
+    monkeypatch.delenv("CF_ACCESS_CLIENT_SECRET", raising=False)
+    assert submit.HttpSite("https://bench.example").headers == {}
+    monkeypatch.setenv("CF_ACCESS_CLIENT_ID", "id.access")
+    assert submit.HttpSite("https://bench.example").headers == {}  # both or neither
+    monkeypatch.setenv("CF_ACCESS_CLIENT_SECRET", "secret")
+    assert submit.HttpSite("https://bench.example").headers == {
+        "CF-Access-Client-Id": "id.access",
+        "CF-Access-Client-Secret": "secret",
+    }
+
+
 def test_http_site_errors_and_status():
     def refuse(req, timeout):
         hdrs = email.message.Message()
@@ -376,7 +410,8 @@ def test_bench_submission_calls_pack_and_validate(tmp_path, monkeypatch):
 
     seen = {}
 
-    def pack(run_dir, out_dir, *, attempt, literals, panel_version):
+    def pack(run_dir, out_dir, *, attempt, literals, panel_version, ticket_required):
+        seen["ticket_required"] = ticket_required
         seen["pack"] = (run_dir, out_dir, attempt, list(literals), panel_version)
         if run_dir.name == "pilot":
             raise PackError("pilot: refused, a pilot run")
@@ -386,7 +421,8 @@ def test_bench_submission_calls_pack_and_validate(tmp_path, monkeypatch):
         def as_json(self):
             return {"accepted": True}
 
-    def validate(bundle_dir, release, *, where, submission, literals):
+    def validate(bundle_dir, release, *, where, submission, literals, local_end):
+        seen["local_end"] = local_end
         seen["validate"] = (bundle_dir, release, where, submission, list(literals))
         return Verdict()
 
@@ -423,6 +459,7 @@ def test_bench_submission_calls_pack_and_validate(tmp_path, monkeypatch):
     release.write_text('{"suite": "bench-v1"}')
     assert bs.validate(tmp_path / "b", literals=["k"], submission=True) == {"accepted": True}
     assert seen["validate"] == (tmp_path / "b", "bench-v1", "panel", True, ["k"])
+    assert seen["ticket_required"] is None and seen["local_end"] is None  # no release file then; no ticket beside it
     assert bs.add_render(tmp_path / "render-1", tmp_path / "o", literals=["k"]) == (
         "ef" * 32,
         tmp_path / "o" / "bundle",
@@ -681,3 +718,83 @@ def test_upload_needs_the_archive_and_reports_the_sites_refusals(run_dir, tmp_pa
         with pytest.raises(panel.PanelError, match=f"HTTP {status}.*{code}"):
             submit.upload(root, "s1", bundle_sha256=SHA, token="t", site=site)
         assert not submit.submitted(root, "s1")
+
+
+# ---------------------------------------------------------------- run tickets
+
+
+OLD_VALUE, NEW_VALUE = "an-old-value-of-the-env", "a-new-value-of-the-env"
+NONCE = "ab" * 32
+
+
+def ticketed_run(tmp_path: Path, monkeypatch) -> tuple[Path, submit.BenchSubmission]:
+    """A real fixture run whose events hold a .env value, with the ticket.json of a run that hashed it as played, and
+    the panel's real pack and validator against a ticketed release."""
+    d = good_run(tmp_path, FIGHT)
+    rows = jsonl((d / "S001.events.jsonl").read_text())
+    next(r for r in rows if r.get("text"))["text"] += f" {OLD_VALUE}"
+    write_jsonl(d / "S001.events.jsonl", rows)
+    lines, root = tickets.Tail(d, NONCE, [OLD_VALUE]).read()
+    end = {"seq": 9, "lines": lines, "root": root, "outcome": "valid", "reason": None, "delivered": True}
+    ticket = {"id": "6f1c2a3b-0000-4000-8000-123456789abc", "nonce": NONCE, "end": end}
+    (d / tickets.TICKET_FILE).write_text(json.dumps(ticket))
+    release = tmp_path / "bench-test.json"
+    release.write_text(json.dumps({"tickets": {"version": 1}}))
+    wanted = dataclasses.replace(release_for(d), tickets={"version": 1})
+    monkeypatch.setattr(validate.Release, "from_json", classmethod(lambda cls, doc: wanted))
+    return d, submit.BenchSubmission(release, "0.1.0")
+
+
+def checks_of(view: dict) -> dict:
+    return {c["code"]: c for c in view["verdict"]["checks"]}
+
+
+def test_a_ticketed_run_packs_and_passes_t01_and_t03_in_the_panel(tmp_path, monkeypatch):
+    d, bs = ticketed_run(tmp_path, monkeypatch)
+    view = submit.prepare(d, tmp_path / "subs", bs, attempt_n=1, unsubmitted_valid=0, literals=[OLD_VALUE])
+    checks = checks_of(view)
+    assert checks["T01"]["ok"] is True and checks["T03"]["ok"] is True
+    assert [checks[c]["ok"] for c in ("T04", "T05", "T06", "T07")] == [None] * 4  # the site's data
+    env = json.loads((Path(view["bundle_dir"]) / submit.ENVELOPE).read_text())
+    assert (
+        env["ticket"]["nonce"] == NONCE
+        and env["ticket"]["root"] == json.loads((d / "ticket.json").read_text())["end"]["root"]
+    )
+    assert tickets.TICKET_FILE not in {f["name"] for f in view["files"]}
+
+
+def test_a_pack_with_the_env_changed_fails_t03_with_a_readable_reason(tmp_path, monkeypatch):
+    """The value was scrubbed when the run hashed it and isn't now: the upload would fail on the site's T04."""
+    d, bs = ticketed_run(tmp_path, monkeypatch)
+    view = submit.prepare(d, tmp_path / "subs", bs, attempt_n=1, unsubmitted_valid=0, literals=[NEW_VALUE])
+    t03 = checks_of(view)["T03"]
+    assert t03["ok"] is False and not view["verdict"]["accepted"]
+    assert ".env value" in t03["detail"] and "Put the old value back" in t03["detail"]
+
+
+def test_prepare_and_upload_try_the_undelivered_end_again(run_dir, tmp_path):
+    root, tried = tmp_path / "subs", []
+    bundler = FakeBundler()
+    submit.prepare(run_dir, root, bundler, attempt_n=1, unsubmitted_valid=0, literals=[], resend_end=tried.append)
+    assert tried == [run_dir.name]
+    prepared = json.loads((root / run_dir.name / submit.PREPARED).read_text())
+    prepared["final"] = True
+    (root / run_dir.name / submit.PREPARED).write_text(json.dumps(prepared))
+    bdir = Path(prepared["bundle_dir"])
+    env = json.loads((bdir / submit.ENVELOPE).read_text())
+    (bdir / submit.ENVELOPE).write_text(json.dumps({**env, "video": {"youtube_id": VID}}))
+    (bdir.parent / submit.ARCHIVE).write_bytes(b"tar")
+    prepared["files"] = submit.bundle_listing(bdir)
+    (root / run_dir.name / submit.PREPARED).write_text(json.dumps(prepared))
+
+    class Accepts:
+        def post_submission(self, token, archive):
+            return 202, {"id": "sub1"}
+
+        def get_submission(self, token, submission_id):  # pragma: no cover - upload only posts
+            raise AssertionError
+
+    submit.upload(
+        root, run_dir.name, bundle_sha256=prepared["bundle_sha256"], token="t", site=Accepts(), resend_end=tried.append
+    )
+    assert tried == [run_dir.name, run_dir.name]
