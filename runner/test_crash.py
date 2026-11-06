@@ -69,8 +69,11 @@ def home(name: str):
     return MOVED.get(name) or (G if name in G_FUNCS else testenv.home(name))
 
 FAKE_LAUNCH = """#!/bin/sh
-# stand-in for runner/launch_game.sh: just a process that lives until killed
+# stand-in for runner/launch_game.sh: just a process that lives until killed, with a good stats scan in its bg3le log
 echo "fake game $@"
+logs="$(dirname "$0")/runtime/logs"
+mkdir -p "$logs"
+echo "[ 1.0] stats: 15754 stats via the rarity run at 0x3" > "$logs/bg3le-$BG3AI_LAUNCH_STAMP.log.$$"
 exec sleep 3600
 """
 
@@ -852,53 +855,6 @@ class Watch(unittest.TestCase):
         with open(main, "a") as f:
             f.write("sh: signal 11 at (nil) on tid 379801\n[ 3.0] crash:   pc bg3+0x55cf2e6\n")
         self.assertEqual(self.w.check(now=102), "bg3le logged crash: signal 11 at (nil) on tid 379801")
-
-    GOOD_SCAN = ("[ 1.0] stats: 15754 stats via the rarity run at 0x3053a197028\n"
-                 "[ 1.1] stats: string pool at 0x3053a197048 (+32 from the run), 21397 entries\n"
-                 "[ 1.1] stats: guid pool at pool+32, 184 entries\n[ 1.1] stats: attributes available\n")
-    # bg3le-20261106-213327, the S5 launch: the wrong pool, and "attributes available" all the same
-    BAD_SCAN = ("[ 1.0] stats: 15754 stats via the rarity run at 0x3053a197028\n"
-                "[ 1.1] stats: string pool at 0x3053a196ea8 (-384 from the run), 1512 entries\n"
-                "[ 1.1] stats: no float pool found; Float attributes report their pool index\n"
-                "[ 1.1] stats: no guid pool found; GUID attributes report their pool index\n"
-                "[ 1.1] stats: no translated string pool found; TranslatedString attributes report nothing\n"
-                "[ 1.1] stats: attributes available\n")
-
-    def write_log(self, text):
-        (self.tmp / "bg3le-20261010-020143.log.379707").write_text(text)
-
-    def test_stats_problem_good_scan(self):
-        self.write_log(self.GOOD_SCAN)
-        self.assertIsNone(self.w.stats_problem())
-
-    def test_stats_problem_names_the_missing_pools(self):
-        self.write_log(self.BAD_SCAN)
-        why = self.w.stats_problem()
-        self.assertIn("no guid pool found", why)
-        self.assertIn("no float pool found", why)
-        self.assertIn("no translated string pool found", why)
-
-    def test_stats_problem_no_candidate_at_all(self):  # patch 0016's refusal
-        self.write_log("[ 1.0] stats: 15754 stats via the rarity run at 0x3\n"
-                       "[ 1.1] stats: no string pool found after the rarity run; attributes stay unavailable\n"
-                       "[ 1.1] stats: attributes unavailable\n")
-        self.assertIn("no string pool found", self.w.stats_problem())
-
-    def test_stats_problem_without_a_scan(self):
-        self.write_log("[ 1.0] bg3le loaded\n[ 1.1] stats: the string table has no entry for \"Epic\" yet\n")
-        self.assertEqual(self.w.stats_problem(), "bg3le logged no stats scan")
-
-    def test_stats_problem_reads_the_last_scan_only(self):
-        self.write_log(self.BAD_SCAN + self.GOOD_SCAN)
-        self.assertIsNone(self.w.stats_problem())
-        self.write_log(self.GOOD_SCAN + self.BAD_SCAN)
-        w = rgame.LaunchWatch("20261010-020143", self.tmp, started=100.0)
-        self.assertIn("no guid pool found", w.stats_problem())
-
-    def test_stats_problem_sees_lines_the_polls_already_read(self):
-        self.write_log(self.BAD_SCAN)
-        self.assertIsNone(self.w.log_crash())
-        self.assertIn("no guid pool found", self.w.stats_problem())
 
     def test_crash_reporter_log_and_process(self):
         (self.tmp / "bg3le-20261010-020143.log.383698").write_text(

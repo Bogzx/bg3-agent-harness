@@ -106,9 +106,12 @@ class MissingStats(Base):
         def launch(folder: str | None) -> None:
             launched.append(str(folder))
 
+        def wait_for(what: str, pred: Any, timeout: float, interval: float = 2.0) -> bool:
+            return True
+
         with (
             mock.patch.object(self.ctl, "launch", launch),
-            mock.patch.object(self.ctl, "wait_for", lambda *a, **k: True),  # pyright: ignore[reportUnknownLambdaType]
+            mock.patch.object(self.ctl, "wait_for", wait_for),
             mock.patch.object(self.ctl, "kill", lambda: killed.append("kill")),
             mock.patch.object(self.ctl, "sleep", _no_sleep),
         ):
