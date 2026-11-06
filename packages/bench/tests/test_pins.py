@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -30,6 +31,24 @@ class TmpDir(unittest.TestCase):
 
 
 class Pins(TmpDir):
+    def test_a_linked_pi_install_leaves_the_tree_clean(self):
+        """A worktree's tools/pi/node_modules as a link to another checkout's: the repo's own .gitignore must cover it,
+        or every match it plays records dirty: true (B1 smoke, 2026-11-05)."""
+        repo = self.tmp / "repo"
+        (repo / "tools" / "pi").mkdir(parents=True)
+        shutil.copy(Path(__file__).resolve().parents[3] / ".gitignore", repo / ".gitignore")
+        (repo / "tools" / "pi" / "package.json").write_text("{}")
+        for args in (
+            ["init", "-q"],
+            ["add", ".gitignore", "tools/pi/package.json"],
+            ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "x"],
+        ):
+            subprocess.run(["git", *args], cwd=repo, check=True)
+        elsewhere = self.tmp / "other-checkout-node_modules"
+        elsewhere.mkdir()
+        (repo / "tools" / "pi" / "node_modules").symlink_to(elsewhere)
+        self.assertIs(harness_pins.repo_pin(repo)["dirty"], False)
+
     def test_buildinfo_mod_version_and_digest(self):
         info = R.buildinfo(
             "bg3le commit: 3728a68\npatch: 0001-a.patch 126c\npatch: 0002-b.patch 51bc\n"

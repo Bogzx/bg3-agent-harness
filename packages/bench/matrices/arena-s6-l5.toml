@@ -1,0 +1,22 @@
+# S6, builds-l5-4v4-v1: one DeepSeek flash match against itself, the first model-played 4v4 at this tier (D105, D106: cap $1 for all
+# three tiers). A self-pair is graded, never rated, and `single` plays m1 only. No release: this is a test of the tier.
+# Played by `runner/play.py arena-matrix --matrix packages/bench/matrices/arena-s6-l5.toml`; --plan prints it.
+# A draft arena plans no match, so this matrix has none until its build file has its references.
+#
+# Money: runtime/budget-arena-s6.json is shared by the three tiers' matrices and must hold {"cap": 1.0, "spent": 0}
+# before the first one. Each side is capped at $0.25, so a match reserves $0.50; a match starts only if that fits, reruns
+# included. Those caps fit the $1 and are not R4's (3x a measured p95): 4v4 has no sides on record. The estimate of
+# $0.19 off-peak (twice that at DeepSeek's peak) is scaled from 2v2 and is unmeasured.
+# The model file is the machine's real DeepSeek ledger, a sibling checkout's, so no write-back is needed after the run.
+name = "arena-s6-l5"
+pairs = [["profiles/deepseek-flash.toml", "profiles/deepseek-flash.toml"]]
+arenas = ["builds-l5-4v4-v1"]
+repeats = 1
+single = true
+
+[budget]
+file = "runtime/budget-arena-s6.json"
+max_cost = { "builds-l5-4v4-v1" = 0.25 }
+
+[budget.models]
+"profiles/deepseek-flash.toml" = ["../ovh-e2e/runtime/budget-deepseek.json"]

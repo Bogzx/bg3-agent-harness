@@ -310,3 +310,19 @@ def test_the_shipped_v0_1_smoke_loads_and_reserves_two_paid_sides_per_match():
 def test_the_smokes_on_a_pinned_arena_stay_records_this_code_refuses(name):
     with pytest.raises(MatrixFileError, match="race"):
         arena_matrix.load(PKG / "matrices" / f"{name}.toml", REPO)
+
+
+@pytest.mark.parametrize(
+    ("tier", "arena", "side_cap"),
+    [("l2", "builds-l2-4v4-v1", 0.20), ("l5", "builds-l5-4v4-v1", 0.25), ("l12", "builds-l12-4v4-v1", 0.30)],
+)
+def test_each_s6_matrix_is_one_deepseek_match_on_its_tier_under_the_shared_file(tier, arena, side_cap):
+    m = arena_matrix.load(REPO / "packages" / "bench" / "matrices" / f"arena-s6-{tier}.toml", REPO)
+    assert m["budget"]["file"] == "runtime/budget-arena-s6.json"
+    assert m["budget"]["max_cost"] == {arena: side_cap}
+    assert len(m["jobs"]) + len(m["skipped"]) == 1  # a draft tier plans nothing until its references are in
+    for job in m["jobs"]:
+        assert (job["arena"], job["match"]) == (arena, 1)
+        assert job["sides"]["A"]["profile"] == job["sides"]["B"]["profile"] == "profiles/deepseek-flash.toml"
+        ledger = "../ovh-e2e/runtime/budget-deepseek.json"
+        assert arena_matrix.reserves(job) == {"runtime/budget-arena-s6.json": 2 * side_cap, ledger: 2 * side_cap}

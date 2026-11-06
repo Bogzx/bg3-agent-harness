@@ -48,8 +48,9 @@ CLAUDE.local.md
 *.mp4
 *.mkv
 *.webm
-# pi is installed per repo from the lockfile (tools/pi/README.md)
-/tools/pi/node_modules/
+# pi is installed per repo from the lockfile (tools/pi/README.md), or a worktree links another checkout's: no
+# trailing slash, so the link is ignored too and doesn't mark a run's pins dirty
+/tools/pi/node_modules
 
 # Tool caches and coverage data
 .pytest_cache/
