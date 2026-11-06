@@ -83,10 +83,10 @@ def handed_on(out: str, who: str, party: set[str], round_: int | None) -> bool:
     from bg3ai.tools import combat as ct
 
     if STILL_ACTING not in out:
-        cs = S.game.try_rpc("state.combat") or {}
+        cs = S.game.try_rpc("state.combat")
         nxt = re.search(r"(?m)^now (e\d+)'s", out)
         over = "combat is over" in out or "waiting stopped" in out
-        return over or bool(nxt and "YOUR ACTIONS" in out and who not in T.acting(cs))
+        return over or bool(cs is not None and nxt and "YOUR ACTIONS" in out and who not in T.acting(cs))
     for n in range(HANDED_READS):
         cs = S.game.try_rpc("state.combat")
         if cs is None:  # a failed read says nothing; the fight's end reads {active=false}

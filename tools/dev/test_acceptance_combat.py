@@ -145,6 +145,13 @@ class HandedOn(unittest.TestCase):
     def test_a_failed_read_then_the_next_members_turn_is_handed_on(self):
         self.assertEqual(self._handed(self.STILL, [None, {"active": True, "turn_group": ["wyll"]}]), (True, 2))
 
+    def test_a_failed_read_after_a_named_next_turn_is_not_handed_on(self):
+        self.assertEqual(self._handed("now e8's turn\nYOUR ACTIONS", [None]), (False, 1))
+
+    def test_a_result_that_ends_the_wait_needs_no_read(self):
+        self.assertTrue(self._handed("combat is over", [None])[0])
+        self.assertTrue(self._handed("waiting stopped: reaction on screen", [None])[0])
+
     def test_the_other_ends_of_the_wait_read_as_before(self):
         now = "now e8's turn\nYOUR ACTIONS"
         self.assertTrue(self._handed("combat is over", [ENEMY])[0])
