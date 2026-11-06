@@ -92,9 +92,10 @@ def ui_plans(build: dict[str, Any], level: int, static: dict[str, Any]) -> dict[
         plan["bonus"] = cc["ability_bonus"]
     if static["classes"][cls]["levels"]["1"].get("subclasses"):
         plan["subclass"] = _label(sub)
-    skills = list(cc.get("skills", [])) + list(cc.get("race_skills", []))
-    if skills:
-        plan["skills"] = skills
+    if cc.get("skills"):
+        plan["class_skills"] = list(cc["skills"])
+    if cc.get("race_skills"):
+        plan["race_skills"] = list(cc["race_skills"])
     if cc.get("expertise"):
         plan["expertise"] = list(cc["expertise"])
     if cc.get("passives"):

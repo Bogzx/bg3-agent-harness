@@ -145,7 +145,7 @@ class PlanTest(unittest.TestCase):
         cc = ar.ui_plans(build(2, "rogue"), 2, STATIC)["cc"]
         script = build(2, "rogue")["script"]["cc"]
         self.assertEqual(cc["expertise"], script["expertise"])
-        self.assertEqual(cc["skills"], script["skills"] + script["race_skills"])
+        self.assertEqual((cc["class_skills"], cc["race_skills"]), (script["skills"], script["race_skills"]))
 
     def test_every_tier_build_has_a_plan(self):
         for lv in (2, 5, 12):

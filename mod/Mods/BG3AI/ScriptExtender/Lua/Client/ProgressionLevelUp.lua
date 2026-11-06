@@ -1,4 +1,4 @@
--- Progression, part 3 of 3 (Progression.lua loads the parts in order; split for the 1000-line cap):
+-- Progression, part 4 of 4 (Progression.lua loads the parts in order; split for the 1000-line cap):
 -- level up.
 local P = BG3AI.Progression
 local RPC = BG3AI.RPC
