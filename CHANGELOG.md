@@ -211,11 +211,11 @@ game unless it says so.
   without the fix. What freed the object in that crash is not known. bg3le with 0001-0015: sha256
   498efbceca3144922a77809be8a31412cf947e18f569828a31ffdbce8a0a6085, pinned by `releases/bench-v0.11.json` (was
   e84d6044); the v0.8-v0.10 releases are unchanged.
-- bg3le patch 0016, for a wrong stats pool: on 11 of 655 kept launches the string pool scan took the 1512-entry array
-  at -384 from the rarity run instead of the real pool at +32, so GUID, Float and TranslatedString attributes had no
-  pool, "attributes available" was logged anyway, and FixedString writes went into the engine's array. A candidate now
-  needs the guid, float and translated pools after it (all 1287 good scans in the logs have them, all 22 bad scans
-  don't), and the log names the dice string that matched. With no candidate, attributes stay unavailable. Why the dice
+- bg3le patch 0016, for a wrong stats pool: on 14 of 665 kept launches the string pool scan took another array instead
+  of the real pool at +32 from the rarity run (the 1512-entry array at -384 on 13, the 15754-entry array at -576 on 1),
+  so GUID, Float and TranslatedString attributes had no pool, "attributes available" was logged anyway, and FixedString
+  writes went into the engine's array. A candidate now needs the guid, float and translated pools after it (all 1311
+  good scans in the logs have them, all 29 bad scans don't), and the log names the dice string that matched. With no candidate, attributes stay unavailable. Why the dice
   test passes on that array is not known. Tested offline by `tools/test_bg3le_stats_pool.py`, which also requires the
   wrong pick on the series without the fix. The runner reads the same from the launch's bg3le log
   (`LaunchWatch.stats_problem`): a game at the menu or at Running with a pool missing, or with no scan logged, is killed

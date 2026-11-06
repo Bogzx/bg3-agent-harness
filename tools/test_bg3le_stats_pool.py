@@ -73,7 +73,7 @@ static char* const g_run = g_stats + kWindowBytes;
 
 constexpr std::uint32_t kDice = 700;      // small enough to be a NextIds value
 constexpr std::uint32_t kHandle = 0x500010;
-static std::vector<std::uint32_t> g_next(1512), g_strings(21397), g_handles(64 * 4);
+static std::vector<std::uint32_t> g_next(1512), g_object_next(15754), g_strings(21397), g_handles(64 * 4);
 static std::vector<std::uint64_t> g_keys(1512), g_int64s(64), g_guids(64 * 2);
 static std::vector<float> g_floats(64);
 
@@ -87,12 +87,15 @@ static void lay_out(std::string const& scenario) {
   g_ids["1d8"] = kDice;
   g_texts[kHandle] = "h5fafec24g30d5g425cg952cga9c53752059c";
   for (std::size_t i = 0; i < g_next.size(); ++i) g_next[i] = 0xffffffffu;
+  for (auto& v : g_object_next) v = 0xffffffffu;
   for (auto& v : g_int64s) v = 1;
   for (auto& v : g_guids) v = 0x1234;
   for (std::size_t i = 0; i < g_floats.size(); ++i) g_floats[i] = 0.5f + (float)i;
   for (std::size_t i = 0; i < g_handles.size(); i += 4) g_handles[i] = kHandle;
   g_strings[9000] = kDice;
-  if (scenario != "good") g_next[321] = kDice;
+  if (scenario == "dice_in_object_next_ids") g_object_next[5000] = kDice;
+  else if (scenario != "good") g_next[321] = kDice;
+  put(-576, g_object_next.data(), (std::uint32_t)g_object_next.size());
   put(-384, g_next.data(), (std::uint32_t)g_next.size());
   put(-368, g_keys.data(), (std::uint32_t)g_keys.size());
   if (scenario != "no_block") put(32, g_strings.data(), (std::uint32_t)g_strings.size());
@@ -121,6 +124,7 @@ int main(int, char** argv) {
 FIXED = "RESULT pool=32 size=21397 guids=64 floats=64 translated=64 attributes=1"
 REFUSED = "RESULT pool=0 size=0 guids=0 floats=0 translated=0 attributes=0"
 WRONG_POOL = "RESULT pool=-384 size=1512 guids=0 floats=0 translated=0 attributes=1"  # the S5 log's picture
+WRONG_POOL_OBJECTS = "RESULT pool=-576 size=15754 guids=0 floats=0 translated=0 attributes=1"
 
 
 def function(src: str, signature: str) -> str:
@@ -205,6 +209,9 @@ class StatsPoolTest(unittest.TestCase):
         self.assertIn("string pool at", out)
         self.assertIn('its dice string: "1d8" (id 0x2bc) at entry 9000', out)
         self.assertIn("attributes available", out)
+        out = self.run_scenario(exe, "dice_in_object_next_ids")  # bg3le-20261106-235702: the Objects map's NextIds
+        self.assertIn(FIXED, out)
+        self.assertIn('(-576 from the run) rejected: 15754 entries, "1d8" (id 0x2bc) at entry 5000', out)
 
     def test_a_block_with_any_pool_missing_is_refused(self):
         exe = self.build(ALL_PATCHES, "all")
@@ -220,6 +227,7 @@ class StatsPoolTest(unittest.TestCase):
         self.assertIn(FIXED, self.run_scenario(exe, "good"))  # the fake is the game's shape on a good launch
         out = self.run_scenario(exe, "dice_in_next_ids")
         self.assertIn(WRONG_POOL, out)
+        self.assertIn(WRONG_POOL_OBJECTS, self.run_scenario(exe, "dice_in_object_next_ids"))
         self.assertIn("attributes available", out)
 
 
