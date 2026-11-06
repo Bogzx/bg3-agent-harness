@@ -52,7 +52,6 @@ class Controller(Protocol):
     def launch_and_load(self, save: Save) -> Save: ...  # the save that loaded; LaunchGaveUp after its retries
     def launch(self, load_folder: str | None) -> None: ...  # None: to the main menu
     def wait_menu(self) -> bool: ...  # up to the main menu, past the splash; False: it never came up
-    def refuse_missing_stats(self) -> None: ...  # StatsPoolsMissing when this launch's Ext.Stats has no pools
     def check_oom(self) -> str | None: ...  # after a death: the OOM cause, or None
 
 
@@ -268,7 +267,6 @@ class LaunchedGame:
         self.ctl.launch(None)
         if not self.ctl.wait_menu():
             raise RuntimeError("the main menu never came up")
-        self.ctl.refuse_missing_stats()
         write_state(self.sdir / "runner.json", loaded_save=None)
 
     def ensure_save(self, since: float) -> str | None:

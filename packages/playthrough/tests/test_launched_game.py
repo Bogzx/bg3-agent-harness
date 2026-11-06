@@ -38,9 +38,6 @@ class FakeCtl:
         self.calls.append("main menu")
         return True
 
-    def refuse_missing_stats(self) -> None:
-        self.calls.append("stats checked")
-
     def check_oom(self) -> str | None:
         self.calls.append("check_oom")
         return self.oom_why
@@ -261,7 +258,7 @@ def test_a_playthrough_without_saves_is_new_and_launches_to_the_main_menu(tmp_pa
     with pytest.raises(lg.NoSaveYetError):
         g.recover("wasn't answering at the session start")
     g.new_game()
-    assert ctl.calls == ["kill", "launch None", "main menu", "stats checked"]
+    assert ctl.calls == ["kill", "launch None", "main menu"]
     assert json.loads((sdir / "runner.json").read_text())["loaded_save"] is None
 
 

@@ -459,9 +459,12 @@ class LaunchWatch:
 
     def stats_problem(self) -> str | None:
         """Why this launch's Ext.Stats can't be trusted, from its bg3le log: the last scan missed a pool, or no scan
-        ran. Both scans of a launch come before the Menu and Running states (all 623 kept logs that reached Running,
-        2026-11-06), so a game at either has its answer in the log."""
-        self.log_crash()
+        ran. A scan comes before the Menu state and another before Running (all 623 kept logs that reached Running,
+        2026-11-06), so a game at either has its answer in the log. A crash in the lines read here is a GameDied, as
+        in wait_for: this read moves the offset, so no later poll would see it."""
+        crash = self.log_crash()
+        if crash:
+            raise GameDied(f"bg3le logged {crash}")
         if not self.stats_scanned:
             return "bg3le logged no stats scan"
         return "; ".join(self.stats_missing) or None

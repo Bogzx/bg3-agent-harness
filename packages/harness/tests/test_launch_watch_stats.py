@@ -51,6 +51,16 @@ class StatsProblem(unittest.TestCase):
         )
         self.assertIn("no string pool found", self.w.stats_problem() or "")
 
+    def test_stats_problem_attributes_off_alone(self) -> None:
+        self.write_log("[ 1.0] stats: 15754 stats via the rarity run at 0x3\n[ 1.1] stats: attributes unavailable\n")
+        self.assertIn("attributes unavailable", self.w.stats_problem() or "")
+
+    def test_a_crash_in_the_lines_read_is_a_game_death(self) -> None:
+        # the read moves the offset, so dropping this answer would lose the crash for good
+        self.write_log("[ 0.5] bg3le loaded\n[ 0.9] crash: signal 11 at (nil) on tid 7\n" + self.GOOD_SCAN)
+        with self.assertRaisesRegex(rgame.GameDied, "bg3le logged crash: signal 11"):
+            self.w.stats_problem()
+
     def test_stats_problem_without_a_scan(self) -> None:
         self.write_log('[ 1.0] bg3le loaded\n[ 1.1] stats: the string table has no entry for "Epic" yet\n')
         self.assertEqual(self.w.stats_problem(), "bg3le logged no stats scan")

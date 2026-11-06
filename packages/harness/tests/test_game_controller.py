@@ -4,6 +4,7 @@ refusal, the abort and launcher-exit checks of wait_for, the OOM streak and the 
 from __future__ import annotations
 
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from unittest import mock
 from bg3harness.game import controller as C  # noqa: N812
 from bg3harness.game import io as G  # noqa: N812
 from bg3harness.game import oom as O  # noqa: N812
+from bg3harness.runner import game_side as GS  # noqa: N812
 
 
 class State(dict[str, Any]):
@@ -134,6 +136,71 @@ class MissingStats(Base):
         self.write_log("[ 1.0] stats: 15754 stats via the rarity run at 0x3\n[ 1.1] stats: attributes available\n")
         launched, killed, got = self.run_load()
         self.assertEqual((launched, killed, got), ([NEW.folder], [], NEW))
+        self.assertEqual(self.host.events, [])
+
+    def test_the_refusal_says_so_in_the_status_alert(self) -> None:
+        self.write_log("[ 1.0] stats: 15754 stats via the rarity run at 0x3\n[ 1.1] stats: no guid pool found; GUID\n")
+        self.run_load()
+        self.assertEqual([s["alert"]["kind"] for s in self.host.statuses if "alert" in s], ["stats_pools_missing"])
+
+    def at_menu(self) -> list[str]:
+        """wait_menu on a game at the main menu; what it killed."""
+        killed: list[str] = []
+
+        def wait_for(what: str, pred: Any, timeout: float, interval: float = 2.0) -> bool:
+            return True
+
+        with (
+            mock.patch.object(self.ctl, "wait_for", wait_for),
+            mock.patch.object(self.ctl, "kill", lambda: killed.append("kill")),
+            mock.patch.object(C.game, "available_ops", lambda ctx: {"ui.state"}),  # pyright: ignore[reportUnknownLambdaType]
+        ):
+            self.assertTrue(self.ctl.wait_menu())
+        return killed
+
+    def test_a_game_at_the_menu_without_pools_is_refused(self) -> None:  # a new game never passes wait_running
+        self.write_log("[ 1.0] stats: 15754 stats via the rarity run at 0x3\n[ 1.1] stats: no guid pool found; GUID\n")
+        with self.assertRaises(G.StatsPoolsMissing):
+            self.at_menu()
+        self.assertEqual([k for k, _ in self.host.events], ["stats_pools_missing"])
+
+    def test_a_game_at_the_menu_with_its_pools_goes_on(self) -> None:
+        self.write_log("[ 1.0] stats: 15754 stats via the rarity run at 0x3\n[ 1.1] stats: attributes available\n")
+        self.assertEqual(self.at_menu(), [])
+
+    def test_a_bench_new_game_start_is_refused_at_the_menu(self) -> None:
+        # nautiloid: load_save(None) launches, waits at the menu and never passes wait_running
+        self.write_log("[ 1.0] stats: 15754 stats via the rarity run at 0x3\n[ 1.1] stats: no guid pool found; GUID\n")
+        ctl = self.ctl
+
+        class Side(GS.GameSide):
+            gamectl = ctl  # pyright: ignore[reportAssignmentType, reportIncompatibleVariableOverride]
+
+        side: Any = Side.__new__(Side)
+        side.opt = types.SimpleNamespace(take_over=False, save_owner="Tav")
+        launched: list[str | None] = []
+
+        def wait_for(what: str, pred: Any, timeout: float, interval: float = 2.0) -> bool:
+            return True
+
+        with (
+            mock.patch.object(self.ctl, "launch", launched.append),
+            mock.patch.object(self.ctl, "wait_for", wait_for),
+            mock.patch.object(self.ctl, "kill", lambda: None),
+            mock.patch.object(C.game, "available_ops", lambda ctx: {"ui.state"}),  # pyright: ignore[reportUnknownLambdaType]
+            mock.patch.object(GS.game, "port_open", lambda: False),
+            self.assertRaises(G.StatsPoolsMissing),
+        ):
+            side.load_save(None)
+        self.assertEqual(launched, [None])
+
+    def test_a_crash_read_at_the_check_is_a_game_death(self) -> None:  # launch_and_load retries a GameDied
+        self.write_log("[ 0.9] crash: signal 11 at (nil) on tid 7\n")
+        with (
+            mock.patch.object(self.ctl, "wait_for", lambda *a, **k: True),  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
+            self.assertRaises(G.GameDied),
+        ):
+            self.ctl.wait_running()
         self.assertEqual(self.host.events, [])
 
     def test_a_game_without_a_watch_has_nothing_to_read(self) -> None:

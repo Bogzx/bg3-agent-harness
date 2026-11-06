@@ -419,6 +419,14 @@ class GameController:
         return False
 
     def wait_menu(self) -> bool:
+        """Up to the main menu (reach_menu), where a new game starts and never passes wait_running: the stats scan is
+        in the log by then, so refuse_missing_stats runs here too."""
+        if not self.reach_menu():
+            return False
+        self.refuse_missing_stats()
+        return True
+
+    def reach_menu(self) -> bool:
         """Up to the main menu, pressing past the "Press any key" splash. The client state there is Menu or LoadMenu
         (it flips between them on the splash): never a reason to wait for Running."""
         if not self.wait_for("debug port", game.port_open, 240):
