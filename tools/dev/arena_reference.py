@@ -50,7 +50,11 @@ SUBCLASS_LABEL = {
 
 
 class RefStepError(RuntimeError):
-    """A step can't go on: its text says what was read."""
+    """A step can't go on: its text says what was read; `log` what the step had by then."""
+
+    def __init__(self, text: str, log: dict[str, Any] | None = None) -> None:
+        super().__init__(text)
+        self.log = log
 
 
 def _label(sub: str | None) -> str:
@@ -68,6 +72,12 @@ def _spell_kinds(cls: str, sub: str | None, level: int, static: dict[str, Any]) 
             if name == "SelectSpells":
                 out.append((r["level"], args[0], len(args) > 6 and args[6] == "AlwaysPrepared"))
     return out
+
+
+def _passive_lists(cls: str, sub: str | None, level: int, static: dict[str, Any]) -> list[str]:
+    """The PassiveList of each SelectPassives on the respec page, a level-1 character's, in the row's order."""
+    rows = [r for r in mas.selector_rows(cls, sub, level, static, cls) if r["level"] == 1]
+    return [a[0] for r in rows for name, a in mas.selectors(r["row"]["Selectors"]) if name == "SelectPassives"]
 
 
 def ui_plans(build: dict[str, Any], level: int, static: dict[str, Any]) -> dict[str, Any]:
@@ -100,6 +110,7 @@ def ui_plans(build: dict[str, Any], level: int, static: dict[str, Any]) -> dict[
         plan["expertise"] = list(cc["expertise"])
     if cc.get("passives"):
         plan["passives"] = [x for ids in cc["passives"] for x in ids]
+        plan["passive_lists"] = _passive_lists(cls, sub, level, static)
         names.extend(plan["passives"])
     spells_of(1, plan)
     if cc.get("race_spells"):
@@ -268,7 +279,8 @@ class Live:
             set_ = res.get("set") or {}
             raise RefStepError(
                 f"the respec page isn't complete: {res.get('problems')} {res.get('validity')} "
-                f"abilities {set_.get('abilities')} skills {set_.get('skills')}"
+                f"abilities {set_.get('abilities')} skills {set_.get('skills')}",
+                log,
             )
         log["finish"] = self.game.rpc("ui.cc_finish", {}, context="client")
         log["events"] = self.applied(int(mark))
@@ -413,6 +425,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except (RefStepError, mas.SpecError) as e:
         print(f"arena_reference: {e}", file=sys.stderr)
+        log = e.log if isinstance(e, RefStepError) else None
+        if log is not None:  # cc.before: what the page opened with, also when it stopped
+            a.out.mkdir(parents=True, exist_ok=True)
+            stop = a.out / f"{a.builds.stem}-{a.build}-{a.step}-stop.json"
+            stop.write_text(json.dumps(log, indent=1, default=str) + "\n")
         return 1
 
 

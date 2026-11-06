@@ -814,7 +814,15 @@ RPC.register("ui.cc_apply", function(args)
             plan.subrace, true) }),
         unless("subrace", { "subrace?", verifyStage(get, ctx) }),
         { "before", function() -- what the page opened with: a respec's hireling brings its own picks
-            ctx.result.before = { abilities = abilitiesView(get()), skills = skillsView(get()) }
+            ctx.result.before = { abilities = abilitiesView(get()), skills = skillsView(get()),
+                passives = I.passivesView(get()), passive_props = {} }
+            for i, sel in ipairs(passiveSelectors(get())) do -- whether a selector shows its list: unread so far
+                local plain = {}
+                for k, v in pairs(UI.props(sel)) do
+                    if type(v) ~= "table" and type(v) ~= "userdata" then plain[k] = tostring(v) end
+                end
+                ctx.result.before.passive_props[i] = plain
+            end
             return "next", 0
         end },
         { "class_tab", tabStage(ctx, tab.classTab) },
@@ -854,6 +862,16 @@ RPC.register("ui.cc_apply", function(args)
         { "race_skills", skillsStage(get, ctx, plan.race_skills, "race", true) },
         { "expertise", skillsStage(get, ctx, plan.expertise, "expertise", true) },
         { "skills?", skillsReport(get, ctx) },
+        { "passive_lists", function() -- the class row's lists, in the row's order: the page's selectors are in it
+            local ids, sels = plan.passive_lists or {}, passiveSelectors(get())
+            if #ids > 0 and #ids ~= #sels then
+                ctx.result.problems[#ctx.result.problems + 1] = ("passive lists: the page has %d selectors, the row %d")
+                    :format(#sels, #ids)
+                return "next", 0
+            end
+            for i, id in ipairs(ids) do P.selPassiveList[tostring(sels[i])] = id end
+            return "next", 0
+        end },
         { "passives", passivesStage(get, ctx, plan.passives, true, true) },
         { "spells", spellsStage(pg.widget, get, ctx, plan.spells, plan.cantrips) },
         { "spells?", spellsReport(get, ctx) },

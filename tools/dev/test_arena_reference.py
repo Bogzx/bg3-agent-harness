@@ -170,6 +170,20 @@ class PlanTest(unittest.TestCase):
 
 
 class RespecTest(unittest.TestCase):
+    def test_a_stop_keeps_what_the_page_opened_with(self):
+        before = {"skills": {"class": ["Stealth"]}}
+        g = FakeGame([Job("done", {"problems": ["passive Bounty Hunter: not offered"], "before": before})])
+        with self.assertRaises(ar.RefStepError) as stop:
+            live(g, FakeRoute()).respec(PLANS, "u1")
+        self.assertEqual((stop.exception.log or {})["cc"]["before"], before)
+        self.assertEqual(g.finished, 0)
+
+    def test_the_rangers_plan_names_its_two_lists_in_the_rows_order(self):
+        doc = json.loads((REPO / "packages/bench/builds/l2_hirelings_v1.json").read_text())
+        ranger = next(b for b in doc["builds"] if b["class"] == "Ranger")
+        cc = ar.ui_plans(ranger, doc["level"], STATIC)["cc"]
+        self.assertEqual([x[:8] for x in cc["passive_lists"]], ["d0f13dda", "72c63024"])
+
     def test_the_whole_flow_with_spell_clicks_applies_again_finishes_and_levels(self):
         g = FakeGame([Job("done", {"needs_clicks": [{"name": "Bless"}]}), Job("done", DONE)])
         ups: list[dict[str, Any]] = []

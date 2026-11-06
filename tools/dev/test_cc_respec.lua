@@ -450,6 +450,53 @@ do
     r = applySkills(q, { class = "Fighter", passives = { "Bounty Hunter" } })
     check(table.concat(r.result.problems, ";"):find("passive Bounty Hunter: not on the page", 1, true) ~= nil,
         "end check names a passive that didn't land")
+
+    -- a Ranger's page (live 2026-11-06, cc-options-ranger-stop.json): two selectors of 5 unnamed entries, the
+    -- hireling's picks #3 and #1. Lists of one length: only the row's ids tell them apart.
+    local LISTS = { enemy = { Passives = { "Bounty Hunter", "Keeper", "Mage Breaker", "Knight", "Stalker" } },
+        land = { Passives = { "Beast Tamer", "Urban Tracker", "Cold", "Fire", "Poison" } } }
+    Ext.StaticData = { Get = function(id) return LISTS[id] end, GetAll = function() return {} end }
+    Ext.Stats = { Get = function() return nil end }
+    local function ranger(first, second)
+        local function sel(on)
+            local its = {}
+            for i = 1, 5 do its[i] = obj("ls.VM", { Value = i == on and 1 or 0, Enabled = true }) end
+            return obj("ls.VM", { Passives = its, MaxSelectedPassiveCount = 1, IsComplete = true })
+        end
+        local page2 = skillPage()
+        page2.selectors = { sel(first), sel(second) }
+        page2.passive = function(it)
+            for _, s in ipairs(page2.selectors) do
+                local on, mine = 0, false
+                for _, x in ipairs(s._p.Passives) do on, mine = on + x._p.Value, mine or x == it end
+                if mine then
+                    if it._p.Value == 1 then it._p.Value = 0 elseif on < 1 then it._p.Value = 1 end
+                end
+            end
+        end
+        return page2
+    end
+    local PICKS = { "Bounty Hunter", "Beast Tamer" }
+    P.clearNameCaches()
+    q = ranger(3, 1)
+    r = applySkills(q, { class = "Fighter", passives = PICKS, passive_lists = { "enemy", "land" } })
+    probs = table.concat(r.result.problems, ";")
+    local e, l = q.selectors[1]._p.Passives, q.selectors[2]._p.Passives
+    check(r.status == "done" and e[1]._p.Value == 1 and e[3]._p.Value == 0 and l[1]._p.Value == 1 and probs == "",
+        "passives: lists of one length, each selector named by the row's list (" .. probs .. ")")
+    P.clearNameCaches()
+    r = applySkills(ranger(3, 1), { class = "Fighter", passives = PICKS })
+    check(table.concat(r.result.problems, ";"):find("passive Bounty Hunter: not offered", 1, true) ~= nil,
+        "passives: without the row's lists the same page stays unnamed")
+    P.clearNameCaches()
+    r = applySkills(ranger(3, 1), { class = "Fighter", passives = PICKS, passive_lists = { "enemy" } })
+    check(table.concat(r.result.problems, ";"):find("the page has 2 selectors, the row 1", 1, true) ~= nil,
+        "passives: selectors the row doesn't account for are named")
+    check(r.result.before and #r.result.before.passives == 2 and r.result.before.passives[1].picked[1] == "#3",
+        "before: the page's own passive picks")
+    Ext.StaticData, Ext.Stats = { Get = function() return nil end, GetAll = function() return {} end }, nil
+    P.clearNameCaches()
+
     r = applySkills(skillPage(), { class = "Fighter", spells = { "Bless" } })
     check(table.concat(r.result.problems, ";"):find("spell Bless: not on the page", 1, true) ~= nil,
         "end check names a spell that didn't land")
