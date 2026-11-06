@@ -1,0 +1,175 @@
+bg3le crash handler: name the Ext.UI call that was running (function, key, object, class)
+
+On top of 0001-0014. bg3le-20261106-011048 (l_get on a free-list word) left the C function in the stack scan and the
+object's address in a register, but not the property name or the class, and systemd-coredump stored no core (no space on
+/), so neither could be recovered afterwards.
+
+- serialized() keeps a note on its stack for each call: the C function and its string argument (arg 2, the property name
+  for UiGet/UiSet). object_arg adds the first object, and the box's Counted and class name, recorded when the box is made.
+- The crash handler prints the notes of the crashing thread first, innermost first, then each object's first word and the
+  word at +8 (the count, on a counted object). Crashes with no call on the thread say so. Everything that can be gone is
+  read through safe_read, so this can't fault inside the handler before the registers are logged.
+
+Costs a 63-byte copy per Ext.UI call and one pointer per box. Test: tools/test_bg3le_ui_refs.py.
+Against bg3le 3728a68 (v0.3.6) with 0001-0014. Applied by tools/build_bg3le.sh.
+---
+diff --git a/src/stackdump.cpp b/src/stackdump.cpp
+index 35f51f8..fb4ba45 100644
+--- a/src/stackdump.cpp
++++ b/src/stackdump.cpp
+@@ -19,6 +19,8 @@
+ 
+ #include "log.h"
+ 
++extern "C" void bg3le_ui_log_crash_call();
++
+ namespace bg3le {
+ namespace {
+ 
+@@ -112,6 +114,7 @@ void crash_handler(int sig, siginfo_t* info, void* context) {
+         logf("crash: signal %d at %p on tid %ld (bias 0x%lx)", sig,
+              info != nullptr ? info->si_addr : nullptr,
+              (long)::syscall(SYS_gettid), (unsigned long)bias);
++        bg3le_ui_log_crash_call();
+         // The faulting pc, and the top of the stack: after a call through a
+         // null pointer the unwinder has nothing, but [rsp] is the caller.
+         auto* uc = static_cast<ucontext_t*>(context);
+diff --git a/src/vendor/bg3le_noesis_lua.inl b/src/vendor/bg3le_noesis_lua.inl
+index 94a1ab8..9a2b38f 100644
+--- a/src/vendor/bg3le_noesis_lua.inl
++++ b/src/vendor/bg3le_noesis_lua.inl
+@@ -18,6 +18,7 @@
+ #include <cstdlib>
+ #include <cstring>
+ #include <deque>
++#include <dlfcn.h>
+ #include <link.h>
+ #include <mutex>
+ #include <optional>
+@@ -52,6 +53,7 @@ struct Held
+     bool Counted;  // a BaseComponent, holding a reference; Types are not counted
+     unsigned Generation;  // g_generation when the reference was taken
+     unsigned ViewGeneration;  // g_view_generation then
++    char const* ClassName;  // its class's name when the box was made; for the crash log
+ };
+ 
+ char const* const kHeldMeta = "bg3le.NoesisObject";
+@@ -344,6 +346,35 @@ struct CallRefs
+     }
+ };
+ 
++// What the Ext.UI call running on this thread is working on, for the crash
++// log: the C function, its string argument (a property name, usually) and the
++// first object it took. Lives on serialized()'s stack, so a nested call keeps
++// the outer one's.
++struct CallNote
++{
++    lua_CFunction Fn;
++    BaseObject const* Object;
++    char const* ClassName;
++    bool Boxed;
++    bool Counted;
++    char Key[64];
++    CallNote const* Outer;
++};
++thread_local CallNote* t_call_note = nullptr;
++
++struct CallScope
++{
++    CallNote Note{};
++    CallScope(lua_State* L, lua_CFunction fn)
++    {
++        Note.Fn = fn;
++        Note.Outer = t_call_note;
++        if (lua_type(L, 2) == LUA_TSTRING) std::strncpy(Note.Key, lua_tostring(L, 2), sizeof(Note.Key) - 1);
++        t_call_note = &Note;
++    }
++    ~CallScope() { t_call_note = const_cast<CallNote*>(Note.Outer); }
++};
++
+ // A pushed object, or a light userdata from before (still accepted; nothing
+ // pushes one now, and it has no reference to go by). This catches the unmapped
+ // and the reused-as-something-else cases. A counted box's object also gets a
+@@ -362,6 +393,12 @@ BaseObject* object_arg(lua_State* L, int index)
+         luaL_argerror(L, index, "expected a Noesis object");
+         return nullptr;
+     }
++    if (t_call_note != nullptr && t_call_note->Object == nullptr) {
++        t_call_note->Object = o;
++        t_call_note->Boxed = box != nullptr;
++        t_call_note->Counted = box != nullptr && box->Counted;
++        t_call_note->ClassName = box != nullptr ? box->ClassName : nullptr;
++    }
+     if (!plausible_object(o)) {
+         luaL_argerror(L, index, "Noesis object is gone");
+         return nullptr;
+@@ -416,6 +453,7 @@ void push_object(lua_State* L, void const* p)
+     h->Counted = false;
+     h->Generation = g_generation.load();
+     h->ViewGeneration = g_view_generation.load();
++    h->ClassName = nullptr;
+     if (luaL_newmetatable(L, kHeldMeta)) {
+         lua_pushcfunction(L, held_gc);
+         lua_setfield(L, -2, "__gc");
+@@ -428,7 +466,9 @@ void push_object(lua_State* L, void const* p)
+     // Taken after the metatable is set, so a failed allocation above leaks
+     // nothing; refcounted objects are the BaseComponents. A dying one is nil:
+     // no box, and its count stays 0.
+-    if (TypeHelpers::IsDescendantOf(o->GetClassType(), TypeOf<BaseComponent>())) {
++    auto type = o->GetClassType();
++    h->ClassName = type != nullptr ? type->GetName() : nullptr;
++    if (TypeHelpers::IsDescendantOf(type, TypeOf<BaseComponent>())) {
+         if (!try_add_reference(o)) {
+             dying_object("push_object", o);
+             h->Object = nullptr;
+@@ -536,6 +576,7 @@ int serialized(lua_State* L)
+         ~Framed() { t_framed = Was; }
+     } restore;
+     CallRefs refs;
++    CallScope note(L, fn);
+     if (!g_serialize.load(std::memory_order_relaxed)) {
+         t_framed = true;
+         return fn(L);
+@@ -1758,6 +1799,42 @@ extern "C" void bg3le_ui_frame_end(bool taken)
+     if (taken) Noesis::bg3le_ui::g_frame.unlock();
+ }
+ 
++// From the crash handler (stackdump.cpp): names the Ext.UI calls running on this
++// thread, innermost first, before anything that can fault. Reads what may be gone
++// through safe_read: the notes sit on a stack a bad call can have trashed, and the
++// object is the likely suspect.
++extern "C" void bg3le_ui_log_crash_call()
++{
++    using namespace Noesis::bg3le_ui;
++    CallNote const* at = t_call_note;
++    if (at == nullptr) {
++        bg3le::logf("crash: no Ext.UI call on this thread");
++        return;
++    }
++    for (int depth = 0; at != nullptr && depth < 4; ++depth) {
++        CallNote note;
++        if (!bg3le::safe_read(at, &note, sizeof(note))) {
++            bg3le::logf("crash: Ext.UI call %d: note at %p unreadable", depth, static_cast<void const*>(at));
++            return;
++        }
++        note.Key[sizeof(note.Key) - 1] = '\0';
++        Dl_info dl{};
++        const bool named = ::dladdr(reinterpret_cast<void*>(note.Fn), &dl) != 0 && dl.dli_sname != nullptr;
++        char cls[96] = "";
++        if (note.ClassName == nullptr || !bg3le::safe_cstr(note.ClassName, cls, sizeof(cls))) std::strcpy(cls, "?");
++        bg3le::logf("crash: Ext.UI call %d: %s key '%s' object %p class '%s' boxed %d counted %d", depth,
++                    named ? dl.dli_sname : "?", note.Key, static_cast<void const*>(note.Object), cls, note.Boxed ? 1 : 0,
++                    note.Counted ? 1 : 0);
++        std::uintptr_t word = 0;
++        std::int32_t refs = 0;
++        if (note.Object != nullptr && bg3le::safe_read(note.Object, &word, sizeof(word))
++            && bg3le::safe_read(reinterpret_cast<char const*>(note.Object) + kRefCountOffset, &refs, sizeof(refs))) {
++            bg3le::logf("crash:   its first word %#lx, word at +8 %d", static_cast<unsigned long>(word), refs);
++        }
++        at = note.Outer;
++    }
++}
++
+ // Drops the references Lua let go of; on the UI thread, from View::Update.
+ // Those of the current generation go at once while the UI is settled; the
+ // rest are parked until the UI has been settled for kParkSettleMs in one

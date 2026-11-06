@@ -1,4 +1,5 @@
-"""A dying Noesis object never gets a reference, and no object goes during a C call (patches/bg3le 0014), compiled offline.
+"""A dying Noesis object never gets a reference, and no object goes during a C call (patches/bg3le 0014); the crash log
+names the running Ext.UI call (0015). Compiled offline.
 
 The crash (bg3le-20261106-011048, Noesis::bg3le_ui::l_get): o->GetClassType() through a free-list word, on a held box's
 object. Applies patches/bg3le to a scratch export of the pinned submodule commit, cuts the "objects" and "serializing"
@@ -6,10 +7,12 @@ sections out of the patched src/vendor/bg3le_noesis_lua.inl (real code), and com
 and stub objects. Nothing depends on timing: a stub safe_read frees the object at a fixed read, between
 plausible_vtable and the use, and a stub C call releases the object at a fixed line. Each scenario runs as its own
 process, so one that dies on the free-list word is seen as a signal. test_scenarios_fail_without_the_fix runs the same
-scenarios on the series without the fix and requires them to die or report a failure.
+scenarios on the series without the fix and requires them to die or report a failure. The crash log's scenarios link
+the real src/stackdump.cpp, with a stub log.h, and crash for real.
 Run: python3 -m unittest tools/test_bg3le_ui_refs.py
 """
 
+import re
 import shutil
 import signal
 import subprocess
@@ -36,6 +39,7 @@ HARNESS = r"""
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dlfcn.h>
 #include <link.h>
 #include <map>
 #include <mutex>
@@ -59,7 +63,9 @@ static Table g_registry;
 static std::map<std::string, Table*> g_metas;
 struct LuaError { std::string msg; };
 static Slot& at(lua_State* L, int i) { return L->st[i > 0 ? i - 1 : (int)L->st.size() + i]; }
-static void push(lua_State* L, int t, void* p = nullptr, std::string s = {}) { L->st.push_back(Slot{ t, p, std::move(s) }); }
+static void push(lua_State* L, int t, void* p = nullptr, std::string s = {}) {
+  L->st.push_back(Slot{ t, p, std::move(s) });
+}
 static void lua_pop(lua_State* L, int n) { L->st.resize(L->st.size() - n); }
 static void lua_pushnil(lua_State* L) { push(L, LUA_TNIL); }
 static void lua_newtable(lua_State* L) { push(L, LUA_TTABLE, new Table); }
@@ -70,22 +76,31 @@ static void lua_setfield(lua_State* L, int, char const*) { lua_pop(L, 1); }
 static int lua_setmetatable(lua_State* L, int) { lua_pop(L, 1); return 1; }
 static void lua_pushvalue(lua_State* L, int i) { Slot v = at(L, i); L->st.push_back(v); }
 static void lua_remove(lua_State* L, int i) { L->st.erase(L->st.begin() + (i > 0 ? i - 1 : (int)L->st.size() + i)); }
-static Table& table_at(lua_State* L, int i) { return i == LUA_REGISTRYINDEX ? g_registry : *static_cast<Table*>(at(L, i).p); }
+static Table& table_at(lua_State* L, int i) {
+  return i == LUA_REGISTRYINDEX ? g_registry : *static_cast<Table*>(at(L, i).p);
+}
 static int lua_rawgetp(lua_State* L, int i, void const* key) {
   Table& t = table_at(L, i); auto it = t.m.find(key);
   if (it == t.m.end()) { lua_pushnil(L); return LUA_TNIL; }
   L->st.push_back(it->second); return it->second.t;
 }
-static void lua_rawsetp(lua_State* L, int i, void const* key) { Table& t = table_at(L, i); t.m[key] = L->st.back(); lua_pop(L, 1); }
-static void* lua_newuserdata(lua_State* L, std::size_t n) { void* p = std::malloc(n); push(L, LUA_TUSERDATA, p); return p; }
+static void lua_rawsetp(lua_State* L, int i, void const* key) {
+  Table& t = table_at(L, i); t.m[key] = L->st.back(); lua_pop(L, 1);
+}
+static void* lua_newuserdata(lua_State* L, std::size_t n) {
+  void* p = std::malloc(n); push(L, LUA_TUSERDATA, p); return p;
+}
 static int luaL_newmetatable(lua_State* L, char const* name) {
-  auto& m = g_metas[name]; const bool fresh = m == nullptr; if (fresh) m = new Table; push(L, LUA_TTABLE, m); return fresh;
+  auto& m = g_metas[name]; const bool fresh = m == nullptr; if (fresh) m = new Table;
+  push(L, LUA_TTABLE, m); return fresh;
 }
 static void* luaL_testudata(lua_State* L, int i, char const*) {
   return i <= (int)L->st.size() && at(L, i).t == LUA_TUSERDATA ? at(L, i).p : nullptr;
 }
 static void* luaL_checkudata(lua_State* L, int i, char const* m) { return luaL_testudata(L, i, m); }
-static int lua_islightuserdata(lua_State* L, int i) { return i <= (int)L->st.size() && at(L, i).t == LUA_TLIGHTUSERDATA; }
+static int lua_islightuserdata(lua_State* L, int i) {
+  return i <= (int)L->st.size() && at(L, i).t == LUA_TLIGHTUSERDATA;
+}
 static void* lua_touserdata(lua_State* L, int i) { return at(L, i).p; }
 static char const* lua_pushfstring(lua_State*, char const* f, ...) { return f; }
 static int lua_type(lua_State* L, int i) { return i <= (int)L->st.size() ? at(L, i).t : LUA_TNONE; }
@@ -103,11 +118,16 @@ static int luaL_argerror(lua_State*, int, char const* msg) { throw LuaError{ msg
 static void free_armed();
 static int g_free_at_read = 0;
 namespace bg3le {
-static void logf(char const* fmt, ...) { va_list ap; va_start(ap, fmt); std::vfprintf(stdout, fmt, ap); va_end(ap); std::printf("\n"); }
+static void logf(char const* fmt, ...) {
+  va_list ap; va_start(ap, fmt); std::vfprintf(stdout, fmt, ap); va_end(ap); std::printf("\n");
+}
 static bool safe_read(void const* addr, void* out, std::size_t n) {
   std::memcpy(out, addr, n);
   if (g_free_at_read != 0 && --g_free_at_read == 0) free_armed();
   return true;
+}
+static bool safe_cstr(void const* addr, char* buf, std::size_t n) {
+  std::strncpy(buf, static_cast<char const*>(addr), n - 1); buf[n - 1] = 0; return true;
 }
 static char const* client_game_state() { return "Running"; }
 static bool noesis_update_hooked() { return true; }
@@ -141,7 +161,10 @@ struct BaseComponent : BaseObject {
   int32_t AddReference() const { return ++const_cast<std::atomic<int32_t>&>(mRefCount); }
   int32_t Release() const {
     int32_t n = --const_cast<std::atomic<int32_t>&>(mRefCount);
-    if (n == 0) { ++g_destroyed; to_free_list(const_cast<BaseComponent*>(this), const_cast<std::atomic<int32_t>&>(mRefCount)); }
+    if (n == 0) {
+      ++g_destroyed;
+      to_free_list(const_cast<BaseComponent*>(this), const_cast<std::atomic<int32_t>&>(mRefCount));
+    }
     return n;
   }
 };
@@ -154,6 +177,7 @@ template <class T> Type const* TypeOf() { return &g_button_type; }
 namespace bg3le_ui {
 SECTIONS
 } }
+HOOKS
 using namespace Noesis;
 using namespace Noesis::bg3le_ui;
 
@@ -208,7 +232,8 @@ static void push_dying() {
   check("a dying object is nil", lua_type(&L, -1) == LUA_TNIL);
   check("its count stays 0", o->mRefCount.load() == 0);
   check("one value pushed", L.st.size() == 1);
-  check("nothing cached for it", lua_rawgetp(&L, LUA_REGISTRYINDEX, &g_held_cache_key) == LUA_TTABLE && lua_rawgetp(&L, -1, o) == LUA_TNIL);
+  check("nothing cached for it",
+        lua_rawgetp(&L, LUA_REGISTRYINDEX, &g_held_cache_key) == LUA_TTABLE && lua_rawgetp(&L, -1, o) == LUA_TNIL);
 }
 
 static void counts() {
@@ -238,6 +263,25 @@ static void counts() {
   check("a box on a freed block is refused", error == "Noesis object is gone");
 }
 
+#ifdef WITH_CRASH_LOG
+#include "stackdump.h"
+// Not static, and linked -rdynamic: the crash log names the function by its symbol
+int l_crash(lua_State*) { *reinterpret_cast<int volatile*>(std::uintptr_t{ 8 }) = 1; return 0; }
+int l_crash_with_object(lua_State* L) { object_arg(L, 1); return l_crash(L); }
+int l_crash_nested(lua_State* L) {
+  object_arg(L, 1);
+  lua_State inner; boxed(&inner, new_button()); lua_pushliteral(&inner, "Inner");
+  return call(&inner, l_crash_with_object);
+}
+static void crash(lua_CFunction fn) {
+  bg3le::install_crash_handler();
+  lua_State L; Button* o = new_button(); boxed(&L, o); lua_pushliteral(&L, "Text");
+  std::printf("object %p\n", static_cast<void*>(o));
+  call(&L, fn);
+}
+static void crash_no_call() { bg3le::install_crash_handler(); lua_State L; l_crash(&L); }
+#endif
+
 int main(int argc, char** argv) {
   prctl(PR_SET_DUMPABLE, 0);  // a scenario that dies leaves no core
   setvbuf(stdout, nullptr, _IOLBF, 0);
@@ -246,14 +290,41 @@ int main(int argc, char** argv) {
   else if (s == "released_during_call") released_during_call();
   else if (s == "push_dying") push_dying();
   else if (s == "counts") counts();
+#ifdef WITH_CRASH_LOG
+  else if (s == "crash_with_object") crash(l_crash_with_object);
+  else if (s == "crash_before_object") crash(l_crash);
+  else if (s == "crash_nested") crash(l_crash_nested);
+  else if (s == "crash_no_call") crash_no_call();
+#endif
   else { std::printf("FAIL no scenario %s\n", s.c_str()); return 2; }
   return fails != 0;
 }
 """
 
+STUB_LOG_H = """#pragma once
+namespace bg3le { void logf(const char* fmt, ...); void log_mark_crash(); }
+"""
+STUB_LOG_CPP = """#include "log.h"
+#include <cstdarg>
+#include <cstdio>
+namespace bg3le {
+void logf(const char* fmt, ...) {
+  va_list ap; va_start(ap, fmt); std::vfprintf(stdout, fmt, ap); va_end(ap); std::printf("\\n");
+}
+void log_mark_crash() {}
+}
+"""
+
+
 def cut(src, start, end):
     i = src.index(start)
     return src[i : src.index(end, i)]
+
+
+def crash_hook(src):
+    """The crash log's hook, from 0015 on."""
+    m = re.search(r'^extern "C" void bg3le_ui_log_crash_call\(.*?^}\n', src, re.DOTALL | re.MULTILINE)
+    return m.group(0) if m else ""
 
 
 @unittest.skipUnless((SUBMODULE / ".git").exists() and shutil.which("g++"), "submodule or g++ missing")
@@ -262,7 +333,7 @@ class UiRefsTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
-    def build(self, patches, name):
+    def build(self, patches, name, crash_log=False):
         root = Path(self.tmp.name) / name
         src = root / "bg3le"
         src.mkdir(parents=True)
@@ -274,17 +345,26 @@ class UiRefsTest(unittest.TestCase):
                 if line.startswith("+++ b/")
             }
         )
-        archive = subprocess.run(["git", "archive", "HEAD", *touched], cwd=SUBMODULE, check=True, capture_output=True).stdout
+        archive = subprocess.run(
+            ["git", "archive", "HEAD", "src/stackdump.h", *touched], cwd=SUBMODULE, check=True, capture_output=True
+        ).stdout
         subprocess.run(["tar", "-x"], cwd=src, input=archive, check=True)
         subprocess.run(["git", "init", "-q"], cwd=src, check=True)
         for p in patches:
             subprocess.run(["git", "apply", str(p)], cwd=src, check=True)
         inl = (src / INL).read_text()
         cpp = root / "refs.cpp"
-        cpp.write_text(HARNESS.replace("SECTIONS", "\n".join(cut(inl, a, b) for a, b in SECTIONS)))
+        code = HARNESS.replace("SECTIONS", "\n".join(cut(inl, a, b) for a, b in SECTIONS))
+        cpp.write_text(code.replace("HOOKS", crash_hook(inl)))
         exe = root / "refs"
+        cmd = ["g++", "-std=c++20", "-O1", "-pthread", "-w", "-o", str(exe), str(cpp)]
+        if crash_log:
+            (root / "log.h").write_text(STUB_LOG_H)
+            (root / "log.cpp").write_text(STUB_LOG_CPP)
+            cmd += ["-DWITH_CRASH_LOG", "-rdynamic", "-include", "cstdint", f"-I{root}", f"-I{src / 'src'}"]
+            cmd += [str(src / "src" / "stackdump.cpp"), str(root / "log.cpp"), "-ldl"]
         res = subprocess.run(
-            ["g++", "-std=c++20", "-O1", "-pthread", "-w", "-o", str(exe), str(cpp)],
+            cmd,
             capture_output=True,
             text=True,
             check=False,
@@ -313,6 +393,39 @@ class UiRefsTest(unittest.TestCase):
         res = self.run_scenario(exe, "push_dying")
         self.assertEqual(res.returncode, 1, res.stdout + res.stderr)
         self.assertIn("FAIL its count stays 0", res.stdout)
+
+    def test_the_crash_log_names_the_call(self):
+        exe = self.build(ALL_PATCHES, "crash", crash_log=True)
+
+        res = self.run_scenario(exe, "crash_with_object")
+        self.assertEqual(res.returncode, -signal.SIGSEGV, res.stdout + res.stderr)
+        object_at = re.search(r"^object (0x[0-9a-f]+)$", res.stdout, re.MULTILINE)
+        self.assertIsNotNone(object_at, res.stdout)
+        assert object_at is not None
+        call = re.search(
+            r"^crash: Ext\.UI call 0: (\S+) key 'Text' object (\S+) class 'StubButton' boxed 1 counted 1$",
+            res.stdout,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(call, res.stdout)
+        assert call is not None
+        self.assertIn("l_crash_with_object", call.group(1))
+        self.assertEqual(call.group(2), object_at.group(1))
+        self.assertIn("word at +8 2", res.stdout)  # the box's reference and the call's
+        self.assertLess(res.stdout.index("Ext.UI call 0"), res.stdout.index("crash:   pc"))  # before what can fault
+
+        res = self.run_scenario(exe, "crash_before_object")
+        self.assertEqual(res.returncode, -signal.SIGSEGV, res.stdout + res.stderr)
+        self.assertRegex(res.stdout, r"Ext\.UI call 0: \S*l_crash\S* key 'Text' object \(nil\) class '\?' boxed 0")
+
+        res = self.run_scenario(exe, "crash_nested")
+        self.assertEqual(res.returncode, -signal.SIGSEGV, res.stdout + res.stderr)
+        self.assertRegex(res.stdout, r"Ext\.UI call 0: \S*l_crash_with_object\S* key 'Inner'")
+        self.assertRegex(res.stdout, r"Ext\.UI call 1: \S*l_crash_nested\S* key 'Text'")
+
+        res = self.run_scenario(exe, "crash_no_call")
+        self.assertEqual(res.returncode, -signal.SIGSEGV, res.stdout + res.stderr)
+        self.assertIn("crash: no Ext.UI call on this thread", res.stdout)
 
 
 if __name__ == "__main__":

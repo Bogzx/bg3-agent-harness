@@ -59,6 +59,7 @@ namespace bg3le { static void logf(char const* fmt, ...) {
 } }
 namespace Noesis { namespace bg3le_ui {
 struct CallRefs {};  // 0014: a call's references (tools/test_bg3le_ui_refs.py)
+struct CallScope { CallScope(lua_State*, lua_CFunction) {} };  // 0015: the crash log's note
 GLOBALS
 FUNCS
 } }
