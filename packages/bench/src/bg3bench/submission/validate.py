@@ -584,6 +584,8 @@ def t04_beats(b: Loaded, ticket: Json) -> Outcome:
             return False, f"beat {beat['s']}: the root doesn't recompute (a committed line differs)"
         if beat.get("e") and beat["r"] != env["ticket"]["root"]:
             return False, "the end's root isn't the bundle's"
+    if not any(beat.get("e") for beat in beats):  # skipping it would leave the newest lines editable
+        return False, "the server holds no end for this ticket"
     return _t04_streams(b, ticket)
 
 

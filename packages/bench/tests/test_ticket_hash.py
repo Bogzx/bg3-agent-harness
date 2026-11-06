@@ -318,8 +318,11 @@ def named(run: validate.Loaded, s: int, a: float, off: float = 0, only: tuple[st
     return {"s": s, "a": a, "l": lines, "r": ticket_hash.root_at(NONCE, run.raw, lines)}
 
 
-def rooted(bs: list[dict]) -> dict:
-    return {**ticket_of(bs), "nonce": NONCE}
+def rooted(run: validate.Loaded, bs: list[dict]) -> dict:
+    """What the server stores: these beats, then the end over the whole files."""
+    lines = ticket_hash.counts(run.raw)
+    end = {"s": len(bs), "a": bs[-1]["a"] + 30, "l": lines, "r": run.envelope["ticket"]["root"], "e": 1}
+    return {**ticket_of([*bs, end]), "nonce": NONCE}
 
 
 FACTS_ONLY = (ticket_hash.FACTS,)
@@ -328,13 +331,13 @@ FACTS_ONLY = (ticket_hash.FACTS,)
 def test_a_stream_silent_for_491_s_passes():
     """Nothing to commit in a quiet stream: the count stays where it was and no line is older than it."""
     run = with_rolls(run_of(every_10s(1200)), [10, 501, 1100])
-    t = rooted([named(run, i, T0 + x) for i, x in enumerate(range(60, 1201, 60))])
+    t = rooted(run, [named(run, i, T0 + x) for i, x in enumerate(range(60, 1201, 60))])
     assert validate.t04_beats(run, t) == (True, "")
 
 
 def test_a_stream_left_out_of_the_beats_fails_t04():
     run = with_rolls(run_of(every_10s(1200)), [10, 501, 1100])
-    t = rooted([named(run, i, T0 + x, only=FACTS_ONLY) for i, x in enumerate(range(60, 1201, 60))])
+    t = rooted(run, [named(run, i, T0 + x, only=FACTS_ONLY) for i, x in enumerate(range(60, 1201, 60))])
     ok, why = validate.t04_beats(run, t)
     assert ok is False and "beat 4" in why and "rolls.jsonl" in why  # T0 + 300: the first with a line 240 s old
     assert validate.t05_times(run, t) == (True, "")  # the newest line of any stream looks fresh
@@ -344,7 +347,7 @@ def test_a_stream_left_out_of_the_beats_fails_t04():
 @pytest.mark.parametrize("delay,ok", [(250, True), (251, False)])
 def test_a_line_may_wait_240_s_on_the_servers_clock(off, delay, ok):
     run = with_rolls(run_of(every_10s(600)), [10])
-    t = rooted([named(run, 0, T0 + 60 + off, off, FACTS_ONLY), named(run, 1, T0 + delay + off, off, FACTS_ONLY)])
+    t = rooted(run, [named(run, 0, T0 + 60 + off, off, FACTS_ONLY), named(run, 1, T0 + delay + off, off, FACTS_ONLY)])
     assert validate.t04_beats(run, t)[0] is ok
 
 
@@ -352,18 +355,20 @@ def test_a_line_may_wait_240_s_on_the_servers_clock(off, delay, ok):
 def test_a_late_time_on_early_lines_does_not_excuse_the_lines_after_them(xs):
     """It would under a running maximum: moving one `t` forward would leave the whole stream uncommitted."""
     run = with_rolls(run_of(every_10s(600)), xs)
-    t = rooted([named(run, 0, T0 + 60, only=FACTS_ONLY), named(run, 1, T0 + 300, only=FACTS_ONLY)])
+    t = rooted(run, [named(run, 0, T0 + 60, only=FACTS_ONLY), named(run, 1, T0 + 300, only=FACTS_ONLY)])
     ok, why = validate.t04_beats(run, t)
     assert ok is False and "rolls.jsonl" in why
 
 
 def test_a_beat_past_run_end_is_not_held_to_it():
     run = with_rolls(run_of(every_10s(600)), [590])
-    t = rooted([named(run, 0, T0 + 300, only=FACTS_ONLY), named(run, 1, T0 + 900, only=FACTS_ONLY)])
+    t = rooted(run, [named(run, 0, T0 + 300, only=FACTS_ONLY), named(run, 1, T0 + 900, only=FACTS_ONLY)])
     assert validate.t04_beats(run, t) == (True, "")
 
 
-def test_beats_that_cover_no_line_and_no_end_fail_t04():
+def test_beats_and_an_end_that_cover_no_line_fail_t04():
     run = with_rolls(run_of(every_10s(600)), [10])
-    ok, why = validate.t04_beats(run, rooted([named(run, 0, T0 + 60, only=())]))
+    run = dataclasses.replace(run, envelope={"ticket": {"nonce": NONCE, "root": ticket_hash.root([])}})
+    empty = named(run, 0, T0 + 60, only=())
+    ok, why = validate.t04_beats(run, {**ticket_of([empty, {**empty, "s": 1, "e": 1}]), "nonce": NONCE})
     assert ok is False and "no beat or end covers a line" in why

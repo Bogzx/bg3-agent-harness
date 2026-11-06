@@ -10,6 +10,7 @@ from urllib import error as urlerror
 
 import pytest
 from test_submission_validate import FIGHT, good_run, jsonl, release_for, write_jsonl
+from test_tickets import Local
 
 from bg3bench import tickets
 from bg3bench.serve import panel, submit, video
@@ -276,6 +277,18 @@ def test_http_site_takes_the_access_headers_from_the_environment(monkeypatch):
         "CF-Access-Client-Id": "id.access",
         "CF-Access-Client-Secret": "secret",
     }
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_http_site_follows_no_redirect_so_the_token_and_the_access_secret_stay_there(monkeypatch, status):
+    """No API route redirects (the site's only ones are /auth/*): a redirect here is Access's login page."""
+    monkeypatch.setenv(tickets.ACCESS_ID_ENV, "id")
+    monkeypatch.setenv(tickets.ACCESS_SECRET_ENV, "secret")
+    with Local(200) as other, Local(status, other.url + "/login") as site:
+        client = submit.HttpSite(site.url)
+        assert client.post_submission("t", b"archive")[0] == status
+        assert client.get_submission("t", "sub1")[0] == status
+    assert len(site.seen) == 2 and other.seen == []
 
 
 def test_http_site_errors_and_status():

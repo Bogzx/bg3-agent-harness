@@ -170,7 +170,7 @@ class HttpSite:
     environment, for a site behind Cloudflare Access (staging)."""
 
     base: str
-    urlopen: Open = urlrequest.urlopen
+    urlopen: Open = tickets.open_url
     headers: Mapping[str, str] = field(default_factory=lambda: tickets.access_headers(os.environ))
 
     def _call(self, req: urlrequest.Request) -> tuple[int, dict[str, Any]]:

@@ -184,16 +184,17 @@ def test_a_line_edited_after_the_last_beat_and_signed_again_fails_on_the_end(tic
     assert ok_of(v, "T03") is True and ok_of(v, "T04") is False
 
 
-def test_the_last_interval_is_committed_only_by_the_end(tmp_path):
-    """The contract's honest limit: with no end stored, nothing on the server holds the lines after the last beat."""
+def test_a_ticket_with_no_end_fails_t04_so_skipping_it_leaves_no_line_editable(tmp_path):
+    """With no end stored, nothing on the server holds the lines after the last beat: this edit passes every other check."""
     d = good_run(tmp_path, FIGHT)
     bdir = pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1), video=VIDEO | {"duration_s": 432.6}).bundle_dir
     ticket = server_ticket(bdir, end=False)
     edit_line(bdir, "S001.events.jsonl", -2)
     rehash(bdir)
     sign(bdir)
-    release = dataclasses.replace(release_for(d), tickets={"version": 1})
-    assert ok_of(job(bdir, release, ticket), "T04") is True
+    v = job(bdir, dataclasses.replace(release_for(d), tickets={"version": 1}), ticket)
+    assert ok_of(v, "T04") is False and "no end" in detail_of(v, "T04") and not v.accepted
+    assert v.failed == ["T04"]
 
 
 def left_out(bdir: Path, ticket: dict, *names: str) -> dict:
@@ -220,9 +221,8 @@ def test_facts_left_out_of_the_beats_and_edited_fail_t04(ticketed):
     edit_line(bdir, ticket_hash.FACTS, 3)
     rehash(bdir)
     sign(bdir)
-    v = job(bdir, release, forged)
+    v = job(bdir, release, forged)  # sent no end: the next test sends one
     assert ok_of(v, "T03") is True and ok_of(v, "T04") is False and not v.accepted
-    assert ticket_hash.FACTS in detail_of(v, "T04")
 
 
 def test_facts_left_out_with_an_end_sent_after_the_edit_fail_t04(ticketed):
