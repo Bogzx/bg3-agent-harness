@@ -72,6 +72,10 @@ CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard")
 LEVELS = (1, 2)  # the arena's level: what the twins read after MakePlayer (setup fails on any other)
 TIERS = (2, 5, 12)  # a build file's level (arena-4v4-builds.md; arena.setup's tier-XP step: mirror.party_xp)
 PREPARERS = ("Cleric", "Wizard")  # prepare casting-modifier + level spells (min 1) from what they have
+# A preparer whose spells are all selector picks (no class row AddSpells a spell list): its kit adds only the prepared
+# picks, so a copy's book is what the build plays. A Cleric's class rows add its whole list, which no call removes (S1
+# P3): its `prepared` stays in the kit, named not_applied by arena.mirror_kit.
+PICKS_ARE_ITS_BOOK = ("Wizard",)
 ALL_ABILITIES = "b9149c8e-52c8-46e5-9cb6-fc39301c05fe"  # the AbilityList every ASI and the +2/+1 pick from
 ENCHANT = {5: 1, 12: 2}  # a tier's items: each weapon and armour as its +N entry (<item>_N) where the game has one
 EXTRA_POTIONS = {5: ("OBJ_Potion_Healing_Greater",), 12: ("OBJ_Potion_Healing_Greater", "OBJ_Potion_Healing_Superior")}
@@ -431,9 +435,12 @@ def kit_plan(
             raise SpecError(
                 f"{what}: {x['kind']} has {n}, the game's selector takes {'' if x['exact'] else '1..'}{x['n']}"
             )
-        if x.pop("pool"):
+        x["from_pool"] = x.pop("pool")
+        if x["from_pool"]:
             pool += x["ids"]
     race, rpart, rchoices, fixed = race_plan(kit, static, what)
+    book_only = cls in PICKS_ARE_ITS_BOOK and kit.get("prepared") is not None
+    pool_picks = [x for x in choices if x.pop("from_pool", False)]
     bg = kit.get("background")
     player = list(PLAYER_PASSIVES)
     if bg is not None:
@@ -484,6 +491,10 @@ def kit_plan(
             raise SpecError(f"{what}: prepared {', '.join(bad)} is not a spell the {cls} has to prepare")
     elif prepared is not None:
         raise SpecError(f"{what}: {cls} doesn't prepare spells (prepared must be left out)")
+    if book_only:
+        for x in pool_picks:
+            x["ids"], x["exact"] = [i for i in x["ids"] if i in prepared], False
+        choices = [x for x in choices if x["ids"]]
     out_kit: dict[str, Any] = {
         "race": rpart,
         "player": {"passives": player},
@@ -501,7 +512,7 @@ def kit_plan(
         }
         if grants["passives_removed"]:  # a Berserker's RageFrenzyUnlock replaces the class row's RageUnlock
             out_kit["grants"]["passives_removed"] = grants["passives_removed"]
-    if prepared is not None:
+    if prepared is not None and not book_only:
         out_kit["prepared"] = list(prepared)
     return {"race": race, "kit": out_kit}
 

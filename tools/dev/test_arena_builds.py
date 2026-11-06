@@ -291,8 +291,10 @@ class TierTest(unittest.TestCase):
 
     def test_no_mirror_section_while_a_builds_hireling_template_is_unread(self):
         names = [(f"Red {n}", f"Blue {n}") for n in ("Ash", "Birch", "Cedar", "Dune")]
+        unread = copy.deepcopy(STATIC)
+        unread["hirelings"]["Cleric"]["template"] = None
         with self.assertRaisesRegex(ab.BuildError, "build cleric: the Cleric hireling's root template is not read"):
-            ab.mirror_section(ab.check_builds(tier(2)), names)
+            ab.mirror_section(ab.check_builds(tier(2)), names, unread)
 
     def test_l2_kits_without_a_subclass_or_preparer_are_unchanged_in_shape(self):
         k = plan(tier(2), "rogue")
@@ -366,13 +368,6 @@ def ref_of(b: dict[str, Any], **over: Any) -> dict[str, Any]:
     } | over
 
 
-def with_templates() -> dict[str, Any]:
-    st = copy.deepcopy(STATIC)
-    for c, h in st["hirelings"].items():
-        h["template"] = h.get("template") or f"tpl-{c}"
-    return st
-
-
 NAMES4 = [("Red Ash", "Blue Ash"), ("Red Bay", "Blue Bay"), ("Red Elm", "Blue Elm"), ("Red Oak", "Blue Oak")]
 
 
@@ -387,7 +382,7 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
     def test_the_mirror_section_has_party_xp_and_each_read_reference(self):
         d = tier(5)
         d["builds"][0]["reference"] = ref_of(d["builds"][0])
-        m = ab.mirror_section(ab.check_builds(d), NAMES4, with_templates())["mirror"]
+        m = ab.mirror_section(ab.check_builds(d), NAMES4, STATIC)["mirror"]
         self.assertEqual(m["party_xp"], {"total": 6500, "below": 13000})
         self.assertEqual(
             m["pairs"][0]["reference"], {"profile": d["builds"][0]["reference"]["profile"], "accepted": []}
@@ -413,12 +408,12 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
     def test_arena_file_takes_the_bases_rules_and_the_builds_and_checks_the_spawns(self):
         base = json.loads((REPO / "packages/bench/arenas/arena-v0.1.json").read_text())
         a = ab.arena_file(ab.check_builds(tier(5)), base, "arena-4v4-l5", NAMES4, [213.0, 10.98, 288.0],
-                          [213.0, 10.98, 296.0], with_templates())  # fmt: skip
+                          [213.0, 10.98, 296.0], STATIC)  # fmt: skip
         self.assertEqual((a["level"], a["save"], a["name"]), (5, base["save"], "arena-4v4-l5"))
         self.assertEqual(a["location"]["level"], base["location"]["level"])
         self.assertIn("draft", a)  # a draft build file can't make a playable arena
         with self.assertRaisesRegex(mas.SpecError, "height"):
-            ab.arena_file(tier(5), base, "x", NAMES4, [0.0, 0.0, 0.0], [0.0, 1.0, 8.0], with_templates())
+            ab.arena_file(tier(5), base, "x", NAMES4, [0.0, 0.0, 0.0], [0.0, 1.0, 8.0], STATIC)
         sys.path.insert(0, str(REPO / "packages/bench/src"))
         from bg3bench import arena as barena
 
@@ -471,6 +466,27 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
         self.assertEqual(k["grants"]["passives_removed"], ["RageUnlock"])
         self.assertIn(["TotemSpirit_Bear"], [c["ids"] for c in k["choices"] if c["kind"] == "passives"])
         self.assertNotIn("passives_removed", plan(tier(5), "fighter")["grants"])
+
+    def test_a_wizards_kit_adds_only_its_prepared_picks_and_a_clerics_keeps_prepared_for_the_mod_to_name(self):
+        for lv, n in ((2, 5), (5, 9), (12, 17)):
+            with self.subTest(level=lv):
+                d = tier(lv)
+                k, want = plan(d, "wizard"), set(tbuild(d, "wizard")["script"]["prepared"])
+                self.assertNotIn("prepared", k)
+                added = {i for c in k["choices"] if c["kind"] == "spells" and not c["exact"] for i in c["ids"]}
+                self.assertEqual(added, want)
+                self.assertEqual(len(want), n)
+                self.assertTrue(
+                    any(c["kind"] == "spells" and c["exact"] for c in k["choices"]), "the cantrips stay exact"
+                )
+                self.assertIn("prepared", plan(d, "cleric"))
+
+    def test_the_cleric_and_wizard_templates_are_read_and_the_races_are_their_builds(self):
+        m = ab.mirror_section(ab.check_builds(tier(2)), NAMES4)["mirror"]["pairs"]
+        self.assertEqual(m[1]["template"], "4b0a059b-4bae-4884-8bdf-a683c5f2cbea")
+        self.assertTrue(m[1]["race"].startswith("4fda6bce"))
+        self.assertEqual(m[2]["template"], "3d24f5eb-7220-4e00-bc02-3e6ac819ac26")
+        self.assertTrue(m[2]["race"].startswith("2cf6c770"))
 
     def test_no_build_on_a_team_holds_a_knock_down_source(self):
         banned = {"Target_Grease", "Projectile_IceKnife", "Zone_Thunderwave", "Target_HideousLaughter", "Target_Sleep",

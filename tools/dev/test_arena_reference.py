@@ -115,6 +115,14 @@ class PlanTest(unittest.TestCase):
                 with self.subTest(level=lv, build=bid):
                     self.assertEqual(len(ar.ui_plans(build(lv, bid), lv, STATIC)["level_ups"]), lv - 1)
 
+    def test_the_l2_fallback_team_has_plans_with_the_rangers_picks_at_level_2(self):
+        d = json.loads((REPO / "packages/bench/builds/l2_hirelings_v1.json").read_text())
+        plans = {b["id"]: ar.ui_plans(b, 2, STATIC) for b in d["builds"]}
+        self.assertEqual(sorted(plans), ["barbarian", "fighter", "ranger", "rogue"])
+        up = plans["ranger"]["level_ups"][0]["plan"]
+        self.assertEqual(up["spells"], ["Target_HuntersMark", "Target_CureWounds"])
+        self.assertEqual(up["passives"], ["FightingStyle_Archery"])
+
     def test_an_unlisted_subclass_is_refused_and_a_name_the_game_gave_none_too(self):
         b = build(5, "fighter") | {"subclass": "Champion"}
         with self.assertRaisesRegex(ar.RefStepError, "no page label for subclass Champion"):

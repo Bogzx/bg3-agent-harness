@@ -1,4 +1,4 @@
-"""A build's reference, live (website ops/logs/arena-4v4-builds.md S3, sheet ops/briefs/dev2/4v4-live-sheet.md): a hired
+"""A build's reference, live (website repo ops/logs/arena-4v4-builds.md S3; its briefs hold the 4v4 live sheet): a hired
 hireling at the tier's party XP, respecced by the build's script through the game's own pages, given the tier's gear and
 prepared spells; make_arena_save.py reference-read then stores its profile. $0, no model.
 

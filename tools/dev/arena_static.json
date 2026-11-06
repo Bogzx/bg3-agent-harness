@@ -1158,7 +1158,7 @@
    "passive": "Background_Sage"
   }
  },
- "hirelings_source": "Each class's hireling (route H's reference, A1 D411), read 2026-11-03 with tools/pak.py: Shared.pak Public/SharedDev/Origins/Origins.lsx Hireling_<Class> (UUID, RaceUUID, SubRaceUUID, BackgroundUUID, GlobalTemplate, LockRace true); Gustav.pak Mods/GustavDev/Globals/SYS_Hirelings/Characters/_merged.lsf S_GLO_Hirelings_<Class> (MapKey = GlobalTemplate, TemplateName = the root); Shared.pak Public/SharedDev/RootTemplates/_merged.lsf Hirelings_Stats_Player_<Class> (its ParentTemplateId) and Public/Shared/RootTemplates/_merged.lsf the parent's Race (BASE_HalfElves_Female_Wood, BASE_Humans_Female -> BASE_Humans, BASE_Dwarves_Female_Hill, BASE_Elves_Male_Drow_Seldarine). Live-read so far: only the Fighter's template race (live check 9, d9401d40 Race 76057327); arena.mirror_spawn refuses a template of another race, so the others fail closed until read.",
+ "hirelings_source": "Each class's hireling (route H's reference, A1 D411), read 2026-11-03 with tools/pak.py: Shared.pak Public/SharedDev/Origins/Origins.lsx Hireling_<Class> (UUID, RaceUUID, SubRaceUUID, BackgroundUUID, GlobalTemplate, LockRace true); Gustav.pak Mods/GustavDev/Globals/SYS_Hirelings/Characters/_merged.lsf S_GLO_Hirelings_<Class> (MapKey = GlobalTemplate, TemplateName = the root); Shared.pak Public/SharedDev/RootTemplates/_merged.lsf Hirelings_Stats_Player_<Class> (its ParentTemplateId) and Public/Shared/RootTemplates/_merged.lsf the parent's Race (BASE_HalfElves_Female_Wood, BASE_Humans_Female -> BASE_Humans, BASE_Dwarves_Female_Hill, BASE_Elves_Male_Drow_Seldarine). Live-read: the Fighter's template race (live check 9, d9401d40 Race 76057327), and the Cleric's and Wizard's templates and races with Ext.Template.GetAllRootTemplates (S1, 2026-11-06: Race 4fda6bce, 2cf6c770); arena.mirror_spawn refuses a template of another race, so the others fail closed until read.",
  "hirelings": {
   "Fighter": {
    "origin": "8078e34e-2dce-44ee-8072-072ac433350f",
@@ -1193,17 +1193,15 @@
    "origin": "db94d9bd-f4b6-4664-b592-c49d25fe7ad8",
    "race": "Elf_HighElf",
    "background": "Acolyte",
-   "template": null,
-   "template_name": null,
-   "todo": "the root template (S_GLO_Hirelings_<Class> TemplateName, a binary .lsf) is not read yet: arena.mirror_spawn needs it; read it live (Ext.Template) or with an .lsf reader"
+   "template": "4b0a059b-4bae-4884-8bdf-a683c5f2cbea",
+   "template_name": "Hirelings_Stats_Player_Cleric"
   },
   "Wizard": {
    "origin": "2b5ac4dd-0b15-472c-b215-1f47fbbdfcbe",
    "race": "Gnome_Rock",
    "background": "Sage",
-   "template": null,
-   "template_name": null,
-   "todo": "the root template (S_GLO_Hirelings_<Class> TemplateName, a binary .lsf) is not read yet: arena.mirror_spawn needs it; read it live (Ext.Template) or with an .lsf reader"
+   "template": "3d24f5eb-7220-4e00-bc02-3e6ac819ac26",
+   "template_name": "Hirelings_Stats_Player_Wizard"
   }
  },
  "subclasses": {

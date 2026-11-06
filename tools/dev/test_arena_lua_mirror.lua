@@ -907,14 +907,36 @@ test("a kit's grants: one AddBoosts, the passives, the removed ones, the spells,
         eq(enc(j.result.not_applied), enc({}), "nothing left out")
     end))
 
-test("a kit's parts with no game call yet are named in the result; a part nothing reads is refused at the call",
+test("a kit's subclass: both twins' class row written, replicated, read back; a row count or read-back off fails",
+    guarded(function()
+        twin(T1, { stats = "x" })
+        twin(T2, { stats = "x" })
+        for _, u in ipairs({ T1, T2 }) do world[u].comps.Classes = { Classes = { { ClassUUID = "c", Level = 5 } } } end
+        replicated = {}
+        local j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit({ subclass = "life" }) }).job]
+        runJob(j)
+        eq(j.status, "done", tostring(j.error))
+        eq(enc({ world[T1].comps.Classes.Classes[1].SubClassUUID, world[T2].comps.Classes.Classes[1].SubClassUUID }),
+            enc({ "life", "life" }), "written")
+        eq(enc(replicated), enc({ T1 .. ":Classes", T2 .. ":Classes" }), "replicated")
+        eq(enc(j.result.not_applied), enc({}), "applied")
+        local c = world[T2].comps.Classes.Classes
+        c[2] = { ClassUUID = "d", Level = 1 }
+        twin(T1, { stats = "x" })
+        world[T1].comps.Classes = { Classes = { { ClassUUID = "c" } } }
+        j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit({ subclass = "life" }) }).job]
+        runJob(j)
+        eq(j.status, "failed", "two rows")
+    end))
+
+test("a kit's prepared has no game call: named in the result; a part nothing reads is refused at the call",
     guarded(function()
         twin(T1, { stats = "x" })
         twin(T2, { stats = "x" })
         local j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF,
-            kit = kit({ subclass = "life-uuid", prepared = { "Target_HealingWord" } }) }).job]
+            kit = kit({ prepared = { "Target_HealingWord" } }) }).job]
         runJob(j)
-        eq(enc(j.result.not_applied), enc({ "subclass", "prepared" }), "named")
+        eq(enc(j.result.not_applied), enc({ "prepared" }), "named")
         local ok, err = pcall(Ar.Mirror.kit, { twins = { T1, T2 }, race = HALFELF, kit = kit({ feats = {} }) })
         eq(ok, false, "refused")
         assert(tostring(err):find("nothing applies: feats", 1, true), tostring(err))

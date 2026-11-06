@@ -5,7 +5,7 @@
  "tier": "L5",
  "level": 5,
  "game_build": "25605617",
- "draft": "no reference profiles yet (plan S3: one respecced hireling per build at this level); the Cleric and Wizard hireling templates are not read yet, and the kit's subclass, improvement and prepared-spell parts are not in arena.mirror_kit yet (website repo ops/logs/arena-4v4-builds.md G5, G10) (2026-11-04)",
+ "draft": "no reference profiles yet (plan S3: one respecced hireling per build at this level); a Cleric copy's book is its whole class list and nothing limits it to the build's prepared spells (website repo ops/logs/arena-4v4-S1-sheet.md P3, ops/logs/arena-4v4-tests.md) (2026-11-06)",
  "builds": [
   {
    "id": "fighter",

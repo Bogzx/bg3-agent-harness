@@ -31,9 +31,11 @@
 --       exact, else 1..n (a wizard's prepared spells out of its spellbook selector)
 --     items = [{item, root, count, equip}]: TemplateAddTo(root, twin, count); the item shows in an inventory a tick
 --       later (live check 12 step 7), then Equip(twin, item, 1, 0, 1) when equip (Equip takes 5 arguments)
---     subclass (uuid), prepared (spell ids): no game call applies these to a copy yet (website ops/logs/
---       arena-4v4-builds.md P2, P3). The job's result names them as not_applied; a build's reference compare then shows
---       what a twin lacks. A kit key nobody reads is refused, so a part can't be dropped without a word.
+--     subclass (uuid): written to the copy's one Classes row and replicated (S1 P2: the game grants nothing for it, the
+--       kit's grants do; it reads back on both contexts and held 18 min). A read-back that differs fails the job.
+--     prepared (spell ids): no game call limits a copy to them (S1 P3: a Cleric copy's book is its class list, all
+--       AlwaysPrepared, and nothing removes a spell). The job's result names it as not_applied; a build's reference
+--       compare then shows what differs. A kit key nobody reads is refused, so a part can't be dropped without a word.
 --   Refused at the call, nothing applied, when a twin is missing or a choice fails its list; the job fails, nothing
 --   applied, when a ready twin is not of `race` or already holds items, or a twin isn't ready in READY_WAIT_MS.
 --   -> job result {twins, calls, not_applied = [kit keys]}
@@ -66,7 +68,7 @@ M.LISTS = { skills = { "SkillList", "Skills" }, expertise = { "SkillList", "Skil
 
 M.KIT_KEYS = { race = true, player = true, ability_bonus = true, grants = true, choices = true, items = true,
     subclass = true, prepared = true }
-M.NOT_APPLIED = { "subclass", "prepared" } -- kit keys with no game call yet (P2, P3)
+M.NOT_APPLIED = { "prepared" } -- kit keys with no game call (S1 P3)
 
 local function osi(fn, ...) return V.osi(fn, ...) end
 local function now_ms() return Ext.Utils.MonotonicTime() end
@@ -203,8 +205,21 @@ local function checkChoice(c, i)
     end
 end
 
+-- The copy's subclass field (S1 P2), read back; recorded with the calls.
+local function setSubclass(calls, u, id)
+    local e = V.entity(u)
+    local rows = U.items(e.Classes.Classes)
+    if #rows ~= 1 then error(("%s has %d class rows, a copy has one"):format(u, #rows), 0) end
+    e.Classes.Classes[1].SubClassUUID = id
+    e:Replicate("Classes")
+    local now = tostring(e.Classes.Classes[1].SubClassUUID)
+    if now ~= id then error(("%s's subclass reads %s after the write of %s"):format(u, now, id), 0) end
+    calls[#calls + 1] = { "SubClassUUID", u, id }
+end
+
 -- The non-item calls for one twin, in the kit's order.
 local function applyChoices(calls, u, kit)
+    if kit.subclass then setSubclass(calls, u, kit.subclass) end
     local race = kit.race or {}
     if race.boosts and race.boosts ~= "" then call(calls, "AddBoosts", { u, race.boosts, M.SOURCE, u }) end
     for _, p in ipairs(race.passives or {}) do call(calls, "AddPassive", { u, p }) end
@@ -233,7 +248,7 @@ end
 
 -- What keeps a twin from being kitted yet ("" when it is ready), or error when a ready twin can't be kitted.
 local KIT_COMPONENTS = { "BoostsContainer", "PassiveContainer", "SpellBook" } -- AddBoosts, AddPassive, AddSpell
-local function notReady(u, race)
+local function notReady(u, race, kit)
     local e = V.entity(u)
     if not e then return "no entity" end
     local r = read(function() return tostring(e.Race.Race) end)
@@ -242,6 +257,7 @@ local function notReady(u, race)
     for _, c in ipairs(KIT_COMPONENTS) do
         if not read(function() return e[c] ~= nil end) then return "no " .. c end
     end
+    if kit.subclass and not read(function() return e.Classes.Classes ~= nil end) then return "no Classes" end
     local p = Ar.Symmetry.profile(u)
     if not (p.equipment and p.inventory) then return "items don't read" end
     if next(p.equipment) or #p.inventory > 0 then error(u .. " already holds items: the kit starts empty", 0) end
@@ -252,7 +268,7 @@ end
 local function start(job)
     local why = {}
     for _, u in ipairs(job.twins) do
-        local ok, w = pcall(notReady, u, job.race)
+        local ok, w = pcall(notReady, u, job.race, job.kit)
         if not ok then
             RPC.finish_job(job, "failed", { twins = job.twins, calls = job.calls }, tostring(w))
             return
@@ -325,6 +341,7 @@ function M.kit(args)
         if not M.KIT_KEYS[k] then error("the kit has a part nothing applies: " .. tostring(k), 0) end
     end
     checkGrants(kit.grants)
+    if kit.subclass ~= nil and type(kit.subclass) ~= "string" then error("the kit's subclass must be its uuid", 0) end
     for i, u in ipairs(twins) do
         u = V.uuid(u)
         if not (u and V.entity(u)) then error("no twin " .. tostring(args.twins[i]), 0) end
