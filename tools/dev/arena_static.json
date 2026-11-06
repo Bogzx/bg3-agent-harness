@@ -1205,19 +1205,6 @@
     }
    ]
   },
-  "Drow": {
-   "race": "4f5d1434-5175-4fa9-b7dc-ab24fba37929",
-   "rows": [
-    {
-     "race": "Drow",
-     "table": "a43498f5-d72f-4a05-b721-1feea9acb3ad",
-     "uuid": "4a634f24-bdcb-4559-b8be-7847133ad1c3",
-     "Boosts": "ActionResource(Movement,9,0);ProficiencyBonus(Skill,Perception)",
-     "PassivesAdded": "Drow_DrowWeaponTraining;SuperiorDarkvision;FeyAncestry",
-     "Selectors": "AddSpells(d707ec70-da8a-457b-9b69-7cf5205eef0e,,Charisma,,AlwaysPrepared)"
-    }
-   ]
-  },
   "Elf_HighElf": {
    "race": "4fda6bce-0b91-4427-901f-690c2d091c47",
    "rows": [
@@ -1370,8 +1357,7 @@
    "template": "15e83382-c44d-447d-874e-5426e8ed7694",
    "template_name": "Hirelings_Stats_Player_Ranger",
    "race": "Drow_Seldarine",
-   "background": "Criminal",
-   "todo": "the origin names race Drow (4f5d1434) and no subrace, its template's parent is Drow_Seldarine (4d30b4f9): which one a hired, respecced Ranger reads is a live read (route-H probe); the kit's rows are the same either way (Seldarine's level-1 row is empty)"
+   "background": "Criminal"
   },
   "Cleric": {
    "origin": "db94d9bd-f4b6-4664-b592-c49d25fe7ad8",

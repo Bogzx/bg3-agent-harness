@@ -10,8 +10,9 @@ through spells, statuses and passives.
 CI has no paks, so the graph is checked in: per stats entry, what it refers to and what it does against the bar.
 test_arena_scan.py walks every build over it. An id the graph lacks fails: regenerate it.
 
-Not seen: the common actions every copy's book holds (Shove and so on), and surfaces made other than by CreateSurface.
-A live book read is the real check.
+Not seen: the common actions every copy's book holds (Shove and so on), surfaces made other than by CreateSurface, and
+summons: the walk stops at a summon's spell (Find Familiar, Dancing Lights), and what the summon can do is in its
+template, unread here. A live book read is the real check.
 """
 
 from __future__ import annotations

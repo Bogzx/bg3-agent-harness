@@ -90,6 +90,10 @@ new entry "Turncoat"
 type "StatusData"
 data "Boosts" "FactionOverride(Source)"
 
+new entry "Thrall"
+type "StatusData"
+data "StatusGroups" "SG_Dominated;SG_Condition"
+
 new entry "Crook"
 type "Weapon"
 data "BoostsOnEquipMainHand" "UnlockSpell(Trip)"
@@ -128,6 +132,7 @@ class Parse(unittest.TestCase):
         self.assertEqual(scan.hits(e, "Slick"), ["knock-down: CreateSurface(4,10,Grease)"])
         self.assertEqual(scan.hits(e, "Rimed"), ["knock-down: CreateSurface(2,2,WaterFrozen)"])
         self.assertEqual(scan.hits(e, "Turncoat"), ["side: FactionOverride in Boosts"])
+        self.assertEqual(scan.hits(e, "Thrall"), ["side: SG_Dominated"])
         for clean in ("Base", "Guarded", "HURT", "NOPE"):  # a look, a condition, a removal, a dialogue charm
             self.assertEqual(scan.hits(e, clean), [], clean)
 

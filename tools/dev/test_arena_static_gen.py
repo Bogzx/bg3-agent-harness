@@ -44,7 +44,7 @@ def row(table: str, level: int, uuid: str, **kw: str) -> tuple[str, dict[str, st
     )
 
 
-def game(tmp: Path, *, shared_rows=(), dev_rows=(), x_rows=()) -> Path:
+def game(tmp: Path, *, shared_rows=(), dev_rows=(), x_rows=(), subrace=SUB) -> Path:
     """A Data folder: Shared.pak (Shared + SharedDev), Gustav.pak (GustavDev), GustavX.pak."""
     fighter_rows = [
         row(
@@ -110,7 +110,7 @@ def game(tmp: Path, *, shared_rows=(), dev_rows=(), x_rows=()) -> Path:
                         "Name": "Hireling_Fighter",
                         "UUID": ORIGIN,
                         "RaceUUID": RACE,
-                        "SubRaceUUID": SUB,
+                        "SubRaceUUID": subrace,
                         "BackgroundUUID": BG,
                     },
                     [],
@@ -202,6 +202,24 @@ def test_race_rows_parent_first_background_hireling_feats_lists_and_xp_totals(tm
     }  # comma-separated
     assert g["lists"][SKILLS]["ids"] == ["Athletics", "Perception"]
     assert g["xp"]["2"] == 100 and g["xp"]["3"] == 300 and g["xp"]["12"] == sum(i * 100 for i in range(1, 12))
+
+
+def test_a_hirelings_template_gives_the_subrace_its_origin_leaves_out(tmp_path, monkeypatch):
+    (tmp_path / "a").mkdir()
+    assert run(tmp_path / "a", subrace="")["hirelings"]["Fighter"]["race"] == "HalfElf"
+    monkeypatch.setattr(gen, "TEMPLATE_SUBRACE", {"Fighter": "HalfElf_Wood"})
+    (tmp_path / "b").mkdir()
+    g = run(tmp_path / "b", subrace="")
+    assert g["hirelings"]["Fighter"]["race"] == "HalfElf_Wood"
+    assert [r["race"] for r in g["races"]["HalfElf_Wood"]["rows"]] == ["HalfElf", "HalfElf_Wood"]
+    assert g["races"]["HalfElf_Wood"]["race"] == SUB
+
+
+def test_the_static_files_hirelings_agree_with_the_generators_template_races():
+    static = json.loads(gen.STATIC.read_text())
+    for cls, race in gen.TEMPLATE_SUBRACE.items():
+        assert static["hirelings"][cls]["race"] == race
+        assert [r["race"] for r in static["races"][race]["rows"]] == ["Drow", race]
 
 
 def test_a_later_modules_row_at_the_same_level_replaces_one_module_twice_is_an_error(tmp_path):

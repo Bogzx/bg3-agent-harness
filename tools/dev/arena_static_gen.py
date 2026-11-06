@@ -46,6 +46,9 @@ MODULES = ("Shared", "SharedDev", "Gustav", "GustavDev", "GustavX")
 CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard", "Bard")
 MAX_LEVEL = 12
 POTIONS = ("OBJ_Potion_Healing", "OBJ_Potion_Healing_Greater", "OBJ_Potion_Healing_Superior")
+# A hireling whose origin names only the parent race: the character's race is its template's, in a binary .lsf. Read
+# live: a hired Ranger reads 4d30b4f9 before and after its respec (2026-11-06, its reference), the origin says Drow.
+TEMPLATE_SUBRACE = {"Ranger": "Drow_Seldarine"}
 KIT_WEAPONS = ("WPN_Dagger",)  # make_arena_save.KIT_ADDS: in no EQP_CC, so named here with their _1/_2
 NULL = "00000000-0000-0000-0000-000000000000"
 SOURCE = (
@@ -265,6 +268,8 @@ def generate(files: Files, classes: tuple[str, ...] = CLASSES) -> dict[str, Any]
         o = hire[c]
         race = races[o["RaceUUID"]]
         sub = races.get(o.get("SubRaceUUID") or NULL)
+        if c in TEMPLATE_SUBRACE:
+            sub = next(r for r in races.values() if r["Name"] == TEMPLATE_SUBRACE[c])
         rname = (sub or race)["Name"]
         bg = bgs[o["BackgroundUUID"]]
         bname = bg["Passives"].removeprefix("Background_")
