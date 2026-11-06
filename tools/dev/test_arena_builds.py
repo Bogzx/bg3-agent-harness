@@ -134,7 +134,7 @@ class BuildsTest(unittest.TestCase):
         d = doc()
         del d["draft"]
         for b in d["builds"]:
-            b.pop("reference", None)  # a live read may already be in the file
+            b["reference"] = None  # a live read may already be in the file
         with self.assertRaisesRegex(ab.BuildError, "build fighter: no reference profile"):
             ab.check_builds(d)
         for b in d["builds"]:
