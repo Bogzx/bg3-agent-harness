@@ -10,6 +10,7 @@ The matrix file (paths relative to the repo):
     allow_gaps = false                                # true: a pilot with conditions a run can't play exactly yet
     allow_unverified = false                          # true: profiles whose status is "offline" (never played live)
     order = "repeat"                                  # or "cell": every repeat of a cell before the next cell
+    ticket = "required"                               # optional: each run takes a ticket from the site (tickets.py)
 
     [budget]
     file = "runtime/budget.json"                      # the machine's shared budget (the default)
@@ -35,6 +36,10 @@ refused; one that has never played live ("offline", the default) only with allow
 A scenario that isn't ready (bench.scenario.not_ready: a save start without its save, or start.not_ready) gets no
 jobs: plan and run list it as skipped with the reason.
 
+`ticket = "required"` makes every attempt take a ticket from the site ($BG3BENCH_SITE) with the site token from its
+file: a suite whose release has `tickets` takes only such runs. Without the key the matrix plays as it always did, and
+its runs can't be submitted to that suite. A refused ticket stops the matrix before the run, as a refused start does.
+
 - plan: a dry run. The jobs as a table, the reserve, the budget left, the skipped scenarios and what a session run
   (conditions.session_gaps, per client) and play.py lack for each condition; writes nothing.
 - run: writes the plan (or keeps the same one) and runs it until done or a stop. `--runner session` (the default):
@@ -56,16 +61,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import tomllib
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TextIO, cast
 
 from bg3harness import diskguard, profiles
 
-from bg3bench import conditions, matrix, scenario
+from bg3bench import conditions, matrix, scenario, tickets
 from bg3bench.adapters import legacy_cli, play_flags, session_run
 from bg3bench.submission import start_states
 
@@ -74,6 +80,7 @@ SESSIONS = Path("runtime/sessions")
 SCENARIOS = Path("packages/bench/scenarios")  # the v2 set
 GROUP_KEYS = ("models", "scenarios", "conditions", "repeats")
 ORDERS = ("repeat", "cell")
+TICKET_REQUIRED = "required"
 START_STATES = "start-states"
 
 
@@ -215,6 +222,9 @@ def load(path: str | Path, repo: Path) -> dict:
         jobs.sort(key=lambda j: (cells[j["model"], j["scenario"], j["condition"]], j["repeat"]))
     else:
         jobs.sort(key=lambda j: j["repeat"])  # stable: repeat-major across groups
+    ticket = raw.get("ticket")
+    if ticket not in (None, TICKET_REQUIRED):
+        raise MatrixFileError(f"{path}: ticket must be {TICKET_REQUIRED!r} or left out")
     for j in jobs:
         if j["client"] in matrix.PAID_CLIENTS and j["max_cost"] is None:
             raise MatrixFileError(f"{path}: {j['client']} spends money: give budget.max_cost for {j['scenario']}")
@@ -228,6 +238,7 @@ def load(path: str | Path, repo: Path) -> dict:
         "allow_gaps": bool(raw.get("allow_gaps", False)),
         "scenarios": loaded,
         "skipped": skipped,
+        "ticket": ticket,
     }
 
 
@@ -279,6 +290,8 @@ def print_plan(m: dict, out: TextIO) -> None:
             print(f"budget {path}: {_usd(b['spent'])} of {_usd(b['cap'])} spent", file=out)
         except (OSError, ValueError) as e:
             print(f"budget {path}: unreadable ({e}): run stops before its first job", file=out)
+    if m["ticket"]:
+        print(f"each run takes a ticket from the site (${tickets.SITE_ENV}); a refused one stops the matrix", file=out)
     for name, why in m["skipped"].items():
         print(f"scenario {name}: skipped, not ready: {why}", file=out)
     for c, client in sorted({(j["condition"], j["client"]) for j in m["jobs"]}):
@@ -330,6 +343,8 @@ def main(
     now: Callable[[], float] = time.time,
     sleep: Callable[[float], None] = time.sleep,
     out: TextIO = sys.stdout,
+    environ: Mapping[str, str] = os.environ,
+    urlopen: tickets.Open | None = None,
 ) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == [START_STATES]:
@@ -381,6 +396,16 @@ def main(
             print(f"refusing: {e}", file=sys.stderr)
             return 2
         run_one = legacy_cli.LegacyCli(m["name"], flags, scenario_files=files, condition_env=env, repo=repo)
+    ticketed: tickets.Ticketed | None = None
+    if m["ticket"]:
+        if getattr(run_one, "run_dir", None) is None:  # the legacy runner: its run dir is play.py's to choose
+            print("refusing: a ticketed matrix needs --runner session", file=sys.stderr)
+            return 2
+        try:
+            run_one = ticketed = tickets.from_env(cast(tickets.Inner, run_one), repo, environ, urlopen, now)
+        except ValueError as e:
+            print(f"refusing: {e}", file=sys.stderr)
+            return 2
     stopped = (lambda: getattr(host, "stopped", False) is True) if host is not None else None  # the live host's stop
     runtime = repo / "runtime" if (repo / "runtime").is_dir() else repo  # where the run's files go
 
@@ -393,6 +418,8 @@ def main(
     except ValueError as e:
         print(f"refusing: {e}", file=sys.stderr)
         return 2
+    if ticketed is not None:
+        ticketed.close_interrupted(mx.state())
     stop = mx.run()
     print_status(mx, out)
     print(f"\nstopped: {stop}", file=out)

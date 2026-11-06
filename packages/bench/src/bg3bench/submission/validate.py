@@ -550,15 +550,11 @@ def t03_recompute(raw: dict[str, bytes], env: Json) -> Outcome:
     return True, ""
 
 
-def _beats(ticket: Json) -> list[Json]:
-    return sorted(ticket["beats"], key=lambda beat: beat["s"])
-
-
 def t04_beats(raw: dict[str, bytes], env: Json, ticket: Json) -> Outcome:
     """Every beat the server stored, against the bundle's files under the server's nonce."""
     if env["ticket"]["nonce"] != ticket["nonce"]:
         return False, "the nonce isn't the server's"
-    beats = _beats(ticket)
+    beats = ticket["beats"]  # in arrival order, as the server stores them
     if not beats:
         return False, "the server holds no beats for this ticket"
     wanted: dict[str, set[int]] = {}
@@ -612,7 +608,7 @@ def _beat_times(b: Loaded, ticket: Json) -> BeatTimes:
         newest = max((latest_t[n][c] for n, c in beat["l"].items() if n in latest_t), default=float("-inf"))
         return beat["a"] - newest if newest != float("-inf") else None
 
-    beats = _beats(ticket)
+    beats = ticket["beats"]
     regular = [x for x in beats if not x.get("e")]
     stale = [(x, s) for x in regular if (s := behind(x)) is not None]
     end_beat = next((x for x in beats if x.get("e")), None)
