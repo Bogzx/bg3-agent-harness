@@ -185,7 +185,7 @@ def setup_check(game: Any, arena: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     unplayed: load again."""
     r = game.run_job("arena.setup", {"arena": arena, "round_cap": arena.get("round_cap")}, wait_s=JOB_WAIT_S)
     res = r.result if isinstance(r.result, dict) else {}
-    keep = ("reference", "xp", "not_applied", "teams", "members", "surfaces", "spawn_order")
+    keep = ("reference", "xp", "not_applied", "teams", "members", "positions", "surfaces", "spawn_order")
     rec = {"status": r.status, "error": r.error} | {k: res[k] for k in keep if k in res}
     if r.status != "done":
         return 1, rec
