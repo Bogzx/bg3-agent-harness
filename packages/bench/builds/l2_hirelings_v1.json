@@ -16,15 +16,271 @@
    "role": "frontline: heavy armour and a longsword",
    "script": {
     "cc": {
-     "abilities": {"Strength": 15, "Dexterity": 13, "Constitution": 14, "Intelligence": 10, "Wisdom": 12, "Charisma": 8},
-     "ability_bonus": ["Strength", "Constitution"],
-     "skills": ["Perception", "Survival"],
-     "passives": [["FightingStyle_Defense"]]
+     "abilities": {
+      "Strength": 15,
+      "Dexterity": 13,
+      "Constitution": 14,
+      "Intelligence": 10,
+      "Wisdom": 12,
+      "Charisma": 8
+     },
+     "ability_bonus": [
+      "Strength",
+      "Constitution"
+     ],
+     "skills": [
+      "Perception",
+      "Survival"
+     ],
+     "passives": [
+      [
+       "FightingStyle_Defense"
+      ]
+     ]
     },
-    "level_ups": [{"level": 2}]
+    "level_ups": [
+     {
+      "level": 2
+     }
+    ]
    },
-   "gear": ["WPN_Longsword", "WPN_Shortbow", "ARM_ScaleMail_Body", "ARM_Boots_Leather", "OBJ_Potion_Healing", "OBJ_Potion_Healing"],
-   "reference": null
+   "gear": [
+    "WPN_Longsword",
+    "WPN_Shortbow",
+    "ARM_ScaleMail_Body",
+    "ARM_Boots_Leather",
+    "OBJ_Potion_Healing",
+    "OBJ_Potion_Healing"
+   ],
+   "reference": {
+    "profile": {
+     "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
+     "level": 2,
+     "classes": [
+      "721dfac3-92d4-41f5-b773-b7072a86232f/00000000-0000-0000-0000-000000000000/2"
+     ],
+     "abilities": [
+      17,
+      13,
+      15,
+      10,
+      12,
+      8
+     ],
+     "max_hp": 20,
+     "ac": 16,
+     "equipment": {
+      "Boots": "ARM_Boots_Leather_969bab00-b269-46a5-a7e9-dd4887814719",
+      "Breast": "ARM_ScaleMail_ca0aafad-0f1e-4d76-8e3b-925397bb436b",
+      "RangedMainHand": "WPN_HUM_Shortbow_A_0_c5403c1d-f372-43e1-927a-9189e9e3545d",
+      "MeleeMainHand": "WPN_HUM_Longsword_A_0_1865323f-b428-4791-a0a9-578841e57463"
+     },
+     "inventory": [
+      "CONS_Potion_Healing_A_d47006e9-8a51-453d-b200-9e0d42e9bbab"
+     ],
+     "spells": [
+      "Projectile_HamstringShot",
+      "Projectile_Jump",
+      "Projectile_MainHandAttack",
+      "Rush_SpringAttack",
+      "Shout_ActionSurge",
+      "Shout_Dash",
+      "Shout_Disengage",
+      "Shout_Hide",
+      "Shout_SecondWind",
+      "Target_Dip",
+      "Target_Help",
+      "Target_MainHandAttack",
+      "Target_PommelStrike",
+      "Target_Shove",
+      "Target_Slash_New",
+      "Throw_ImprovisedWeapon",
+      "Throw_Throw"
+     ],
+     "prepared": [
+      "Projectile_HamstringShot",
+      "Projectile_Jump",
+      "Projectile_MainHandAttack",
+      "Rush_SpringAttack",
+      "Shout_ActionSurge",
+      "Shout_Dash",
+      "Shout_Disengage",
+      "Shout_Hide",
+      "Shout_SecondWind",
+      "Target_Dip",
+      "Target_Help",
+      "Target_MainHandAttack",
+      "Target_PommelStrike",
+      "Target_Shove",
+      "Target_Slash_New",
+      "Throw_ImprovisedWeapon",
+      "Throw_Throw"
+     ],
+     "passives": [
+      "AttackOfOpportunity",
+      "Background_Soldier",
+      "CombatStartAttack",
+      "DarknessRules",
+      "Darkvision",
+      "DeathSavingThrows",
+      "FeyAncestry",
+      "FightingStyle_Defense",
+      "HumanMilitia",
+      "NonLethal",
+      "Perform",
+      "ShortResting",
+      "WeaponThrow"
+     ],
+     "statuses": [
+      "INSURFACE"
+     ],
+     "resources": {
+      "Movement": {
+       "0": 10.5
+      },
+      "BonusActionPoint": {
+       "0": 1.0
+      },
+      "ActionPoint": {
+       "0": 1.0
+      },
+      "ReactionActionPoint": {
+       "0": 1.0
+      }
+     },
+     "proficiencies": [
+      "Glaives",
+      "Halberds",
+      "HeavyArmor",
+      "LightArmor",
+      "MartialWeapons",
+      "MediumArmor",
+      "Pikes",
+      "Shields",
+      "SimpleWeapons",
+      "Spears"
+     ],
+     "skills": {
+      "Insight": 1,
+      "History": 0,
+      "Persuasion": -1,
+      "SleightOfHand": 1,
+      "Acrobatics": 1,
+      "Stealth": 3,
+      "Religion": 0,
+      "Survival": 3,
+      "Perception": 3,
+      "Investigation": 0,
+      "Performance": -1,
+      "Athletics": 5,
+      "Arcana": 0,
+      "Nature": 0,
+      "Medicine": 1,
+      "Intimidation": 1,
+      "Deception": -1,
+      "AnimalHandling": 1
+     },
+     "boosts": [
+      "AC|||",
+      "Ability|Ability|Charisma,8|",
+      "Ability|Ability|Constitution,14|",
+      "Ability|Ability|Constitution,1|",
+      "Ability|Ability|Dexterity,13|",
+      "Ability|Ability|Intelligence,10|",
+      "Ability|Ability|Strength,15|",
+      "Ability|Ability|Strength,2|",
+      "Ability|Ability|Wisdom,12|",
+      "ActionResource|||",
+      "ActionResource|||",
+      "ActiveCharacterLight|||",
+      "Advantage|Disadvantage|Skill,Stealth|not HasPassive('MediumArmorMaster', context.Source)",
+      "BlockRegainHP|BlockRegainHP|Undead;Construct|",
+      "DarkvisionRangeMin|||",
+      "DownedStatus|||",
+      "ProficiencyBonus|ProficiencyBonus|Skill,Perception|",
+      "ProficiencyBonus|ProficiencyBonus|Skill,Survival|",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "StatusImmunity|||",
+      "StatusImmunity|||",
+      "StatusImmunity|||",
+      "Tag|||",
+      "UnlockInterrupt|||",
+      "UnlockSpell|UnlockSpell|Projectile_HamstringShot|",
+      "UnlockSpell|UnlockSpell|Rush_SpringAttack|",
+      "UnlockSpell|UnlockSpell|Target_PommelStrike|",
+      "UnlockSpell|UnlockSpell|Target_Slash_New|"
+     ],
+     "spellcast": [
+      "Projectile_HamstringShot|Intelligence|AlwaysPrepared|10|2",
+      "Projectile_Jump|Intelligence|AlwaysPrepared|10|2",
+      "Projectile_MainHandAttack|None|AlwaysPrepared|-|-",
+      "Rush_SpringAttack|Intelligence|AlwaysPrepared|10|2",
+      "Shout_ActionSurge|Intelligence|AlwaysPrepared|10|2",
+      "Shout_Dash|Intelligence|AlwaysPrepared|10|2",
+      "Shout_Disengage|Intelligence|AlwaysPrepared|10|2",
+      "Shout_Hide|Intelligence|AlwaysPrepared|10|2",
+      "Shout_SecondWind|Intelligence|AlwaysPrepared|10|2",
+      "Target_Dip|Intelligence|AlwaysPrepared|10|2",
+      "Target_Help|Intelligence|AlwaysPrepared|10|2",
+      "Target_MainHandAttack|None|AlwaysPrepared|-|-",
+      "Target_PommelStrike|Intelligence|AlwaysPrepared|10|2",
+      "Target_Shove|Intelligence|AlwaysPrepared|10|2",
+      "Target_Slash_New|Intelligence|AlwaysPrepared|10|2",
+      "Throw_ImprovisedWeapon|Intelligence|AlwaysPrepared|10|2",
+      "Throw_Throw|Intelligence|AlwaysPrepared|10|2"
+     ],
+     "derived": {
+      "proficiency_bonus": 2,
+      "spell_casting_ability": "Intelligence",
+      "movement": 10.5,
+      "spell_save_dc_boost": 0,
+      "ranged_main_hand": "none",
+      "initiative_bonus": 1,
+      "melee_main_hand": "none",
+      "weapon_action_dc": 3
+     },
+     "resource_max": [
+      "ActionPoint|0|1.0|Default",
+      "BonusActionPoint|0|1.0|Default",
+      "Movement|0|10.5|Default",
+      "ReactionActionPoint|0|1.0|Default"
+     ],
+     "passive_state": [
+      "AttackOfOpportunity|false|true",
+      "Background_Soldier|false|true",
+      "CombatStartAttack|false|true",
+      "DarknessRules|false|true",
+      "Darkvision|false|true",
+      "DeathSavingThrows|false|true",
+      "FeyAncestry|false|true",
+      "FightingStyle_Defense|false|true",
+      "HumanMilitia|false|true",
+      "NonLethal|false|true",
+      "Perform|false|true",
+      "ShortResting|false|true",
+      "WeaponThrow|false|true"
+     ]
+    },
+    "game_build": "25605617",
+    "hireling": "8078e34e-2dce-44ee-8072-072ac433350f",
+    "evidence": "live.md L2 launch 3 on 9309ae53, runtime/probes/4v4-references/"
+   }
   },
   {
    "id": "rogue",
@@ -35,15 +291,47 @@
    "role": "melee skirmisher: shortsword and sneak attacks",
    "script": {
     "cc": {
-     "abilities": {"Strength": 8, "Dexterity": 15, "Constitution": 14, "Intelligence": 12, "Wisdom": 13, "Charisma": 10},
-     "ability_bonus": ["Dexterity", "Constitution"],
-     "skills": ["Acrobatics", "Perception", "Deception", "Investigation"],
-     "expertise": ["Stealth", "Perception"],
-     "race_skills": ["Athletics"]
+     "abilities": {
+      "Strength": 8,
+      "Dexterity": 15,
+      "Constitution": 14,
+      "Intelligence": 12,
+      "Wisdom": 13,
+      "Charisma": 10
+     },
+     "ability_bonus": [
+      "Dexterity",
+      "Constitution"
+     ],
+     "skills": [
+      "Acrobatics",
+      "Perception",
+      "Deception",
+      "Investigation"
+     ],
+     "expertise": [
+      "Stealth",
+      "Perception"
+     ],
+     "race_skills": [
+      "Athletics"
+     ]
     },
-    "level_ups": [{"level": 2}]
+    "level_ups": [
+     {
+      "level": 2
+     }
+    ]
    },
-   "gear": ["WPN_Shortsword", "WPN_Shortbow", "ARM_Leather_Body_Rogue", "ARM_Boots_Leather", "OBJ_Kit_ThievesTools", "OBJ_Potion_Healing", "OBJ_Potion_Healing"],
+   "gear": [
+    "WPN_Shortsword",
+    "WPN_Shortbow",
+    "ARM_Leather_Body_Rogue",
+    "ARM_Boots_Leather",
+    "OBJ_Kit_ThievesTools",
+    "OBJ_Potion_Healing",
+    "OBJ_Potion_Healing"
+   ],
    "reference": null
   },
   {
@@ -55,13 +343,44 @@
    "role": "melee damage: greataxe and rage",
    "script": {
     "cc": {
-     "abilities": {"Strength": 15, "Dexterity": 13, "Constitution": 14, "Intelligence": 10, "Wisdom": 12, "Charisma": 8},
-     "ability_bonus": ["Strength", "Constitution"],
-     "skills": ["Intimidation", "Perception"]
+     "abilities": {
+      "Strength": 15,
+      "Dexterity": 13,
+      "Constitution": 14,
+      "Intelligence": 10,
+      "Wisdom": 12,
+      "Charisma": 8
+     },
+     "ability_bonus": [
+      "Strength",
+      "Constitution"
+     ],
+     "skills": [
+      "Intimidation",
+      "Perception"
+     ]
     },
-    "level_ups": [{"level": 2}]
+    "level_ups": [
+     {
+      "level": 2
+     }
+    ]
    },
-   "gear": ["WPN_Greataxe", {"item": "WPN_Handaxe", "equip": false}, {"item": "WPN_Handaxe", "equip": false}, "ARM_Barbarian", "ARM_Shoes_Barbarian", "OBJ_Potion_Healing", "OBJ_Potion_Healing"],
+   "gear": [
+    "WPN_Greataxe",
+    {
+     "item": "WPN_Handaxe",
+     "equip": false
+    },
+    {
+     "item": "WPN_Handaxe",
+     "equip": false
+    },
+    "ARM_Barbarian",
+    "ARM_Shoes_Barbarian",
+    "OBJ_Potion_Healing",
+    "OBJ_Potion_Healing"
+   ],
    "reference": null
   },
   {
@@ -73,14 +392,57 @@
    "role": "ranged damage and healer: shortbow, Hunter's Mark, Cure Wounds",
    "script": {
     "cc": {
-     "abilities": {"Strength": 12, "Dexterity": 15, "Constitution": 13, "Intelligence": 8, "Wisdom": 14, "Charisma": 10},
-     "ability_bonus": ["Dexterity", "Wisdom"],
-     "skills": ["Survival", "Athletics", "Investigation"],
-     "passives": [["FavoredEnemy_BountyHunter"], ["NaturalExplorer_BeastTamer"]]
+     "abilities": {
+      "Strength": 12,
+      "Dexterity": 15,
+      "Constitution": 13,
+      "Intelligence": 8,
+      "Wisdom": 14,
+      "Charisma": 10
+     },
+     "ability_bonus": [
+      "Dexterity",
+      "Wisdom"
+     ],
+     "skills": [
+      "Survival",
+      "Athletics",
+      "Investigation"
+     ],
+     "passives": [
+      [
+       "FavoredEnemy_BountyHunter"
+      ],
+      [
+       "NaturalExplorer_BeastTamer"
+      ]
+     ]
     },
-    "level_ups": [{"level": 2, "spells": [["Target_HuntersMark", "Target_CureWounds"]], "passives": [["FightingStyle_Archery"]]}]
+    "level_ups": [
+     {
+      "level": 2,
+      "spells": [
+       [
+        "Target_HuntersMark",
+        "Target_CureWounds"
+       ]
+      ],
+      "passives": [
+       [
+        "FightingStyle_Archery"
+       ]
+      ]
+     }
+    ]
    },
-   "gear": ["WPN_Shortbow", "WPN_Shortsword", "ARM_Leather_Body", "ARM_Boots_Leather", "OBJ_Potion_Healing", "OBJ_Potion_Healing"],
+   "gear": [
+    "WPN_Shortbow",
+    "WPN_Shortsword",
+    "ARM_Leather_Body",
+    "ARM_Boots_Leather",
+    "OBJ_Potion_Healing",
+    "OBJ_Potion_Healing"
+   ],
    "reference": null
   }
  ]
