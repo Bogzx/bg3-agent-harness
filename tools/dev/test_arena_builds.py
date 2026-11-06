@@ -247,16 +247,26 @@ def plan(d: dict[str, Any], bid: str) -> dict[str, Any]:
     )["kit"]  # fmt: skip
 
 
+# The Bard's levelled spell lists: every SelectSpells a bard row has but its cantrips'
+LEVELLED = {
+    uuid
+    for uuid, v in STATIC["lists"].items()
+    if str(v.get("name")).startswith(("Bard spells", "Bard SLevel")) or "Magical Secrets" in str(v.get("name"))
+}
+
+
 class TierTest(unittest.TestCase):
-    """The 4v4 tiers (website repo ops/logs/arena-4v4-builds.md): Fighter (Battle Master), Cleric (Life), Wizard
-    (Evocation), Rogue (Thief) at levels 2, 5 and 12; subclass rows, improvements and prepared spells checked."""
+    """The 4v4 tiers (website repo ops/logs/arena-4v4-builds.md): Fighter (Battle Master), a healer, Wizard (Evocation),
+    Rogue (Thief) at levels 2, 5 and 12; subclass rows, improvements and prepared spells checked. The healer is a Bard
+    (Lore) at 5 and 12 (owner D114): a Cleric copy's class rows add its whole list; l2_4v4_v1 keeps its Cleric draft."""
 
     def test_the_three_tier_files_are_valid_drafts_of_the_same_four_builds(self):
         for lv in (2, 5, 12):
             with self.subTest(level=lv):
                 d = ab.check_builds(tier(lv))
                 self.assertIn("draft", d)
-                self.assertEqual([b["class"] for b in d["builds"]], ["Fighter", "Cleric", "Wizard", "Rogue"])
+                healer = "Cleric" if lv == 2 else "Bard"
+                self.assertEqual([b["class"] for b in d["builds"]], ["Fighter", healer, "Wizard", "Rogue"])
                 schema = json.loads((REPO / "packages/bench/schema/arena-builds.v1.schema.json").read_text())
                 __import__("jsonschema").validate(d, schema)
         self.assertEqual([b["subclass"] for b in tier(2)["builds"]], [None, "LifeDomain", "EvocationSchool", None])
@@ -269,13 +279,24 @@ class TierTest(unittest.TestCase):
         self.assertIn("Ability(Strength,2)", k["grants"]["boosts"])  # level 4's ASI
         man = [c for c in k["choices"] if c["kind"] == "passives" and c["n"] == 3]
         self.assertEqual(man[0]["ids"], ["PrecisionAttack", "Riposte", "GoadingAttack"])
-        cl = plan(tier(5), "cleric")
+        cl = plan(tier(2), "cleric")
         self.assertIn("DiscipleOfLife", cl["grants"]["passives"])
-        self.assertTrue({"Target_Bless", "Target_CureWounds", "Shout_Aid", "Shout_BeaconOfHope"}
-                        <= set(cl["grants"]["spells"]))  # fmt: skip
-        self.assertEqual(len(cl["prepared"]), 9)  # Wis 19 (+4) + level 5
+        self.assertTrue({"Target_Bless", "Target_CureWounds"} <= set(cl["grants"]["spells"]))
+        self.assertEqual(len(cl["prepared"]), 5)  # Wis 17 (+3) + level 2
         self.assertEqual(cl["choices"][0], {"kind": "spells", "list": "3cae2e56-9871-4cef-bba6-96845ea765fa",
                                             "n": 1, "exact": True, "ids": ["Projectile_FireBolt"]})  # fmt: skip
+
+    def test_a_bards_picks_are_its_book_its_college_a_grant_and_its_instrument_no_choice(self):
+        for lv, picks in ((5, 8), (12, 19)):
+            k = plan(tier(lv), "bard")
+            self.assertEqual(k["subclass"], STATIC["subclasses"]["LoreCollege"]["uuid"])
+            self.assertIn("CuttingWords", k["grants"]["passives"])
+            self.assertNotIn("prepared", k)  # no MustPrepareSpells: nothing the mod has to name as not_applied
+            leveled = [i for c in k["choices"] if c["kind"] == "spells" and c["list"] in LEVELLED for i in c["ids"]]
+            self.assertEqual(len(leveled), picks)
+            self.assertIn("Target_HealingWord", leveled)
+            self.assertFalse({i["item"] for i in k["items"]} & {"OBJ_Scroll_Revivify", "OBJ_Keychain"})
+        self.assertIn("SelectEquipment", STATIC["classes"]["Bard"]["levels"]["1"]["Selectors"])
 
     def test_improvements_feats_and_tier_items(self):
         k12 = plan(tier(12), "fighter")
@@ -329,10 +350,11 @@ class TierTest(unittest.TestCase):
             "Tough is taken twice",
             12,
         )
-        bad(lambda d: tbuild(d, "cleric")["script"]["prepared"].pop(), "prepared has 8, a level-5 Cleric prepares 9")
+        bad(lambda d: tbuild(d, "cleric")["script"]["prepared"].pop(), "prepared has 4, a level-2 Cleric prepares 5", 2)
         bad(
             lambda d: tbuild(d, "cleric")["script"]["prepared"].__setitem__(0, "Projectile_Fireball"),
             "prepared Projectile_Fireball is not a spell the Cleric has to prepare",
+            2,
         )
         bad(
             lambda d: tbuild(d, "wizard")["script"]["prepared"].__setitem__(0, "Target_Haste"),
@@ -346,6 +368,11 @@ class TierTest(unittest.TestCase):
         bad(
             lambda d: tbuild(d, "cleric")["script"]["cc"].update(race_spells=["Target_SacredFlame"]),
             "Target_SacredFlame is not in the game's list Wizard cantrips",
+            2,
+        )
+        bad(
+            lambda d: tbuild(d, "bard")["script"]["cc"]["spells"][1].__setitem__(0, "Projectile_Fireball"),
+            "Projectile_Fireball is not in the game's list Bard spells level 1",
         )
         bad(
             lambda d: tbuild(d, "rogue").update(script={**tbuild(d, "rogue")["script"], "prepared": []}),
@@ -469,7 +496,7 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
     def test_the_second_team_is_valid_and_a_subclass_rows_removed_passive_is_in_the_kits_grants(self):
         d = ab.load_builds(REPO / "packages/bench/builds/l5_4v4_team2_v1.json")
         self.assertIn("draft", d)
-        self.assertEqual([b["class"] for b in d["builds"]], ["Barbarian", "Cleric", "Wizard", "Ranger"])
+        self.assertEqual([b["class"] for b in d["builds"]], ["Barbarian", "Bard", "Wizard", "Ranger"])
         __import__("jsonschema").validate(
             d, json.loads((REPO / "packages/bench/schema/arena-builds.v1.schema.json").read_text())
         )
@@ -477,6 +504,10 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
         self.assertEqual(k["grants"]["passives_removed"], ["RageUnlock"])
         self.assertIn(["TotemSpirit_Bear"], [c["ids"] for c in k["choices"] if c["kind"] == "passives"])
         self.assertNotIn("passives_removed", plan(tier(5), "fighter")["grants"])
+        v = plan(d, "bard")  # Valor: another removed passive, and proficiencies a copy gets only from the kit
+        self.assertEqual(v["grants"]["passives_removed"], ["BardicInspiration"])
+        self.assertIn("CombatInspiration", v["grants"]["passives"])
+        self.assertIn("Proficiency(MartialWeapons)", v["grants"]["boosts"])
 
     def test_a_wizards_kit_adds_only_its_prepared_picks_and_a_clerics_keeps_prepared_for_the_mod_to_name(self):
         for lv, n in ((2, 5), (5, 9), (12, 17)):
@@ -490,7 +521,8 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
                 self.assertTrue(
                     any(c["kind"] == "spells" and c["exact"] for c in k["choices"]), "the cantrips stay exact"
                 )
-                self.assertIn("prepared", plan(d, "cleric"))
+                if lv == 2:
+                    self.assertIn("prepared", plan(d, "cleric"))
 
     def test_the_cleric_and_wizard_templates_are_read_and_the_races_are_their_builds(self):
         m = ab.mirror_section(ab.check_builds(tier(2)), NAMES4)["mirror"]["pairs"]
@@ -501,10 +533,13 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
 
     def test_no_build_picks_a_knock_down_source_in_its_script_or_kit(self):
         # What a build picks. A Cleric copy's class rows add its whole list, Command included, and neither shows here:
-        # the reference compare fails that, and no rated team holds a Cleric. The last three: ice surfaces, from play.
+        # the reference compare fails that, and only the l2_4v4_v1 draft holds a Cleric. Sleet Storm, Ice Storm and
+        # Freezing Sphere: ice surfaces, from play. Thunderous Smite, Eyebite: PRONE_THUNDEROUS_SMITE, SLEEPING_EYEBITE
+        # (the paks).
         banned = {"Target_Grease", "Projectile_IceKnife", "Zone_Thunderwave", "Target_HideousLaughter", "Target_Sleep",
                   "TripAttack", "PushingAttack", "MenacingAttack", "TotemSpirit_Elk", "Target_Command_Container",
-                  "Target_SleetStorm", "Target_IceStorm", "Target_FreezingSphere"}  # fmt: skip
+                  "Target_SleetStorm", "Target_IceStorm", "Target_FreezingSphere", "Target_Smite_Thunderous",
+                  "Target_Eyebite"}  # fmt: skip
         for path in sorted((REPO / "packages/bench/builds").glob("l*_4v4_*.json")):
             d = json.loads(path.read_text())
             for b in d["builds"]:

@@ -243,7 +243,7 @@ test("stat entries: one per class and level at StatsLoaded with the switch, from
         env.BG3AI_ARENA = "1"
         for _, f in ipairs(statsLoaded) do f() end
         local made = named("Create")
-        eq(#made, 6, "6 classes at level 1")
+        eq(#made, 7, "7 classes at level 1")
         eq(enc({ made[1][2], made[1][3], made[1][4] }), enc({ "BG3AI_Arena_Fighter_L1", "Character", "_Hero" }),
             "the first entry")
         local f1 = stats.BG3AI_Arena_Fighter_L1
@@ -254,6 +254,9 @@ test("stat entries: one per class and level at StatsLoaded with the switch, from
         eq(enc({ c1.Progressions, c1.SpellCastingAbility, c1.Wisdom, w1.Progressions, w1.SpellCastingAbility,
             w1.Intelligence }), enc({ "64474b62-b4f5-46b3-b94a-c676c6da3116", "Wisdom", 15,
             "d18eda7e-4b7d-490d-9952-cd33a3c60479", "Intelligence", 15 }), "the 4v4 healer and caster (Cleric, Wizard)")
+        local b1 = stats.BG3AI_Arena_Bard_L1
+        eq(enc({ b1.Progressions, b1.SpellCastingAbility, b1.Charisma }),
+            enc({ "229c98da-2cd1-4a5e-8051-9d90ec7931e7", "Charisma", 15 }), "the healer above L2")
         local cost = { [8] = 0, [9] = 1, [10] = 2, [11] = 3, [12] = 4, [13] = 5, [14] = 7, [15] = 9 }
         for class, c in pairs(Ar.Stats.CLASSES) do
             local n = 0

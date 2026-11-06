@@ -93,6 +93,17 @@ KITS["Wizard"] = {
                  "Shout_FalseLife"],
     "items": ["WPN_Quarterstaff", "ARM_Robe_Body", "ARM_Shoes", *POTIONS],
 }  # fmt: skip
+KITS["Bard"] = {
+    "race": "HalfElf",
+    "skills": ["Persuasion", "Medicine", "Insight"],
+    "ability_bonus": ["Charisma", "Constitution"],
+    "spells": [
+        ["Target_ViciousMockery", "Shout_BladeWard"],
+        ["Target_HealingWord", "Target_CureWounds", "Target_FaerieFire", "Target_Bane"],
+        ["Target_Heroism"],
+    ],
+    "items": ["WPN_Rapier", "WPN_HandCrossbow", "ARM_Bard", "ARM_Boots_Leather", *POTIONS],
+}
 # the point-buy of our stat entries (Shared/ArenaStats.lua): a preparer's prepared count needs it
 BASE = {
     "Cleric": dict(zip(mas.ABILITIES, (14, 10, 14, 8, 15, 10), strict=True)),

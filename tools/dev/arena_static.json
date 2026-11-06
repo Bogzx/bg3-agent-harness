@@ -1335,7 +1335,11 @@
   },
   "Entertainer": {
    "uuid": "229775c9-3044-4779-a3bb-532c39238e03",
-   "passive": "Background_Entertainer"
+   "passive": "Background_Entertainer",
+   "skills": [
+    "Acrobatics",
+    "Performance"
+   ]
   }
  },
  "hirelings_source": "Each class's hireling (route H's reference, A1 D411), read 2026-11-03 with tools/pak.py: Shared.pak Public/SharedDev/Origins/Origins.lsx Hireling_<Class> (UUID, RaceUUID, SubRaceUUID, BackgroundUUID, GlobalTemplate, LockRace true); Gustav.pak Mods/GustavDev/Globals/SYS_Hirelings/Characters/_merged.lsf S_GLO_Hirelings_<Class> (MapKey = GlobalTemplate, TemplateName = the root); Shared.pak Public/SharedDev/RootTemplates/_merged.lsf Hirelings_Stats_Player_<Class> (its ParentTemplateId) and Public/Shared/RootTemplates/_merged.lsf the parent's Race (BASE_HalfElves_Female_Wood, BASE_Humans_Female -> BASE_Humans, BASE_Dwarves_Female_Hill, BASE_Elves_Male_Drow_Seldarine). Live-read: the Fighter's template race (live check 9, d9401d40 Race 76057327), and the Cleric's and Wizard's templates and races with Ext.Template.GetAllRootTemplates (S1, 2026-11-06: Race 4fda6bce, 2cf6c770); arena.mirror_spawn refuses a template of another race, so the others fail closed until read.",
@@ -1387,9 +1391,8 @@
    "origin": "54b02e05-56e7-4f55-8a73-78ce8a479493",
    "race": "Halfling_Lightfoot",
    "background": "Entertainer",
-   "template": null,
-   "template_name": null,
-   "todo": "the root template (S_GLO_Hirelings_<Class> TemplateName, a binary .lsf) is not read yet: arena.mirror_spawn needs it; read it live (Ext.Template) or with an .lsf reader"
+   "template": "85b629ca-bcb9-4729-8400-615dc97e7a76",
+   "template_name": "Hirelings_Stats_Player_Bard"
   }
  },
  "subclasses": {

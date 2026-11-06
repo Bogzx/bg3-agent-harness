@@ -402,6 +402,8 @@ def kit_plan(
                 continue
             if name == "ReplacePassives":  # the game offers a swap of an earlier pick: a build keeps its pick
                 continue
+            if name == "SelectEquipment":  # a Bard's instrument: a twin has none, and dress takes the reference's away
+                continue
             if name == "SelectAbilityBonus":
                 bonus = True
             elif name in CHOICE:  # every pick exact

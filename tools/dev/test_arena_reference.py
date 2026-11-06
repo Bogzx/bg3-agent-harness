@@ -100,7 +100,7 @@ class PlanTest(unittest.TestCase):
         self.assertIn("PrecisionAttack", p["names"])
 
     def test_a_cleric_picks_its_domain_on_the_respec_page_and_its_cantrips_are_cantrips(self):
-        p = ar.ui_plans(build(5, "cleric"), 5, STATIC)
+        p = ar.ui_plans(build(2, "cleric"), 2, STATIC)
         self.assertEqual(p["cc"]["subclass"], "Life")
         self.assertEqual(p["cc"]["cantrips"], ["Target_SacredFlame", "Target_TollTheDead", "Target_Guidance",
                                                "Projectile_FireBolt"])  # fmt: skip
@@ -118,9 +118,15 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(cc["expertise"], script["expertise"])
         self.assertEqual(cc["skills"], script["skills"] + script["race_skills"])
 
+    def test_a_bards_college_and_expertise_are_level_3_picks(self):
+        ups = {u["level"]: u["plan"] for u in ar.ui_plans(build(5, "bard"), 5, STATIC)["level_ups"]}
+        self.assertEqual(ups[3]["subclass"], "Lore")
+        self.assertEqual(ups[3]["expertise"], ["Persuasion", "Performance"])
+        self.assertEqual(ups[3]["skills"], ["Arcana", "Perception", "Deception"])
+
     def test_every_tier_build_has_a_plan(self):
         for lv in (2, 5, 12):
-            for bid in ("fighter", "cleric", "wizard", "rogue"):
+            for bid in ("fighter", "cleric" if lv == 2 else "bard", "wizard", "rogue"):
                 with self.subTest(level=lv, build=bid):
                     self.assertEqual(len(ar.ui_plans(build(lv, bid), lv, STATIC)["level_ups"]), lv - 1)
 

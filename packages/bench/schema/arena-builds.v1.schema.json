@@ -110,7 +110,8 @@
             "Barbarian",
             "Ranger",
             "Cleric",
-            "Wizard"
+            "Wizard",
+            "Bard"
           ]
         },
         "subclass": {

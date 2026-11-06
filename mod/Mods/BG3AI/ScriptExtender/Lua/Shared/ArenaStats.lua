@@ -35,8 +35,12 @@ AS.CLASSES = { -- table: the class's progression table (ClassDescriptions / Prog
         abilities = { 14, 10, 14, 8, 15, 10 } },
     Wizard = { table = "d18eda7e-4b7d-490d-9952-cd33a3c60479", casting = "Intelligence",
         abilities = { 8, 14, 14, 15, 12, 8 } },
+    -- the healer above level 2 (owner D114): its spells are all selector picks, where a Cleric copy's class rows add
+    -- its whole list (S1's P3). POC_Player_Bard's abilities are all 10: these are the Wizard's with Int and Cha swapped
+    Bard = { table = "229c98da-2cd1-4a5e-8051-9d90ec7931e7", casting = "Charisma",
+        abilities = { 8, 14, 14, 8, 12, 15 } },
 }
-AS.ORDER = { "Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard" } -- AS.build's order
+AS.ORDER = { "Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard", "Bard" } -- AS.build's order
 
 function AS.name(class, level) return AS.PREFIX .. class .. "_L" .. tostring(level) end
 

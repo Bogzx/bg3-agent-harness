@@ -45,6 +45,8 @@ SUBCLASS_LABEL = {
     "Hunter": "Hunter",
     "LightDomain": "Light",
     "AbjurationSchool": "Abjuration",
+    "LoreCollege": "Lore",
+    "ValorCollege": "Valor",
 }  # what ui_plans refuses to guess: a subclass not listed here
 
 
