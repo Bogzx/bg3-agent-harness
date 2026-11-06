@@ -942,7 +942,7 @@ reg("cast", function(args)
                 return charged
             end
             if not job.casted then
-                if type(job.result) == "table" and job.result.paused then A.hold_audit(job, matches, audit) end
+                if type(job.result) == "table" and job.result.paused then A.hold_audit(job, char, matches, audit) end
                 return
             end
             local charged = audit()

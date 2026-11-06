@@ -215,6 +215,37 @@ test("cast start: a paused cast that never lands pays nothing, and a later cast 
     eq(res.SpellSlot[1].Amount, 3, "one slot for the one cast that landed")
 end)
 
+test("cast start: a lost cast's audit expires: a rest and a later cast pay for that cast only (M1)", function()
+    local res = held_heal(2)
+    tick(100) -- unpaused past HELD_LANDS_MS: the cast is lost
+    res.SpellSlot[1].Amount, res.BonusActionPoint[1].Amount = 4, 1 -- a rest
+    local j = job(op("cast", { char = P1, spell = "Target_HeldHeal", target = NPC }))
+    eq(j.status, "running", "cast again " .. tostring(j.error))
+    A.dispatch("CastSpell", { P1, "Target_HeldHeal", "Target", "None", 0 })
+    A.dispatch("CastedSpell", { P1, "Target_HeldHeal", "Target", "None", 0 })
+    tick(20)
+    eq(res.SpellSlot[1].Amount, 3, "one slot, not the old snapshot's difference")
+end)
+
+test("cast start: a lost cast's audit doesn't charge a later free cast of the spell (M1)", function()
+    local res = held_heal(4)
+    tick(100)
+    A.dispatch("CastedSpell", { P1, "Target_HeldHeal", "Target", "None", 0 }) -- a scroll's: no order of ours
+    tick(20)
+    eq(res.SpellSlot[1].Amount, 4, "nothing owed")
+end)
+
+test("cast start: a cast still held past the expiry keeps its audit, and a landing inside the grace pays", function()
+    local res = held_heal(4)
+    world[P1].comp_names = { PAUSED }
+    tick(200) -- 12 s more of hold: the clock only runs unpaused
+    world[P1].comp_names = nil
+    tick(30) -- 1.8 s to land
+    A.dispatch("CastedSpell", { P1, "Target_HeldHeal", "Target", "None", 0 })
+    tick(10)
+    eq(res.SpellSlot[1].Amount, 3, "paid")
+end)
+
 test("cast start: a short pause that clears lets the cast finish as usual", function()
     local j = swing()
     world[P1].comp_names = { PAUSED }
