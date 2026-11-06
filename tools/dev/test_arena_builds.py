@@ -535,11 +535,11 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
         # What a build picks. A Cleric copy's class rows add its whole list, Command included, and neither shows here:
         # the reference compare fails that, and only the l2_4v4_v1 draft holds a Cleric. Sleet Storm, Ice Storm and
         # Freezing Sphere: ice surfaces, from play. Thunderous Smite, Eyebite: PRONE_THUNDEROUS_SMITE, SLEEPING_EYEBITE
-        # (the paks).
+        # (the paks). Chromatic Orb: its cold variant makes WaterFrozen from nothing (the paks), Arrow of Ice's reason.
         banned = {"Target_Grease", "Projectile_IceKnife", "Zone_Thunderwave", "Target_HideousLaughter", "Target_Sleep",
                   "TripAttack", "PushingAttack", "MenacingAttack", "TotemSpirit_Elk", "Target_Command_Container",
                   "Target_SleetStorm", "Target_IceStorm", "Target_FreezingSphere", "Target_Smite_Thunderous",
-                  "Target_Eyebite"}  # fmt: skip
+                  "Target_Eyebite", "Projectile_ChromaticOrb", "Projectile_ChromaticOrb_Cold"}  # fmt: skip
         for path in sorted((REPO / "packages/bench/builds").glob("l*_4v4_*.json")):
             d = json.loads(path.read_text())
             for b in d["builds"]:

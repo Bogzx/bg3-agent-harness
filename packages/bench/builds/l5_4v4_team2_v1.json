@@ -210,7 +210,7 @@
        "Projectile_MagicMissile",
        "Shout_Shield_Wizard",
        "Target_MageArmor",
-       "Projectile_ChromaticOrb",
+       "Projectile_RayOfSickness",
        "Zone_BurningHands",
        "Projectile_WitchBolt"
       ]
@@ -266,7 +266,7 @@
      "Projectile_MagicMissile",
      "Shout_Shield_Wizard",
      "Target_MageArmor",
-     "Projectile_ChromaticOrb",
+     "Projectile_RayOfSickness",
      "Zone_BurningHands",
      "Projectile_ScorchingRay",
      "Target_MistyStep",
