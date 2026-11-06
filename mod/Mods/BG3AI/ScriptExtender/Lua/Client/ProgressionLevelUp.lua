@@ -663,7 +663,9 @@ end)
 --   {placed} | {index, n, cols, cell = {w, h}, over (cursor on the target), hovered (index under the cursor),
 --    in_list (cursor over the button list), picked, open}
 -- Index and cols give the button's grid cell (WrapPanel, row-major), so one hovered button locates them all.
+-- remove = true: the same for the pick's button in the selector's Additions; {placed} then means it is off.
 local SPELL_BUTTONS = { SelectAvailableSpell = true, SelectSpell = true, SelectSelectableSpell = true }
+local PICK_BUTTONS = { DeselectAddedSpell = true, DeselectSpell = true } -- CCLib_k.xaml, DeselectSpell's own MultiBinding
 
 local function buttonItem(b)
     local dc = try(function() return b.DataContext end)
@@ -688,8 +690,8 @@ function P.showSelector(w, sel)
     return false, false
 end
 
-local function tabSelected(name)
-    local el = UI.cachedByName("CharacterLevelUp", name)
+local function tabSelected(name, widget)
+    local el = UI.cachedByName(widget or "CharacterLevelUp", name)
     return el ~= nil and UI.prop(el, "IsSelected") == true
 end
 
@@ -720,6 +722,17 @@ local function showClassSelector(w, sel)
     return P.showSelector(w, sel)
 end
 
+-- On character creation's and the respec page the selectors are sub-tabs of the class tab, and ui.cc_apply ends on
+-- another tab; choosing a gameplay tab clears the sub-tab (CCLib_k.xaml), so the tab goes first.
+local function showPageSelector(pg, w, sel)
+    local tab = P.ccTab(pg, "classTab")
+    if not tabSelected(tab, pg.widget) then
+        local ok = selectTab(pg.widget, tab)
+        return ok == true, ok == true
+    end
+    return P.showSelector(w, sel)
+end
+
 -- How close the cursor is to the target's list: 1 = the button panel itself, 2.. = its ancestors up to the
 -- selector's scroll viewer (at most 8 levels). nil = not over any of them. The bridge searches with big steps
 -- until it is near, then with button-sized ones.
@@ -736,15 +749,22 @@ local function nearness(cp)
 end
 
 RPC.register("ui.level_up_spell_probe", function(args)
-    local dc, w = P.luDC(), visibleWidget("CharacterLevelUp")
+    local dc, w, pg = P.luDC(), visibleWidget("CharacterLevelUp"), nil
     if not dc then -- character creation's and the respec page's selectors: spell picks are clicks there too
-        local pg, ccdc = P.ccPage()
+        local ccdc
+        pg, ccdc = P.ccPage()
         if pg then dc, w = ccdc, visibleWidget(pg.widget) end
     end
     if not dc then error("level up is not open") end
-    local s, item, why = P.findSpell(dc, args.name, args.cantrips)
-    if why == "placed" then return { placed = true } end
-    if not item then error("spell " .. tostring(args.name) .. ": " .. tostring(why)) end
+    local s, item, why
+    if args.remove then
+        s, item = P.findPick(dc, args.name, args.cantrips)
+        if not item then return { placed = true } end
+    else
+        s, item, why = P.findSpell(dc, args.name, args.cantrips)
+        if why == "placed" then return { placed = true } end
+        if not item then error("spell " .. tostring(args.name) .. ": " .. tostring(why)) end
+    end
     local st = selectorState(s.sel)
     local out = { picked = st.picked, open = st.open, name = label(item), feat = s.source == "FeatDetails" or nil,
                   -- Until "IntroComplete" the page shows its "Level Up!" intro and the panels are off-screen, so no
@@ -763,13 +783,15 @@ RPC.register("ui.level_up_spell_probe", function(args)
     end
     local tabOk, switched
     if s.source == "FeatDetails" then tabOk, switched = P.showFeatSelector(w, s.sel)
+    elseif pg then tabOk, switched = showPageSelector(pg, w, s.sel)
     else tabOk, switched = showClassSelector(w, s.sel) end
     if switched then out.switched = true return out end
     if not tabOk then out.tab = "no sub-tab for this selector" end
     local mine = {}
-    for _, it in ipairs(list(UI.prop(s.sel, "Available"))) do mine[tostring(it)] = true end
+    for _, it in ipairs(list(UI.prop(s.sel, args.remove and "Additions" or "Available"))) do mine[tostring(it)] = true end
+    local buttons = args.remove and PICK_BUTTONS or SPELL_BUTTONS
     local n = 0
-    for _, b in ipairs(UI.findAll(w, function(e) return SPELL_BUTTONS[UI.name(e) or ""] == true end, { prune = true, max = 80000 })) do
+    for _, b in ipairs(UI.findAll(w, function(e) return buttons[UI.name(e) or ""] == true end, { prune = true, max = 80000 })) do
         local it = buttonItem(b)
         if it ~= nil and mine[tostring(it)] then
             n = n + 1

@@ -36,6 +36,8 @@ ITEM_WAIT_S = 5.0
 FINISH_WAIT_S = 15.0  # the respec applied: page closed and RespecCompleted, as probe_route_h's EVENT_WAIT_S
 POLL_S = 0.25
 JOB_WAIT_S = 120.0
+CLICK_PASSES = 3  # a respec's spell clicks: own picks off and the plan's on, then the page read again
+CLICK_BUDGET_S = 180.0  # a Wizard's 9 picks out and 9 in; leveling's 45 s is for the MCP tool's timeout, not this run
 # The page's label for a subclass (pick() takes a unique substring): what's left of the game's name.
 SUBCLASS_LABEL = {
     "BattleMaster": "Battle Master",
@@ -258,13 +260,18 @@ class Live:
         if not opened:
             raise RefStepError(f"CharacterRespec didn't open (pages {pages})")
         res = self.cc_apply(cc)
-        needs = res.get("needs_clicks") or []
-        if needs:
+        log["clicked"] = []
+        for _ in range(CLICK_PASSES):  # a hireling's own picks off, then the plan's on; the page says when none are left
+            needs = res.get("needs_clicks") or []
+            if not needs:
+                break
             clicks = self.click(needs)
-            log["clicked"] = clicks
+            log["clicked"].append(clicks)
             if clicks.get("failed"):
                 raise RefStepError(f"respec spell picks failed: {clicks['failed']}")
             res = self.cc_apply(cc)
+        if res.get("needs_clicks"):
+            raise RefStepError(f"respec spell picks still open after {CLICK_PASSES} passes: {res['needs_clicks']}")
         log["cc"] = res
         if res.get("problems") or res.get("complete") is not True:
             set_ = res.get("set") or {}
@@ -387,7 +394,7 @@ def main(argv: list[str] | None = None) -> int:
             game,
             lambda who, plan: progression.level_up(who, plan),
             lambda needs: leveling.click_spells(
-                lambda op, x: game.rpc(op, x, context="client"), world_tools._inp(), needs
+                lambda op, x: game.rpc(op, x, context="client"), world_tools._inp(), needs, budget_s=CLICK_BUDGET_S
             ),
             lambda who, add: progression.prepare_spells(who, add=add),
         )

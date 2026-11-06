@@ -561,12 +561,56 @@ function P.findSpell(dc, name, cantrips)
     return nil, nil, offered and "already known" or "not offered"
 end
 
-local function spellsStage(widgetName, getDC, ctx, wantSpells, wantCantrips)
+-- The selector holding `name` as a pick: sel entry, its Additions item; nil when no selector does.
+function P.findPick(dc, name, cantrips)
+    for _, s in ipairs(spellSelectors(dc)) do
+        if cantrips == nil or (UI.prop(s.sel, "IsCantrips") == true) == cantrips then
+            P.nameSpells(s.sel)
+            local item = pick(UI.prop(s.sel, "Additions"), name)
+            if item then return s, item end
+        end
+    end
+    return nil
+end
+
+-- A respec's page opens with the hireling's own picks in its selectors, and a full selector takes no click. When the
+-- plan names a kind (spells, cantrips) it is that kind's whole pick list, so what else a selector holds goes first:
+-- { name, cantrips, remove = true } in needs_clicks, ahead of the adds. A pick with no readable name can't be clicked.
+local function ownPicks(dc, ctx, wantSpells, wantCantrips)
+    local out = {}
+    for _, s in ipairs(spellSelectors(dc)) do
+        local cantrips = UI.prop(s.sel, "IsCantrips") == true
+        local want = wantSpells
+        if cantrips then want = wantCantrips end
+        want = wantList(want)
+        if want and s.source ~= "FeatDetails" then
+            P.nameSpells(s.sel)
+            local keep = {}
+            for _, n in ipairs(want) do
+                local item = pick(UI.prop(s.sel, "Additions"), n)
+                if item then keep[tostring(item)] = true end
+            end
+            for i, it in ipairs(list(UI.prop(s.sel, "Additions"))) do
+                if UI.prop(it, "Spell") ~= nil and not keep[tostring(it)] then
+                    local n = label(it)
+                    if n then out[#out + 1] = { name = n, cantrips = cantrips, remove = true }
+                    else
+                        ctx.result.problems[#ctx.result.problems + 1] = ("%s pick #%d: no name, can't take it off")
+                            :format(cantrips and "cantrip" or "spell", i)
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+local function spellsStage(widgetName, getDC, ctx, wantSpells, wantCantrips, moves)
     return function()
         local dc = getDC()
         if not dc then return "fail", "page closed" end
         if #spellSelectors(dc) == 0 then return "next", 0 end
-        local needs = {}
+        local needs = moves and ownPicks(dc, ctx, wantSpells, wantCantrips) or {}
         local function queue(names, cantrips)
             for _, n in ipairs(wantList(names) or {}) do
                 local s, item, why = P.findSpell(dc, n, cantrips)
@@ -592,7 +636,7 @@ local function spellsReport(getDC, ctx)
             if s.complete == false and s.open > 0 then
                 local waiting = 0
                 for _, nd in ipairs(ctx.result.needs_clicks or {}) do
-                    if nd.cantrips == nil or nd.cantrips == s.cantrips then waiting = waiting + 1 end
+                    if not nd.remove and (nd.cantrips == nil or nd.cantrips == s.cantrips) then waiting = waiting + 1 end
                 end
                 if waiting < s.open then
                     missingPick(ctx, "spell choice '" .. s.title .. "' needs "
@@ -855,7 +899,7 @@ RPC.register("ui.cc_apply", function(args)
         { "expertise", skillsStage(get, ctx, plan.expertise, "expertise", true) },
         { "skills?", skillsReport(get, ctx) },
         { "passives", passivesStage(get, ctx, plan.passives, true, true) },
-        { "spells", spellsStage(pg.widget, get, ctx, plan.spells, plan.cantrips) },
+        { "spells", spellsStage(pg.widget, get, ctx, plan.spells, plan.cantrips, pg.widget == "CharacterRespec") },
         { "spells?", spellsReport(get, ctx) },
         { "picks?", I.picksStage(get, ctx, plan) },
         { "name?", function()

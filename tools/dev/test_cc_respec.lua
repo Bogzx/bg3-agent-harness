@@ -401,6 +401,7 @@ do
             if k == "AllSkills.RaceProficientSkills" then return q.groups.race end
             if k == "AllSkills.ExpertiseSkills" then return q.groups.expertise end
             if k == "ClassProgressionDetails.NotSubPassiveSelectors" then return q.selectors end
+            if k == "ClassProgressionDetails.SpellSelectors" then return q.spellSelectors end
             return nil
         end
         BG3AI.UI.command = function(_, n, it)
@@ -453,6 +454,74 @@ do
     r = applySkills(skillPage(), { class = "Fighter", spells = { "Bless" } })
     check(table.concat(r.result.problems, ";"):find("spell Bless: not on the page", 1, true) ~= nil,
         "end check names a spell that didn't land")
+
+    -- a hireling's own spell picks: Lua can't press either button, so they go to the bridge, off before on
+    local function spell(n) return obj("ls.VM", { Name = n, Spell = obj("ls.VM", {}) }) end
+    local function selector(picks, offered, cantrips)
+        local s = { IsCantrips = cantrips, Additions = {}, Available = {}, IsComplete = true }
+        for i, n in ipairs(picks) do s.Additions[i] = spell(n) end
+        for i, n in ipairs(offered) do s.Available[i] = spell(n) end
+        return obj("ls.VM", s)
+    end
+    local function needsOf(res)
+        local out = {}
+        for _, nd in ipairs(res.result.needs_clicks or {}) do
+            out[#out + 1] = (nd.remove and "-" or "+") .. nd.name
+        end
+        return table.concat(out, " ")
+    end
+    Ext.StaticData = { Get = function() return nil end, GetAll = function() return {} end }
+    q = skillPage()
+    local book = selector({ "Shield", "Sleep" }, { "Shield", "Sleep", "Magic Missile" }, false)
+    q.spellSelectors = { selector({ "Light" }, { "Light", "Fire Bolt" }, true), book }
+    r = applySkills(q, { class = "Fighter", spells = { "Shield", "Magic Missile" }, cantrips = { "Fire Bolt" } })
+    check(needsOf(r) == "-Light -Sleep +Fire Bolt +Magic Missile", "spells: own picks off first (" .. needsOf(r) .. ")")
+    check(table.concat(r.result.problems, ";"):find("not on the page", 1, true) == nil,
+        "spells: a pick waiting for its click isn't missing (" .. table.concat(r.result.problems, ";") .. ")")
+    r = applySkills(q, { class = "Fighter", spells = { "Shield", "Sleep" } })
+    check(needsOf(r) == "", "spells: a kind the plan doesn't name stays, a plan already on the page clicks nothing ("
+        .. needsOf(r) .. ")")
+    q.spellSelectors = { selector({}, { "Shield" }, false) }
+    q.spellSelectors[1]._p.Additions = { obj("ls.VM", { Spell = obj("ls.VM", {}) }), obj("ls.VM", {}) }
+    r = applySkills(q, { class = "Fighter", spells = { "Shield" } })
+    check(table.concat(r.result.problems, ";"):find("spell pick #1: no name", 1, true) ~= nil and needsOf(r) == "+Shield",
+        "spells: a pick with no name is named, an empty slot is no pick (" .. table.concat(r.result.problems, ";") .. ")")
+
+    -- the probe finds the pick's button in the Additions, from another tab
+    local UIm = BG3AI.UI
+    local path, findAll, name = UIm.path, UIm.findAll, UIm.name
+    q.spellSelectors = { book }
+    local sub = obj("ListBoxItem", { DataContext = book, IsSelected = true })
+    sub.name = "tab"
+    local buttons = { list = obj("ls.VM", {}) }
+    buttons.list.name = "subTabsSpellsList"
+    local function button(n, it)
+        local b = obj("ls.VM", { TemplatedParent = obj("ls.VM", { Content = it, ActualWidth = 88, ActualHeight = 88 }) })
+        b.name = n
+        return b
+    end
+    local all = { buttons.list, sub, button("DeselectAddedSpell", book._p.Additions[1]),
+        button("DeselectAddedSpell", book._p.Additions[2]), button("SelectAvailableSpell", book._p.Available[3]) }
+    UIm.path = function(_, k) if k == "ClassProgressionDetails.SpellSelectors" then return q.spellSelectors end end
+    UIm.name = function(e) return e.name end
+    UIm.findAll = function(_, pred)
+        local out = {}
+        for _, e in ipairs(all) do
+            if e == sub and (e._p.DataContext ~= nil) or (e ~= sub and pred(e)) then out[#out + 1] = e end
+        end
+        return out
+    end
+    local probe = handlers["ui.level_up_spell_probe"]
+    tabs.classTab._p.IsSelected, page.shown = false, nil
+    local p1 = probe({ name = "Sleep", remove = true })
+    check(p1.switched == true and page.shown == "classTab", "probe: the class tab first, from the ability tab")
+    tabs.classTab._p.IsSelected = true
+    local p2 = probe({ name = "Sleep", remove = true })
+    check(p2.index == 2 and p2.n == 2, "probe: the pick's own button, among the Additions' only ("
+        .. tostring(p2.index) .. "/" .. tostring(p2.n) .. ")")
+    book._p.Additions[2] = nil
+    check(probe({ name = "Sleep", remove = true }).placed == true, "probe: a pick that's off says so")
+    UIm.path, UIm.findAll, UIm.name = path, findAll, name
     filled(false)
 end
 

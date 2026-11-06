@@ -181,10 +181,25 @@ class RespecTest(unittest.TestCase):
         ups: list[dict[str, Any]] = []
         r = FakeRoute()
         log = live(g, r, level_up=lambda w, p: ups.append(p) or "level_up: done").respec(PLANS, "u1")
-        self.assertEqual(log["clicked"]["picked"], ["Bless"])
+        self.assertEqual(log["clicked"][0]["picked"], ["Bless"])
         self.assertEqual(g.finished, 1)
         self.assertEqual(len(ups), 1)
         self.assertEqual((r.mark, log["events"][0]["e"]), (7, "RespecCompleted"))
+
+    def test_a_pick_the_page_offers_only_after_the_first_clicks_gets_a_second_pass(self):
+        off, on = {"name": "Sleep", "remove": True}, {"name": "Bless"}
+        g = FakeGame([Job("done", {"needs_clicks": [off]}), Job("done", {"needs_clicks": [on]}), Job("done", DONE)])
+        seen: list[Any] = []
+        log = live(g, FakeRoute(), click=lambda n: seen.append(n) or {"picked": [], "failed": {}}).respec(PLANS, "u1")
+        self.assertEqual(seen, [[off], [on]])
+        self.assertEqual((len(log["clicked"]), g.finished), (2, 1))
+
+    def test_clicks_the_page_keeps_asking_for_stop_it_before_the_finish(self):
+        need = {"needs_clicks": [{"name": "Bless"}], "complete": True, "problems": []}
+        g = FakeGame([Job("done", need) for _ in range(ar.CLICK_PASSES + 1)])
+        with self.assertRaisesRegex(ar.RefStepError, "still open after 3 passes"):
+            live(g, FakeRoute()).respec(PLANS, "u1")
+        self.assertEqual(g.finished, 0)
 
     def test_no_level_up_before_the_respec_has_landed(self):
         ups: list[Any] = []
