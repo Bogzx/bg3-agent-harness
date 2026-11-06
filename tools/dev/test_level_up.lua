@@ -735,5 +735,21 @@ j = run({ uuid = "wyll", plan = { spells = { "Hex" } } })
 check(j.result.needs_clicks == nil and tostring(j.error):find("passive choice 'Warlock invocations' needs 2 more", 1, true),
       "missing invocations named before the Hex click")
 
+-- 37. a subclass's level: the character has no subclass yet, so no row offers the list, and its length is shared
+--     (Hunter's Prey: 3 entries, 5 lists that long). plan.passive_lists names the selector; the wrong count is named.
+local PREY = { class = "Fighter", passives = { list = "elements", max = 1 } }
+BG3AI.Progression.clearNameCaches()
+openPage(PREY)
+j = run({ uuid = "gale", plan = { passives = { "Elemental Adept: Fire" } } })
+check(j.status == "failed" and not page.finished, "subclass level: a list its length can't name isn't guessed")
+BG3AI.Progression.clearNameCaches()
+openPage(PREY)
+j = run({ uuid = "gale", plan = { passives = { "Elemental Adept: Fire" }, passive_lists = { "elements" } } })
+check(j.status == "done" and page.finished, "subclass level: the row's list names the selector: " .. tostring(j.error))
+BG3AI.Progression.clearNameCaches()
+openPage(PREY)
+j = run({ uuid = "gale", plan = { passives = { "Elemental Adept: Fire" }, passive_lists = { "elements", "styles" } } })
+check(anyProblem(j.result, "the page has 1 selectors, the row 2"), "subclass level: a count off is named")
+
 print(fails == 0 and "ALL OK" or (fails .. " FAILED"))
 os.exit(fails == 0 and 0 or 1)

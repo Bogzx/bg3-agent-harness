@@ -173,4 +173,21 @@ local function picksStage(getDC, ctx, plan)
     end
 end
 
+-- The row's PassiveLists, in the row's order: the page's selectors are in it. A list's length can't always name them:
+-- a Ranger's two have 5 entries each, and at a subclass's own level the character has no subclass yet to look it up by
+-- (Hunter's Prey: 3 entries, 5 lists that long; Wildheart: 5 entries, 4 lists).
+local function passiveListsStage(getDC, ctx, lists)
+    return function()
+        local ids, sels = lists or {}, I.passiveSelectors(getDC())
+        if #ids > 0 and #ids ~= #sels then
+            ctx.result.problems[#ctx.result.problems + 1] = ("passive lists: the page has %d selectors, the row %d")
+                :format(#sels, #ids)
+            return "next", 0
+        end
+        for i, id in ipairs(ids) do P.selPassiveList[tostring(sels[i])] = id end
+        return "next", 0
+    end
+end
+P.inner.passiveListsStage = passiveListsStage
+
 P.inner.abilitiesStage, P.inner.abilityBonusStage, P.inner.picksStage = abilitiesStage, abilityBonusStage, picksStage

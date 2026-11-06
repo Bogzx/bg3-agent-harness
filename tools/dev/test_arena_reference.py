@@ -56,9 +56,12 @@ class FakeRoute:
     ) -> None:
         self.opens, self.deny, self.inventory, self.sent = opens, deny, inventory, []
         self.applies, self.items_go, self.left = applies, items_go, 2
+        self.level = 2
 
     def ev(self, code: str, context: str = "server") -> Any:
         self.sent.append(code)
+        if "EocLevel" in code:
+            return {"level": self.level}
         if "Ext.Stats.Get" in code:
             return {"Target_Bless": "Bless", "FightingStyle_Defense": "Defense", "PrecisionAttack": "Precision"}
         for fn in self.deny:
@@ -226,6 +229,31 @@ class RespecTest(unittest.TestCase):
         g = FakeGame([Job("done", DONE)])
         with self.assertRaisesRegex(ar.RefStepError, "nothing to do"):
             live(g, FakeRoute(), level_up=lambda w, p: "level_up: nothing to do").respec(PLANS, "u1")
+
+    def test_a_level_up_the_page_defaulted_stops_it_naming_the_pick(self):
+        text = ar._with_defaults("level_up: done", {"defaulted": ["feat", "abilities"]})
+        self.assertEqual(ar._with_defaults("level_up: done", {"set": {}}), "level_up: done")
+        with self.assertRaisesRegex(ar.RefStepError, "defaulted: feat, abilities"):
+            live(FakeGame([Job("done", DONE)]), FakeRoute(), level_up=lambda w, p: text).respec(PLANS, "u1")
+
+    def test_a_level_up_that_lands_on_another_level_stops_it(self):
+        r = FakeRoute()
+        r.level = 3
+        with self.assertRaisesRegex(ar.RefStepError, "level 2 done, but the character reads"):
+            live(FakeGame([Job("done", DONE)]), r).respec(PLANS, "u1")
+
+    def test_an_ability_improvement_is_named_so_the_page_defaults_nothing(self):
+        doc = json.loads((REPO / "packages/bench/builds/l5_4v4_v1.json").read_text())
+        b = next(x for x in doc["builds"] if x["class"] == "Fighter")
+        up = next(u for u in ar.ui_plans(b, 5, STATIC)["level_ups"] if u["level"] == 4)
+        self.assertEqual(up["plan"], {"feat": "Ability Improvement", "abilities": {"Strength": 2}})
+
+    def test_a_subclass_levels_passives_carry_their_list_from_the_subclass_row(self):
+        doc = json.loads((REPO / "packages/bench/builds/l5_4v4_team2_v1.json").read_text())
+        for cls, lv, want in (("Ranger", 3, "26b53d40"), ("Barbarian", 3, "7f7340a0")):
+            b = next(x for x in doc["builds"] if x["class"] == cls)
+            up = next(u for u in ar.ui_plans(b, 5, STATIC)["level_ups"] if u["level"] == lv)
+            self.assertEqual([x[:8] for x in up["plan"]["passive_lists"]], [want], cls)
 
     def test_an_incomplete_page_says_what_it_bought(self):
         res = {"complete": False, "problems": [], "set": {"abilities": {"points_left": 6}}}

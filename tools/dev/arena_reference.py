@@ -78,9 +78,9 @@ def _spell_kinds(cls: str, sub: str | None, level: int, static: dict[str, Any]) 
     return out
 
 
-def _passive_lists(cls: str, sub: str | None, level: int, static: dict[str, Any]) -> list[str]:
-    """The PassiveList of each SelectPassives on the respec page, a level-1 character's, in the row's order."""
-    rows = [r for r in mas.selector_rows(cls, sub, level, static, cls) if r["level"] == 1]
+def _passive_lists(cls: str, sub: str | None, level: int, static: dict[str, Any], at: int = 1) -> list[str]:
+    """The PassiveList of each SelectPassives on the page of level `at` (1: the respec's), in the row's order."""
+    rows = [r for r in mas.selector_rows(cls, sub, level, static, cls) if r["level"] == at]
     return [a[0] for r in rows for name, a in mas.selectors(r["row"]["Selectors"]) if name == "SelectPassives"]
 
 
@@ -129,6 +129,7 @@ def ui_plans(build: dict[str, Any], level: int, static: dict[str, Any]) -> dict[
             p["subclass"] = _label(sub)
         if u.get("passives"):
             p["passives"] = [x for ids in u["passives"] for x in ids]
+            p["passive_lists"] = _passive_lists(cls, sub, level, static, lv)
             names.extend(p["passives"])
         for kind in ("skills", "expertise"):
             picks = [x for ids in u.get(kind, []) for x in ids]
@@ -138,6 +139,7 @@ def ui_plans(build: dict[str, Any], level: int, static: dict[str, Any]) -> dict[
         imp = u.get("improvement")
         if imp:
             if "asi" in imp:
+                p["feat"] = "Ability Improvement"  # the page's name; left out, the page reports the feat as defaulted
                 p["abilities"] = imp["asi"]
             else:
                 p["feat"] = imp["feat"]
@@ -220,6 +222,15 @@ def setup_check(game: Any, arena: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     return 0, rec
 
 
+DEFAULTED = "(defaulted:"  # what the level-up call adds when the page filled a pick the plan didn't make
+
+
+def _with_defaults(text: str, result: Any) -> str:
+    """A level-up's text, naming what the page defaulted: the text alone doesn't say, and that pick isn't the build."""
+    picks = result.get("defaulted") if isinstance(result, dict) else None
+    return f"{text} {DEFAULTED} {', '.join(picks)})" if picks else text
+
+
 class Live:
     """The live steps over probe_route_h's RouteH (chunks, page reads) and the bridge's Game. Tests give fakes."""
 
@@ -297,9 +308,20 @@ class Live:
         for u in plans["level_ups"]:
             text = self.level_up(who, translate(u["plan"], names))
             log["level_ups"].append({"level": u["level"], "out": text})
-            if not text.startswith("level_up: done"):
-                raise RefStepError(f"level {u['level']}: {text}")
+            if not text.startswith("level_up: done") or DEFAULTED in text:
+                raise RefStepError(f"level {u['level']}: {text}", log)
+            self.reached(who, u["level"], log)
         return log
+
+    def reached(self, who: str, level: int, log: dict[str, Any]) -> None:
+        """A later level's picks on the wrong page aren't the build: every level-up must land on its level."""
+        ok, r = self.route.wait(
+            lambda: self.route.ev(LEVEL_LUA % _lua_str(who)),
+            lambda x: isinstance(x, dict) and x.get("level") == level,
+            ITEM_WAIT_S,
+        )
+        if not ok:
+            raise RefStepError(f"level {level} done, but the character reads {r}", log)
 
     def applied(self, mark: int) -> list[dict[str, Any]]:
         """FinishCreating only asks: the respec has landed when its page is gone and RespecCompleted fired, and a
@@ -351,6 +373,9 @@ class Live:
         return log
 
 
+LEVEL_LUA = """
+return Ext.Json.Stringify({ level = Mods.BG3AI.BG3AI.Visibility.entity(%s).EocLevel.Level })
+"""
 CLEAR_LUA = """
 local who = %s
 local V = Mods.BG3AI.BG3AI.Visibility
@@ -394,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
         os.environ.setdefault("BG3AI_RUNTIME", str(REPO / "runtime" / "arena_reference"))
         sys.path.insert(0, str(REPO / "bridge" / "src"))
         from bg3ai import leveling
-        from bg3ai.tools import core, progression, world_tools
+        from bg3ai.tools import core, progression, reporting, world_tools
 
         game = core.game
         if a.step == "setup-check":
@@ -404,7 +429,7 @@ def main(argv: list[str] | None = None) -> int:
         live = Live(
             rh.RouteH(game, a.out),
             game,
-            lambda who, plan: progression.level_up(who, plan),
+            lambda who, plan: _with_defaults(progression.level_up(who, plan), reporting._batch.get("result")),
             lambda needs: leveling.click_spells(
                 lambda op, x: game.rpc(op, x, context="client"), world_tools._inp(), needs, budget_s=CLICK_BUDGET_S
             ),

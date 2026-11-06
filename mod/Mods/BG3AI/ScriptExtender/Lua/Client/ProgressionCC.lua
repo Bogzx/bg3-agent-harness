@@ -907,16 +907,7 @@ RPC.register("ui.cc_apply", function(args)
         { "race_skills", skillsStage(get, ctx, plan.race_skills, "race", true) },
         { "expertise", skillsStage(get, ctx, plan.expertise, "expertise", true) },
         { "skills?", skillsReport(get, ctx) },
-        { "passive_lists", function() -- the class row's lists, in the row's order: the page's selectors are in it
-            local ids, sels = plan.passive_lists or {}, passiveSelectors(get())
-            if #ids > 0 and #ids ~= #sels then
-                ctx.result.problems[#ctx.result.problems + 1] = ("passive lists: the page has %d selectors, the row %d")
-                    :format(#sels, #ids)
-                return "next", 0
-            end
-            for i, id in ipairs(ids) do P.selPassiveList[tostring(sels[i])] = id end
-            return "next", 0
-        end },
+        { "passive_lists", I.passiveListsStage(get, ctx, plan.passive_lists) },
         { "passives", passivesStage(get, ctx, plan.passives, true, true) },
         { "spells", spellsStage(pg.widget, get, ctx, plan.spells, plan.cantrips, pg.widget == "CharacterRespec") },
         { "spells?", spellsReport(get, ctx) },
