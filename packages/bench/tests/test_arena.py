@@ -177,18 +177,19 @@ def test_the_mirror_arena_names_four_twin_pairs_and_waits_for_its_live_check():
     assert "NOT READY FOR RATED MATCHES" in a["about"]
 
 
-def test_the_builds_arena_is_a_4v4_red_blue_draft_from_the_build_file_with_a_race_per_pair():
+def test_the_builds_arena_is_a_rated_4v4_red_blue_from_the_build_file_with_a_race_per_pair():
     a = arena.load_named("builds-l2-4v4-v1")
     pairs = a["mirror"]["pairs"]
     assert [p["build"] for p in pairs] == ["fighter", "rogue", "barbarian", "ranger"]
     assert len({p["race"] for p in pairs}) == 4 and len({p["template"] for p in pairs}) == 4  # A1: a race per build
     assert all(p["kit"]["race"]["race"] == p["race"] for p in pairs)
+    assert "draft" not in a and all(p["reference"]["profile"] for p in pairs)  # S3's four references
     names = arena.team_names(a)
     assert all(n.startswith("Red ") for n in names["A"]) and all(n.startswith("Blue ") for n in names["B"])
     assert [n.split(" ", 1)[1] for n in names["A"]] == [n.split(" ", 1)[1] for n in names["B"]]
     # S1's P5 cells: a 1.5 m line of 4 doesn't fit the ground that lands exactly, a 1.25 m line does
     loc = a["location"]
-    assert loc["line_gap"] == 1.25 and "reference" in a["draft"]
+    assert loc["line_gap"] == 1.25
     assert loc["spawns"] == {"A": [212.875, 10.98, 288.0], "B": [212.875, 10.98, 296.0]}
     assert arena.check_geometry(loc["spawns"], len(pairs), loc["line_gap"]) == []
     assert {k: a[k] for k in ("save", "seed", "karmic")} == {

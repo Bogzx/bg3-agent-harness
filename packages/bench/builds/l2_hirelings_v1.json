@@ -5,7 +5,6 @@
  "tier": "L2",
  "level": 2,
  "game_build": "25605617",
- "draft": "no reference profiles yet: S3 reads each from a respecced hireling of the build's class (route H)",
  "builds": [
   {
    "id": "fighter",
@@ -914,7 +913,262 @@
     "OBJ_Potion_Healing",
     "OBJ_Potion_Healing"
    ],
-   "reference": null
+   "reference": {
+    "profile": {
+     "race": "4d30b4f9-7bb2-4fc2-a7bc-080f116e325a",
+     "level": 2,
+     "classes": [
+      "36be18ba-23db-4dff-bfa6-ae105ce43144/00000000-0000-0000-0000-000000000000/2"
+     ],
+     "abilities": [
+      12,
+      17,
+      13,
+      8,
+      15,
+      10
+     ],
+     "max_hp": 18,
+     "ac": 14,
+     "equipment": {
+      "RangedMainHand": "WPN_HUM_Shortbow_A_0_c5403c1d-f372-43e1-927a-9189e9e3545d",
+      "Boots": "ARM_Boots_Leather_969bab00-b269-46a5-a7e9-dd4887814719",
+      "Breast": "ARM_Leather_02ae5d88-8044-43df-8363-02a2900776db",
+      "MeleeMainHand": "WPN_HUM_Shortsword_A_0_467ddb4f-6791-41fa-99f7-ee8620d63bbe"
+     },
+     "inventory": [
+      "CONS_Potion_Healing_A_d47006e9-8a51-453d-b200-9e0d42e9bbab"
+     ],
+     "spells": [
+      "Projectile_HamstringShot",
+      "Projectile_Jump",
+      "Projectile_MainHandAttack",
+      "Shout_Dash",
+      "Shout_Disengage",
+      "Shout_Hide",
+      "Target_CureWounds",
+      "Target_DancingLights",
+      "Target_Dip",
+      "Target_FindFamiliar_Cat_Ritual",
+      "Target_FindFamiliar_Crab_Ritual",
+      "Target_FindFamiliar_Frog_Ritual",
+      "Target_FindFamiliar_Rat_Ritual",
+      "Target_FindFamiliar_Raven_Ritual",
+      "Target_FindFamiliar_Ritual",
+      "Target_FindFamiliar_Spider_Ritual",
+      "Target_Help",
+      "Target_HuntersMark",
+      "Target_MainHandAttack",
+      "Target_OpeningAttack",
+      "Target_PiercingThrust",
+      "Target_Shove",
+      "Throw_ImprovisedWeapon",
+      "Throw_Throw"
+     ],
+     "prepared": [
+      "Projectile_HamstringShot",
+      "Projectile_Jump",
+      "Projectile_MainHandAttack",
+      "Shout_Dash",
+      "Shout_Disengage",
+      "Shout_Hide",
+      "Target_CureWounds",
+      "Target_DancingLights",
+      "Target_Dip",
+      "Target_FindFamiliar_Cat_Ritual",
+      "Target_FindFamiliar_Crab_Ritual",
+      "Target_FindFamiliar_Frog_Ritual",
+      "Target_FindFamiliar_Rat_Ritual",
+      "Target_FindFamiliar_Raven_Ritual",
+      "Target_FindFamiliar_Ritual",
+      "Target_FindFamiliar_Spider_Ritual",
+      "Target_Help",
+      "Target_HuntersMark",
+      "Target_MainHandAttack",
+      "Target_OpeningAttack",
+      "Target_PiercingThrust",
+      "Target_Shove",
+      "Throw_ImprovisedWeapon",
+      "Throw_Throw"
+     ],
+     "passives": [
+      "AttackOfOpportunity",
+      "Background_Criminal",
+      "CombatStartAttack",
+      "DarknessRules",
+      "DeathSavingThrows",
+      "Drow_DrowWeaponTraining",
+      "FavoredEnemy_BountyHunter",
+      "FeyAncestry",
+      "FightingStyle_Archery",
+      "NaturalExplorer_BeastTamer",
+      "NonLethal",
+      "Perform",
+      "ShortResting",
+      "SuperiorDarkvision",
+      "UnlockedSpellSlotLevel1",
+      "WeaponThrow"
+     ],
+     "statuses": [
+      "INSURFACE"
+     ],
+     "resources": {
+      "ActionPoint": {
+       "0": 1.0
+      },
+      "BonusActionPoint": {
+       "0": 1.0
+      },
+      "SpellSlot": [
+       2.0
+      ],
+      "Movement": {
+       "0": 9.0
+      },
+      "ReactionActionPoint": {
+       "0": 1.0
+      }
+     },
+     "proficiencies": [
+      "HandCrossbows",
+      "LightArmor",
+      "MartialWeapons",
+      "MediumArmor",
+      "Rapiers",
+      "Shields",
+      "Shortswords",
+      "SimpleWeapons"
+     ],
+     "skills": {
+      "Nature": 1,
+      "Athletics": 3,
+      "Perception": 4,
+      "SleightOfHand": 3,
+      "Intimidation": 0,
+      "History": -1,
+      "Investigation": 1,
+      "Stealth": 5,
+      "AnimalHandling": 2,
+      "Persuasion": 0,
+      "Performance": 0,
+      "Religion": -1,
+      "Survival": 4,
+      "Arcana": -1,
+      "Acrobatics": 3,
+      "Medicine": 2,
+      "Insight": 2,
+      "Deception": 2
+     },
+     "boosts": [
+      "Ability|Ability|Charisma,10|",
+      "Ability|Ability|Constitution,13|",
+      "Ability|Ability|Dexterity,15|",
+      "Ability|Ability|Dexterity,2|",
+      "Ability|Ability|Intelligence,8|",
+      "Ability|Ability|Strength,12|",
+      "Ability|Ability|Wisdom,14|",
+      "Ability|Ability|Wisdom,1|",
+      "ActionResource|||",
+      "ActionResource|||",
+      "ActiveCharacterLight|||",
+      "BlockRegainHP|BlockRegainHP|Undead;Construct|",
+      "DarkvisionRangeMin|||",
+      "DownedStatus|||",
+      "ProficiencyBonus|ProficiencyBonus|Skill,Athletics|",
+      "ProficiencyBonus|ProficiencyBonus|Skill,Nature|",
+      "ProficiencyBonus|ProficiencyBonus|Skill,Survival|",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "RollBonus|||",
+      "RollBonus|||",
+      "StatusImmunity|||",
+      "StatusImmunity|||",
+      "StatusImmunity|||",
+      "Tag|||",
+      "UnlockInterrupt|||",
+      "UnlockSpell|UnlockSpell|Projectile_HamstringShot|",
+      "UnlockSpell|UnlockSpell|Target_OpeningAttack|",
+      "UnlockSpell|UnlockSpell|Target_PiercingThrust|",
+      "UnlockSpell|||"
+     ],
+     "spellcast": [
+      "Projectile_HamstringShot|Wisdom|AlwaysPrepared|12|4",
+      "Projectile_Jump|Intelligence|AlwaysPrepared|9|1",
+      "Projectile_MainHandAttack|None|AlwaysPrepared|-|-",
+      "Shout_Dash|Intelligence|AlwaysPrepared|9|1",
+      "Shout_Disengage|Intelligence|AlwaysPrepared|9|1",
+      "Shout_Hide|Intelligence|AlwaysPrepared|9|1",
+      "Target_CureWounds|Wisdom|AlwaysPrepared|12|4",
+      "Target_DancingLights|Charisma|AlwaysPrepared|10|2",
+      "Target_Dip|Intelligence|AlwaysPrepared|9|1",
+      "Target_FindFamiliar_Cat_Ritual|Wisdom|AlwaysPrepared|12|4",
+      "Target_FindFamiliar_Crab_Ritual|Wisdom|AlwaysPrepared|12|4",
+      "Target_FindFamiliar_Frog_Ritual|Wisdom|AlwaysPrepared|12|4",
+      "Target_FindFamiliar_Rat_Ritual|Wisdom|AlwaysPrepared|12|4",
+      "Target_FindFamiliar_Raven_Ritual|Wisdom|AlwaysPrepared|12|4",
+      "Target_FindFamiliar_Ritual|Wisdom|AlwaysPrepared|12|4",
+      "Target_FindFamiliar_Spider_Ritual|Wisdom|AlwaysPrepared|12|4",
+      "Target_Help|Intelligence|AlwaysPrepared|9|1",
+      "Target_HuntersMark|Wisdom|AlwaysPrepared|12|4",
+      "Target_MainHandAttack|None|AlwaysPrepared|-|-",
+      "Target_OpeningAttack|Wisdom|AlwaysPrepared|12|4",
+      "Target_PiercingThrust|Wisdom|AlwaysPrepared|12|4",
+      "Target_Shove|Intelligence|AlwaysPrepared|9|1",
+      "Throw_ImprovisedWeapon|Intelligence|AlwaysPrepared|9|1",
+      "Throw_Throw|Intelligence|AlwaysPrepared|9|1"
+     ],
+     "derived": {
+      "initiative_bonus": 3,
+      "weapon_action_dc": 4,
+      "ranged_main_hand": "none",
+      "proficiency_bonus": 2,
+      "melee_main_hand": "none",
+      "spell_casting_ability": "Intelligence",
+      "movement": 9.0,
+      "spell_save_dc_boost": 0
+     },
+     "resource_max": [
+      "ActionPoint|0|1.0|Default",
+      "BonusActionPoint|0|1.0|Default",
+      "Movement|0|9.0|Default",
+      "ReactionActionPoint|0|1.0|Default",
+      "SpellSlot|1|2.0|Rest"
+     ],
+     "passive_state": [
+      "AttackOfOpportunity|false|true",
+      "Background_Criminal|false|true",
+      "CombatStartAttack|false|true",
+      "DarknessRules|false|true",
+      "DeathSavingThrows|false|true",
+      "Drow_DrowWeaponTraining|false|true",
+      "FavoredEnemy_BountyHunter|false|true",
+      "FeyAncestry|false|true",
+      "FightingStyle_Archery|false|true",
+      "NaturalExplorer_BeastTamer|false|true",
+      "NonLethal|false|true",
+      "Perform|false|true",
+      "ShortResting|false|true",
+      "SuperiorDarkvision|false|true",
+      "UnlockedSpellSlotLevel1|false|true",
+      "WeaponThrow|false|true"
+     ]
+    },
+    "game_build": "25605617",
+    "hireling": "7198b8ec-8fb4-4a44-9306-a68d533d1cfb",
+    "evidence": "live.md L2 launch on e4f98d19, runtime/probes/4v4-references/"
+   }
   }
  ]
 }

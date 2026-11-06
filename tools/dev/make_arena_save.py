@@ -312,6 +312,12 @@ def _per_selector(v: Any, n: int, what: str) -> list[list[str]]:
     return v
 
 
+def _row_ability(args: list[str], i: int) -> str | None:
+    """The casting ability a selector's row names at args[i] (AddSpells(list,,Charisma,,AlwaysPrepared): 2,
+    SelectSpells(list,1,0,HighElfCantrip,Intelligence): 4), or None: a real character's spell then has its class's."""
+    return (args[i] or None) if len(args) > i else None
+
+
 def improvement_plan(imp: Any, lv: int, static: dict[str, Any], taken: list[str], what: str) -> dict[str, Any]:
     """One AllowImprovement level: {"asi": {ability: points}} (2 points, at most 2 in one) or {"feat": name, picks per
     the feat's selectors: "abilities", "passives", "spells", "skills"}. -> {boosts: [...], passives, spells, choices}"""
@@ -353,7 +359,10 @@ def improvement_plan(imp: Any, lv: int, static: dict[str, Any], taken: list[str]
             if len(ids) != int(args[1]):
                 raise SpecError(f"{w}: {name} takes {args[1]} {kind}")
             _in_list(ids, args[0], static, f"{w}: {kind}")
-            out["choices"].append({"kind": kind, "list": args[0], "n": int(args[1]), "exact": True, "ids": ids})
+            x = {"kind": kind, "list": args[0], "n": int(args[1]), "exact": True, "ids": ids}
+            if kind == "spells":
+                x["ability"] = _row_ability(args, 4)
+            out["choices"].append(x)
         else:
             raise SpecError(f"{w}: {name} has {sel}, a choice a kit can't make")
     if extra := sorted(set(imp) - allowed):
@@ -381,6 +390,7 @@ def kit_plan(
     choices: list[dict[str, Any]] = []
     grants: dict[str, list[str]] = {"boosts": [], "passives": [], "passives_removed": [], "spells": []}
     pool: list[str] = []  # spells a preparer prepares from (no AlwaysPrepared flag)
+    abilities: dict[str, str] = {}  # spell -> its ability: AddSpell gives none, ArenaMirror writes the rows
     improvements = kit.get("improvements") or []
     if not isinstance(improvements, list):
         raise SpecError(f"{what}: improvements must list one entry per improvement level")
@@ -402,7 +412,10 @@ def kit_plan(
             prepared_flag = len(args) > 6 and args[6] == "AlwaysPrepared"
             if name == "AddSpells":
                 if r["source"] == "subclass":
-                    grants["spells"] += _spells_of(args[0], static)  # the class's own: the game's (stat entry)
+                    ids = _spells_of(args[0], static)  # the class's own: the game's (stat entry)
+                    grants["spells"] += ids
+                    if spell_ab := _row_ability(args, 2) or c["casting"]:
+                        abilities.update(dict.fromkeys(ids, spell_ab))
                 elif not (len(args) > 4 and args[4] == "AlwaysPrepared"):
                     pool += _spells_of(args[0], static)
                 continue
@@ -415,6 +428,8 @@ def kit_plan(
             elif name in CHOICE:  # every pick exact
                 x = {"kind": CHOICE[name], "list": args[0], "n": int(args[1]), "exact": True, "level": lv}
                 x["pool"] = CHOICE[name] == "spells" and not prepared_flag
+                if CHOICE[name] == "spells":
+                    x["ability"] = _row_ability(args, 4)
                 choices.append(x)
             else:
                 raise SpecError(f"{what}: {cls} level {lv} has {name}, a choice a kit can't make")
@@ -447,7 +462,8 @@ def kit_plan(
         x["from_pool"] = x.pop("pool")
         if x["from_pool"]:
             pool += x["ids"]
-    race, rpart, rchoices, fixed = race_plan(kit, static, what)
+    race, rpart, rchoices, fixed = race_plan(kit, static, what, c["casting"])
+    abilities.update(rpart.pop("spell_abilities", {}))
     book_only = cls in PICKS_ARE_ITS_BOOK and kit.get("prepared") is not None
     pool_picks = [x for x in choices if x.pop("from_pool", False)]
     bg = kit.get("background")
@@ -508,6 +524,10 @@ def kit_plan(
         for x in pool_picks:
             x["ids"], x["exact"] = [i for i in x["ids"] if i in prepared], False
         choices = [x for x in choices if x["ids"]]
+    for x in choices:
+        spell_ab = x.pop("ability", None) or c["casting"]
+        if x["kind"] == "spells" and spell_ab:
+            abilities.update(dict.fromkeys(x["ids"], spell_ab))
     out_kit: dict[str, Any] = {
         "race": rpart,
         "player": {"passives": player},
@@ -527,15 +547,18 @@ def kit_plan(
             out_kit["grants"]["passives_removed"] = grants["passives_removed"]
     if prepared is not None and not book_only:
         out_kit["prepared"] = list(prepared)
+    if abilities:
+        out_kit["spell_abilities"] = abilities
     return {"race": race, "kit": out_kit}
 
 
 def race_plan(
-    kit: dict[str, Any], static: dict[str, Any], what: str
+    kit: dict[str, Any], static: dict[str, Any], what: str, casting: str | None = None
 ) -> tuple[str, dict[str, Any], list[dict[str, Any]], list[tuple[str, str]]]:
     """The kit's race part from the race's level-1 rows, its parent race's first (A1, D411: a build's race, so a Wood
     Half-Elf also gets the subrace's Movement and Stealth). -> (race id, the kit's race part {race, boosts, passives,
-    spells?}, the race's choices (Human: one skill, from kit.race_skills), [(skill, where from)] the rows give)."""
+    spells?, spell_abilities?}, the race's choices (Human: one skill, from kit.race_skills), [(skill, where from)] the
+    rows give). `casting`: the class's, for a row that names no ability."""
     name = kit.get("race")
     race = static["races"].get(name)
     if race is None:
@@ -544,17 +567,29 @@ def race_plan(
     boosts = [b for r in rows for b in (r["Boosts"] or "").split(";") if b]
     passives = [x for r in rows for x in (r["PassivesAdded"] or "").split(";") if x]
     spells: list[str] = []
+    abilities: dict[str, str] = {}
     choices: list[dict[str, Any]] = []
     for r in rows:
         for sel, args in selectors(r["Selectors"]):
             if sel == "AddSpells" and args[0] in static.get("spell_lists", {}):
                 spells += static["spell_lists"][args[0]]["spells"]
+                if ab := _row_ability(args, 2) or casting:
+                    abilities.update(dict.fromkeys(static["spell_lists"][args[0]]["spells"], ab))
             elif sel == "SelectSpells":
                 ids = _names(kit.get("race_spells", []), None, f"{what}: race_spells")
                 if len(ids) != int(args[1]):
                     raise SpecError(f"{what}: race_spells has {len(ids)}, the race {name}'s selector takes {args[1]}")
                 _in_list(ids, args[0], static, f"{what}: race_spells")
-                choices.append({"kind": "spells", "list": args[0], "n": int(args[1]), "exact": True, "ids": ids})
+                choices.append(
+                    {
+                        "kind": "spells",
+                        "list": args[0],
+                        "n": int(args[1]),
+                        "exact": True,
+                        "ids": ids,
+                        "ability": _row_ability(args, 4),
+                    }
+                )
             elif sel == "SelectSkills":
                 ids = _names(kit.get("race_skills", []), SKILLS, f"{what}: race_skills")
                 if len(ids) != int(args[1]):
@@ -569,6 +604,8 @@ def race_plan(
     part: dict[str, Any] = {"race": race["race"], "boosts": ";".join(boosts), "passives": passives}
     if spells:
         part["spells"] = spells
+    if abilities:
+        part["spell_abilities"] = abilities
     return race["race"], part, choices, fixed
 
 

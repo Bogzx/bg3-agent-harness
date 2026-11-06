@@ -77,7 +77,7 @@ def stat_abilities(path: Path = STATS_LUA) -> dict[str, dict[str, int]]:
     """Our stat entries' point-buy per class, read from Shared/ArenaStats.lua (AS.CLASSES)."""
     text = path.read_text()
     out = {}
-    for m in re.finditer(r"(\w+) = \{ table = \"[^\"]+\", casting = \"\w+\",\s*abilities = \{ ([\d, ]+) \} \}", text):
+    for m in re.finditer(r"(\w+) = \{ table = \"[^\"]+\",\s*abilities = \{ ([\d, ]+) \} \}", text):
         out[m.group(1)] = dict(zip(mas.ABILITIES, (int(x) for x in m.group(2).split(",")), strict=True))
     if not out:
         raise BuildError(f"no class abilities read from {path}")
