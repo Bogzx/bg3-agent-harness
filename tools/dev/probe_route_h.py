@@ -42,6 +42,13 @@ PAGE_WAIT_S = 10.0  # a page asked for by a story call is visible within this
 EVENT_WAIT_S = 15.0  # HenchmanSelected / RespecCancelled within this of the page's command
 POLL_S = 0.5
 LEAVE_RESPEC = ("ExitCharacterRespec", "CancelRespec", "CancelCommand", "CloseCommand")  # tried in order, dry first
+# ExitCharacterRespec (the page's back button, CharacterRespec.xaml:467) asks "Warning: You will lose all unsaved
+# progress. Do you want to continue? [Yes] [No]" in a Dialog_box (live window 2, 2026-11-03). Yes = leave without
+# applying, the only answer the probe gives, and only to the box whose DataContext UUIDProperty is CancelRespecMsgID.
+# Its title and text are handles that read "Warning" / "[ForceUpdate]" (live window 3), so the text can't identify it.
+# The apply path is FinishCreating (the proceed button, CharacterRespec.xaml:132, enabled by
+# IsCharacterCompleteExceptName); the probe never runs it.
+LEAVE_BOX_ID = "CancelRespecMsgID"
 
 # The route's Osiris events (Hirelings.txt :741-747, :1170-1173; Respec.txt :20-28), logged in their own table so the
 # arena probe's library stays as it is.
@@ -185,6 +192,42 @@ def command(widget: str, name: str, dry: bool) -> str:
     )
 
 
+def _box_view() -> str:
+    return (
+        "local A = Mods.BG3AI.BG3AI.UIActions\n"
+        "local box = A.confirmBox()\n"
+        "local v\n"
+        "if box ~= nil then\n"
+        "    v = { box = true, name = box.name, title = box.title, text = box.text, buttons = {} }\n"
+        "    pcall(function() v.id = tostring(Mods.BG3AI.BG3AI.UI.prop(box.el.DataContext, 'UUIDProperty')) end)\n"
+        "    for _, b in ipairs(box.buttons) do v.buttons[#v.buttons + 1] = b.label end\n"
+        "else v = { box = false } end\n"
+    )
+
+
+BOX_READ = client_read(_box_view() + "return Ext.Json.Stringify(v)")
+
+
+def box_yes(need: str) -> str:
+    """Press the open box's "Yes", only when its UUIDProperty is `need` and a button reads exactly Yes; the box is
+    read and pressed in one chunk, so it can't change in between. -> {box, ..., pressed?, via?, refused?}"""
+    return client_read(
+        _box_view() + "if not box then return Ext.Json.Stringify(v) end\n"
+        f"if v.id ~= {lua(need)} then\n"
+        "    v.refused = 'not the expected box'\n"
+        "    return Ext.Json.Stringify(v)\n"
+        "end\n"
+        "local yes\n"
+        "for _, b in ipairs(box.buttons) do\n"
+        "    if tostring(b.label or ''):lower():gsub('^%s+', ''):gsub('%s+$', '') == 'yes' then yes = b end\n"
+        "end\n"
+        "if not yes then v.refused = 'no Yes button' return Ext.Json.Stringify(v) end\n"
+        "local ok, how = A.pressButton(yes.el, false)\n"
+        "v.pressed, v.via = ok and true or false, tostring(how)\n"
+        "return Ext.Json.Stringify(v)"
+    )
+
+
 def select_origin(index: int) -> str:
     """Set SelectedOrigin to SelectableOrigins' entry `index` and read it back (the CC driver's set, PI.set)."""
     return client_read(
@@ -199,17 +242,26 @@ def select_origin(index: int) -> str:
     )
 
 
-def pick_origin(entries: list[dict[str, Any]], cls: str) -> tuple[int | None, str]:
-    """The one SelectableOrigins entry for Hireling_<cls>: an exact id first, then a field naming the class. None plus
-    why when there isn't exactly one (never a guess)."""
-    want = f"hireling_{cls}".lower()
-    exact = [e for e in entries if any(str(v).lower() == want for v in e.get("fields", {}).values())]
-    if len(exact) == 1:
-        return exact[0]["i"], "exact id"
-    loose = [e for e in entries if any(cls.lower() in str(v).lower() for v in e.get("fields", {}).values())]
-    if len(loose) == 1 and not exact:
-        return loose[0]["i"], "the one entry naming the class"
-    return None, f"{len(exact)} exact and {len(loose)} entries name {cls}: no unique pick"
+# The Henchmen page's entries carry no id or name Lua can read (VMSelectableOrigin: IsLocked*, Portrait, Next/Prev;
+# Name reads nil; live window 3). The page shows the selected one as "... Venture Forth | <race> | Level 1 <class>",
+# one frame after the selection, so each entry is selected in one eval and read in the next.
+SELECT_SETTLE_S = 1.0
+PANEL_READ = client_read(
+    "local el\n"
+    "for _, w in ipairs(UI.widgets()) do if w.name == 'Henchmen' and UI.isVisible(w.el) then el = w.el end end\n"
+    "if el == nil then return Ext.Json.Stringify({ open = false }) end\n"
+    "local t = UI.allText(el, ' | ', 3000) or ''\n"
+    "local r, c = t:match('Venture Forth | ([^|]+) | Level %d+ ([%a%-]+)')\n"
+    "return Ext.Json.Stringify({ open = true, race = r, cls = c })"
+)
+
+
+def pick_origin(panels: list[dict[str, Any]], cls: str) -> tuple[int | None, str]:
+    """The one entry whose panel names class `cls`. None plus why when there isn't exactly one (never a guess)."""
+    hits = [x["i"] for x in panels if str(x.get("cls") or "").lower() == cls.lower()]
+    if len(hits) == 1:
+        return hits[0], f"entry {hits[0]} shows Level 1 {cls}"
+    return None, f"{len(hits)} of {len(panels)} entries show {cls}: no unique pick"
 
 
 class RouteH:
@@ -294,13 +346,41 @@ class RouteH:
             if isinstance(dry, dict) and dry.get("ok"):
                 rec["leave"][-1]["run"] = self.ev(command("CharacterRespec", name, False), "client")
                 break
-        left, rec["pages_after"] = self.wait(
-            lambda: self.ev(PAGES, "client"), lambda r: isinstance(r, list) and "CharacterRespec" not in r, PAGE_WAIT_S
-        )
+        stop = self.leave_respec(rec)
         rec["events"] = self.events(mark)
-        if not left:
-            return self.write(tag, {**rec, "verdict": "STOP", "why": "the respec page didn't close: stop the load"})
+        if stop:
+            return self.write(tag, {**rec, "verdict": "STOP", "why": stop + ": stop the load"})
         return self.write(tag, {**rec, "verdict": "PASS", "why": f"page opened; race fields {rec['race_fields']}"})
+
+    def leave_respec(self, rec: dict[str, Any]) -> str | None:
+        """After the leave command: wait for the page to close or a box to show; answer Yes to the CancelRespecMsgID
+        box only (any other box: nothing pressed); then the page and the box must both be gone. -> why it failed."""
+
+        def look() -> dict[str, Any]:
+            return {"pages": self.ev(PAGES, "client"), "box": self.ev(BOX_READ, "client")}
+
+        def gone(r: dict[str, Any]) -> bool:
+            return isinstance(r["pages"], list) and "CharacterRespec" not in r["pages"] and r["box"] == {"box": False}
+
+        def closed_or_box(r: dict[str, Any]) -> bool:
+            return gone(r) or (isinstance(r["box"], dict) and r["box"].get("box") is True)
+
+        _, r = self.wait(look, closed_or_box, PAGE_WAIT_S)
+        rec["pages_after"], rec["box"] = r["pages"], r["box"]
+        if gone(r):
+            return None
+        if not (isinstance(r["box"], dict) and r["box"].get("box")):
+            return "the respec page didn't close and no box showed"
+        rec["box_answer"] = got = self.ev(box_yes(LEAVE_BOX_ID), "client")
+        a: dict[str, Any] = got if isinstance(got, dict) else {}
+        if not a.get("pressed"):
+            why = a.get("refused") or ("box gone before the answer" if a.get("box") is False else "press failed")
+            return f"box {r['box'].get('title')!r} / {r['box'].get('text')!r}: {why} (nothing pressed)"
+        closed, r = self.wait(look, gone, PAGE_WAIT_S)
+        rec["pages_after"], rec["box_after"] = r["pages"], r["box"]
+        if not closed:
+            return f"Yes pressed (via {a.get('via')}) but the page or a box is still open"
+        return None
 
     def hire(self, cls: str, tag: str) -> int:
         rec: dict[str, Any] = {"step": tag, "class": cls}
@@ -324,7 +404,13 @@ class RouteH:
             )
         rec["page"] = page = self.ev(page_read("Henchmen", ["SelectableOrigins"]), "client")
         origins = (page.get("lists") or {}).get("SelectableOrigins") if isinstance(page, dict) else None
-        idx, rec["pick"] = pick_origin(origins if isinstance(origins, list) else [], cls)
+        rec["panels"] = panels = []
+        for k in range(1, len(origins) + 1 if isinstance(origins, list) else 1):
+            sel = self.ev(select_origin(k), "client")
+            self.sleep(SELECT_SETTLE_S)
+            got = self.ev(PANEL_READ, "client")
+            panels.append({"i": k, "select_ok": isinstance(sel, dict) and bool(sel.get("ok")), **(got or {})})
+        idx, rec["pick"] = pick_origin([x for x in panels if x["select_ok"]], cls)
         if idx is None:
             rec["cancel"] = self.ev(command("Henchmen", "CancelHenchmenCreating", False), "client")
             return self.write(
@@ -337,9 +423,15 @@ class RouteH:
                 },
             )
         rec["select"] = sel = self.ev(select_origin(idx), "client")
-        if not (isinstance(sel, dict) and sel.get("ok") and sel.get("same")):
+        self.sleep(SELECT_SETTLE_S)
+        rec["panel"] = panel = self.ev(PANEL_READ, "client")
+        shown = str((panel or {}).get("cls") or "").lower() if isinstance(panel, dict) else ""
+        # The panel is the check: PI.same is false live (a new wrapper per read, and every entry reads alike).
+        if not (isinstance(sel, dict) and sel.get("ok")) or shown != cls.lower():
             rec["cancel"] = self.ev(command("Henchmen", "CancelHenchmenCreating", False), "client")
-            return self.write(tag, {**rec, "verdict": "FAIL", "why": "SelectedOrigin didn't take; cancelled"})
+            return self.write(
+                tag, {**rec, "verdict": "FAIL", "why": f"SelectedOrigin didn't take or shows {shown!r}; cancelled"}
+            )
         rec["finish_dry"] = dry = self.ev(command("Henchmen", "FinishHenchmenCreating", True), "client")
         if not (isinstance(dry, dict) and dry.get("ok")):
             rec["cancel"] = self.ev(command("Henchmen", "CancelHenchmenCreating", False), "client")
@@ -456,10 +548,12 @@ PLAN = {
     "pre": "server read: host (DB_Avatars[1]) facts + race/classes/gold, DB_PartyMembers/Players/Avatars, "
     "GetMaxPartySize, Hired_1..3 + CCmutex flags; installs the route's Osiris listeners",
     "respec": "StartRespec(who); CharacterRespec visible within 10 s; read its fields, property names (race?), "
-    "SelectableClasses/SubClasses; leave by the first of " + ", ".join(LEAVE_RESPEC) + " that CanExecute; page gone "
-    "within 10 s else STOP",
-    "hire": "pre read; PROC_StartHenchmen(host); Henchmen visible within 10 s; SelectableOrigins read; the one "
-    "Hireling_<class> entry (else Cancel + FAIL); SelectedOrigin set + read back; FinishHenchmenCreating dry, then "
+    "SelectableClasses/SubClasses; leave by the first of " + ", ".join(LEAVE_RESPEC) + " that CanExecute; a box "
+    "with UUIDProperty " + LEAVE_BOX_ID + " gets Yes (any other box: STOP, nothing pressed); page and box gone "
+    "within 10 s else STOP; never FinishCreating (the apply)",
+    "hire": "pre read; PROC_StartHenchmen(host); Henchmen visible within 10 s; SelectableOrigins read; each entry "
+    "selected and its panel's 'Level 1 <class>' read 1 s later; the one entry showing --class (else Cancel + FAIL); "
+    "SelectedOrigin set again + read back, panel shows the class; FinishHenchmenCreating dry, then "
     "run; HenchmanSelected within 15 s; exactly one new DB_PartyMembers row; its facts",
     "xp": "AddExplorationExperience(host, --amount) (Osi.AddExperience is nil under bg3le, live 15); host level "
     "before/after",
@@ -484,6 +578,9 @@ def chunks() -> dict[str, str]:
         "page_read": page_read("Henchmen", ["SelectableOrigins"]),
         "command": command("Henchmen", "FinishHenchmenCreating", True),
         "select_origin": select_origin(3),
+        "panel_read": PANEL_READ,
+        "box_read": BOX_READ,
+        "box_yes": box_yes(LEAVE_BOX_ID),
     }
 
 

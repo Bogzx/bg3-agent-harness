@@ -7,6 +7,7 @@ Run: uv run pytest -q tools/dev/test_probe_route_h.py
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -17,12 +18,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import probe_route_h as rh
 
+CLIENT_LUA = Path(__file__).resolve().parents[2] / "mod/Mods/BG3AI/ScriptExtender/Lua/Client"
 HOST = "aaaaaaaa-0000-0000-0000-000000000001"
 HIRED = "bbbbbbbb-0000-0000-0000-000000000002"
-ORIGINS = [
-    {"i": i, "fields": {"Id": f"Hireling_{c}", "IsHenchman": True}}
+ORIGINS = [  # as live window 3 read them: no readable id; the class shows only in the selected one's panel
+    {"i": i, "fields": {"IsLockedRace": True, "IsSelectable": True}, "cls": c}
     for i, c in enumerate(["Barbarian", "Fighter", "Sorcerer"], start=1)
 ]
+
+LOSE = {  # as live window 3 read it: the title and text handles don't resolve
+    "id": "CancelRespecMsgID",
+    "title": "Warning",
+    "text": "[ForceUpdate]",
+    "buttons": ["Yes", "No"],
+}
 
 
 class FakeGame:
@@ -34,7 +43,10 @@ class FakeGame:
         origins: list | None = None,
         respec_closes: bool = True,
         hire_works: bool = True,
+        respec_box: dict | None = None,
+        yes_closes: bool = True,
     ) -> None:
+        self.respec_box, self.yes_closes, self.box = respec_box, yes_closes, None
         self.opens, self.origins, self.respec_closes, self.hire_works = (
             henchmen_opens,
             origins,
@@ -76,12 +88,34 @@ class FakeGame:
             if name == "FinishHenchmenCreating" and not dry and self.hire_works:
                 self.party.append(HIRED)
                 self.log.append({"e": "HenchmanSelected", "args": [HOST, HIRED]})
-            if name == "ExitCharacterRespec" and not dry and self.respec_closes:
+            if name == "ExitCharacterRespec" and not dry and self.respec_box is not None:
+                self.box = self.respec_box  # the page stays behind its question box
+            elif name == "ExitCharacterRespec" and not dry and self.respec_closes:
                 self.pages = []
             return json.dumps({"open": True, "ok": True})
+        if "A.pressButton(yes.el" in code:  # box_yes: what its Lua decides, from the chunk's own needle
+            self.sent.append("box_yes")
+            if self.box is None:
+                return json.dumps({"box": False})
+            v = {"box": True, **self.box}
+            need = code.split("if v.id ~= ")[1].split(" then")[0].strip('"')
+            if self.box.get("id") != need:
+                return json.dumps({**v, "refused": "not the expected box"})
+            if not any(b.strip().lower() == "yes" for b in self.box["buttons"]):
+                return json.dumps({**v, "refused": "no Yes button"})
+            if self.yes_closes:
+                self.box, self.pages = None, []
+            return json.dumps({**v, "pressed": True, "via": "command"})
+        if "A.confirmBox()" in code:
+            return json.dumps({"box": True, **self.box} if self.box else {"box": False})
         if "PI.set(d, 'SelectedOrigin'" in code:
             self.sent.append("select")
-            return json.dumps({"open": True, "ok": True, "same": True})
+            self.selected = int(code.split("if i == ")[1].split(" ")[0])
+            return json.dumps({"open": True, "ok": True, "same": False})  # live: false for the same entry too
+        if "Venture Forth" in code:  # the panel of the selected entry
+            rows = self.origins if self.origins is not None else ORIGINS
+            row = next((o for o in rows if o["i"] == getattr(self, "selected", None)), None)
+            return json.dumps({"open": True, "cls": row and row["cls"], "race": "Some Race"})
         if "UI.isVisible(w.el) then out[#out + 1] = w.name" in code:
             return json.dumps(self.pages)
         if "local r = { open = true, fields" in code:
@@ -111,17 +145,14 @@ def run(game: FakeGame, step: str, *args: Any) -> tuple[int, dict[str, Any]]:
 
 
 class PickTest(unittest.TestCase):
-    def test_exact_id(self):
-        self.assertEqual(rh.pick_origin(ORIGINS, "Fighter")[0], 2)
-
-    def test_one_loose_match(self):
-        rows = [{"i": 1, "fields": {"Name": "The Fighter hireling"}}, {"i": 2, "fields": {"Name": "Sorcerer"}}]
-        self.assertEqual(rh.pick_origin(rows, "Fighter")[0], 1)
+    def test_the_one_entry_showing_the_class(self):
+        self.assertEqual(rh.pick_origin(ORIGINS, "fighter")[0], 2)
 
     def test_no_guess_when_two_or_none(self):
-        two = [{"i": 1, "fields": {"Name": "Fighter A"}}, {"i": 2, "fields": {"Name": "Fighter B"}}]
+        two = [{"i": 1, "cls": "Fighter"}, {"i": 2, "cls": "Fighter"}]
         self.assertIsNone(rh.pick_origin(two, "Fighter")[0])
         self.assertIsNone(rh.pick_origin(ORIGINS, "Wizard")[0])
+        self.assertIsNone(rh.pick_origin([{"i": 1, "cls": None}], "Fighter")[0])
 
 
 class HireTest(unittest.TestCase):
@@ -129,8 +160,28 @@ class HireTest(unittest.TestCase):
         g = FakeGame()
         code, rec = run(g, "hire", "Fighter", "1-hire")
         self.assertEqual((code, rec["verdict"]), (0, "PASS"), rec["why"])
-        self.assertEqual(g.sent, ["start_henchmen", "select", "FinishHenchmenCreating dry", "FinishHenchmenCreating"])
+        scan = ["select"] * 3
+        self.assertEqual(
+            g.sent, ["start_henchmen", *scan, "select", "FinishHenchmenCreating dry", "FinishHenchmenCreating"]
+        )
+        self.assertEqual(rec["pick"], "entry 2 shows Level 1 Fighter")
         self.assertEqual(rec["hired"][0]["uuid"], HIRED)
+
+    def test_a_panel_that_shows_another_class_cancels(self):
+        g = FakeGame()
+        real = g.eval
+
+        def lying(code: str, context: str = "client", timeout: float = 12.0) -> str:
+            out = real(code, context, timeout)
+            if "Venture Forth" in code and g.sent.count("select") > 3:  # the re-select's panel
+                return json.dumps({"open": True, "cls": "Wizard"})
+            return out
+
+        g.eval = lying  # type: ignore[method-assign]
+        code, rec = run(g, "hire", "Fighter", "1-hire")
+        self.assertEqual((code, rec["verdict"]), (1, "FAIL"))
+        self.assertEqual(g.sent[-1], "CancelHenchmenCreating")
+        self.assertNotIn("FinishHenchmenCreating", g.sent)
 
     def test_no_page_sends_nothing_more(self):
         g = FakeGame(henchmen_opens=False)
@@ -139,10 +190,10 @@ class HireTest(unittest.TestCase):
         self.assertEqual(g.sent, ["start_henchmen"])
 
     def test_no_unique_origin_cancels_without_finishing(self):
-        g = FakeGame(origins=[{"i": 1, "fields": {"Id": "Hireling_Wizard"}}])
+        g = FakeGame(origins=[{"i": 1, "fields": {}, "cls": "Wizard"}])
         code, rec = run(g, "hire", "Fighter", "1-hire")
         self.assertEqual((code, rec["verdict"]), (1, "FAIL"))
-        self.assertEqual(g.sent, ["start_henchmen", "CancelHenchmenCreating"])
+        self.assertEqual(g.sent, ["start_henchmen", "select", "CancelHenchmenCreating"])
 
     def test_no_event_or_no_new_member_fails(self):
         g = FakeGame(hire_works=False)
@@ -162,6 +213,53 @@ class RespecTest(unittest.TestCase):
     def test_a_page_that_stays_is_stop(self):
         code, rec = run(FakeGame(respec_closes=False), "respec", "Shadowheart", "0")
         self.assertEqual((code, rec["verdict"]), (2, "STOP"))
+
+    def test_the_unsaved_progress_box_gets_yes_and_the_page_closes(self):
+        g = FakeGame(respec_box=LOSE)
+        code, rec = run(g, "respec", "Shadowheart", "0")
+        self.assertEqual((code, rec["verdict"]), (0, "PASS"), rec["why"])
+        self.assertEqual(g.sent, ["start_respec", "ExitCharacterRespec dry", "ExitCharacterRespec", "box_yes"])
+        self.assertEqual(rec["box_answer"]["pressed"], True)
+        self.assertEqual(rec["box_after"], {"box": False})
+
+    def test_any_other_box_is_stop_with_nothing_pressed(self):
+        other = {"id": "LeavePartyMsgID", "title": "Warning", "text": "[ForceUpdate]", "buttons": ["Yes", "No"]}
+        g = FakeGame(respec_box=other)
+        code, rec = run(g, "respec", "Shadowheart", "0")
+        self.assertEqual((code, rec["verdict"]), (2, "STOP"))
+        self.assertIn("not the expected box (nothing pressed)", rec["why"])
+        self.assertNotIn("pressed", rec["box_answer"])
+        self.assertIs(g.box, other)
+
+    def test_no_yes_button_is_stop(self):
+        g = FakeGame(respec_box={**LOSE, "buttons": ["Continue", "Back"]})
+        code, rec = run(g, "respec", "Shadowheart", "0")
+        self.assertEqual((code, rec["verdict"]), (2, "STOP"))
+        self.assertIn("no Yes button", rec["why"])
+
+    def test_yes_that_leaves_the_box_open_is_stop(self):
+        g = FakeGame(respec_box=LOSE, yes_closes=False)
+        code, rec = run(g, "respec", "Shadowheart", "0")
+        self.assertEqual((code, rec["verdict"]), (2, "STOP"))
+        self.assertIn("still open", rec["why"])
+
+    def test_never_runs_the_apply(self):
+        g = FakeGame(respec_box=LOSE)
+        run(g, "respec", "Shadowheart", "0")
+        self.assertFalse(any("FinishCreating" in x for x in g.sent))
+
+
+class ModTest(unittest.TestCase):
+    def test_every_mod_call_in_the_chunks_exists_in_this_tree(self):
+        code = "\n".join(rh.chunks().values())
+        mod = "\n".join(p.read_text(encoding="utf-8") for p in sorted(CLIENT_LUA.glob("*.lua")))
+        called = set(re.findall(r"\b(UI|A)\.(\w+)\(", code))
+        self.assertLessEqual({("A", "confirmBox"), ("A", "pressButton"), ("UI", "allText")}, called)
+        missing = [f"{t}.{n}" for t, n in sorted(called) if f"function {t}.{n}(" not in mod]
+        self.assertEqual(missing, [])
+        inner = mod.split("P.inner = {", 1)[1].split("}", 1)[0]
+        for name in set(re.findall(r"\bPI\.(\w+)\(", code)):
+            self.assertIn(f"{name} = {name}", inner)
 
 
 class HostCallTest(unittest.TestCase):
