@@ -240,7 +240,7 @@ class Live:
         game: Any,
         level_up: Callable[[str, dict[str, Any]], str],
         click: Callable[[list[dict[str, Any]]], dict[str, Any]],
-        prepare: Callable[[str, list[str]], str],
+        prepare: Callable[[str, list[str], list[str]], str],
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -261,6 +261,13 @@ class Live:
         if not isinstance(out, dict) or "error" in out:
             raise RefStepError(f"display names: {out}")
         return out
+
+    def prepared(self, who: str) -> list[str]:
+        """The ids of the spells `who` has prepared by choice (act.prepared; always-prepared ones aren't rows)."""
+        rows = self.game.rpc("act.prepared", {"uuids": [who]}).get("casters")
+        if not rows or not rows[0].get("read"):
+            raise RefStepError(f"{who} has no prepared list to read: {rows}")
+        return [r["id"] for r in rows[0]["prepared"]]
 
     def cc_apply(self, plan: dict[str, Any]) -> dict[str, Any]:
         r = self.game.run_job("ui.cc_apply", {"plan": plan, "finish": False}, context="client", wait_s=JOB_WAIT_S)
@@ -364,12 +371,17 @@ class Live:
             if it["equip"]:
                 self.osi("Equip", who, item, 1, 0, 1)
             log["items"].append(it["item"])
-        if kit.get("prepared"):
-            names = self.names(kit["prepared"])
-            text = self.prepare(who, [names[x] for x in kit["prepared"]])
+        want = kit.get("prepared")
+        if want:
+            # What the respec left prepared isn't the plan's: the plan's set is what the twin plays.
+            have = self.prepared(who)
+            text = self.prepare(who, [x for x in want if x not in have], [x for x in have if x not in want])
             log["prepared"] = text
             if "FAILED" in text or "REFUSED" in text:
                 raise RefStepError(f"prepare_spells: {text}")
+            now = self.prepared(who)
+            if set(now) != set(want):  # the page's cells carry no names: a look-alike's cell can flip instead
+                raise RefStepError(f"prepared {sorted(now)}, the plan's {sorted(want)}: {text}")
         return log
 
 
@@ -390,6 +402,21 @@ end
 return Ext.Json.Stringify({ deleted = n })
 """
 ITEMS_LEFT_LUA = CLEAR_LUA.replace("Osi.RequestDelete(iu) ", "")  # the same walk, counting only
+
+
+def dress_kit(build: dict[str, Any], level: int, static: dict[str, Any]) -> dict[str, Any]:
+    """The kit a reference dresses in. A Wizard's twin holds only its prepared picks, so kit_plan leaves `prepared` out;
+    the hireling has a whole book and prepares them on the page."""
+    kit = mas.kit_plan(
+        ab.kit_of(build, level, static),
+        build["class"],
+        level,
+        static,
+        f"build {build['id']}",
+        base=ab.stat_abilities()[build["class"]],
+    )["kit"]
+    prepared = build["script"].get("prepared")
+    return {**kit, "prepared": prepared} if prepared else kit
 
 
 def _find(path: Path, build_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -433,7 +460,7 @@ def main(argv: list[str] | None = None) -> int:
             lambda needs: leveling.click_spells(
                 lambda op, x: game.rpc(op, x, context="client"), world_tools._inp(), needs, budget_s=CLICK_BUDGET_S
             ),
-            lambda who, add: progression.prepare_spells(who, add=add),
+            lambda who, add, remove: progression.prepare_spells(who, add=add, remove=remove),
         )
         if a.step == "read-levels":
             p = game.rpc("arena.profile", {"uuid": a.who})
@@ -444,15 +471,7 @@ def main(argv: list[str] | None = None) -> int:
         if a.step == "respec":
             rec = live.respec(ui_plans(b, doc["level"], static), a.who)
         else:
-            kit = mas.kit_plan(
-                ab.kit_of(b, doc["level"], static),
-                b["class"],
-                doc["level"],
-                static,
-                f"build {b['id']}",
-                base=ab.stat_abilities()[b["class"]],
-            )["kit"]
-            rec = live.dress(kit, a.who)
+            rec = live.dress(dress_kit(b, doc["level"], static), a.who)
         a.out.mkdir(parents=True, exist_ok=True)
         (a.out / f"{doc['name']}-{b['id']}-{a.step}.json").write_text(json.dumps(rec, indent=1, default=str) + "\n")
         print(json.dumps(rec, indent=1, default=str))

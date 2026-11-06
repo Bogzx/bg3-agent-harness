@@ -31,8 +31,10 @@ class Job:
 
 
 class FakeGame:
-    def __init__(self, jobs: list[Job], levels: list[dict[str, Any]] | None = None) -> None:
-        self.jobs, self.finished, self.levels = jobs, 0, levels
+    def __init__(
+        self, jobs: list[Job], levels: list[dict[str, Any]] | None = None, prepared: list[Any] | None = None
+    ) -> None:
+        self.jobs, self.finished, self.levels, self.prepared = jobs, 0, levels, prepared or []
 
     def eval(self, code: str, context: str = "client", timeout: float = 12.0) -> str:
         return json.dumps(self.levels)
@@ -41,6 +43,9 @@ class FakeGame:
         return self.jobs.pop(0)
 
     def rpc(self, op: str, args: dict[str, Any], context: str = "server") -> Any:
+        if op == "act.prepared":
+            ids = self.prepared.pop(0)
+            return {"casters": [{"read": True, "prepared": [{"id": x} for x in ids]}] if ids is not None else []}
         self.finished += 1
         return {"finished": True}
 
@@ -106,7 +111,7 @@ def live(game: FakeGame, route: FakeRoute, level_up: Any = None, click: Any = No
         game,
         level_up or (lambda who, plan: "level_up: done"),
         click or (lambda needs: {"picked": [n["name"] for n in needs], "failed": {}}),
-        prepare or (lambda who, add: "prepare_spells: done"),
+        prepare or (lambda who, add, remove: "prepare_spells: done"),
         sleep,
         lambda: t[0],
     )
@@ -315,10 +320,11 @@ KIT = {"items": [{"item": "WPN_X", "root": "r", "count": 1, "equip": True}], "pr
 class DressTest(unittest.TestCase):
     def test_items_out_kit_in_equipped_then_prepared(self):
         r = FakeRoute()
-        added: list[Any] = []
-        log = live(FakeGame([]), r, prepare=lambda w, add: added.append(add) or "ok").dress(KIT, "u1")
+        asked: list[Any] = []
+        g = FakeGame([], prepared=[[], ["Target_Bless"]])
+        log = live(g, r, prepare=lambda w, add, rem: asked.append((add, rem)) or "ok").dress(KIT, "u1")
         self.assertEqual(log["items"], ["WPN_X"])
-        self.assertEqual(added, [["Bless"]])
+        self.assertEqual(asked, [(["Target_Bless"], [])])
         order = [next((f for f in ("RequestDelete", "TemplateAddTo", "Equip") if f in c), "") for c in r.sent]
         self.assertEqual([x for x in order if x], ["RequestDelete", "TemplateAddTo", "Equip"])
         counts = [i for i, c in enumerate(r.sent) if c == ar.ITEMS_LEFT_LUA % ar._lua_str("u1")]
@@ -336,7 +342,31 @@ class DressTest(unittest.TestCase):
         with self.assertRaisesRegex(ar.RefStepError, "didn't reach"):
             live(FakeGame([]), FakeRoute(inventory=False)).dress(KIT, "u1")
         with self.assertRaisesRegex(ar.RefStepError, "prepare_spells"):
-            live(FakeGame([]), FakeRoute(), prepare=lambda w, a: "prepare_spells: REFUSED no").dress(KIT, "u1")
+            g = FakeGame([], prepared=[[]])
+            live(g, FakeRoute(), prepare=lambda w, a, r: "prepare_spells: REFUSED no").dress(KIT, "u1")
+
+    def test_what_the_respec_prepared_comes_off_and_only_the_missing_go_on(self):
+        asked: list[Any] = []
+        g = FakeGame([], prepared=[["Target_Bane", "Target_Bless"], ["Target_Bless"]])
+        kit = KIT | {"prepared": ["Target_Bless"]}
+        live(g, FakeRoute(), prepare=lambda w, add, rem: asked.append((add, rem)) or "ok").dress(kit, "u1")
+        self.assertEqual(asked, [([], ["Target_Bane"])])
+
+    def test_a_prepared_set_that_isnt_the_plans_stops_it_though_the_tool_says_done(self):
+        g = FakeGame([], prepared=[[], ["Target_Bane"]])  # a look-alike's cell flipped
+        with self.assertRaisesRegex(ar.RefStepError, "the plan's"):
+            live(g, FakeRoute()).dress(KIT, "u1")
+
+    def test_a_hireling_with_no_prepared_list_stops_it(self):
+        with self.assertRaisesRegex(ar.RefStepError, "no prepared list"):
+            live(FakeGame([], prepared=[None]), FakeRoute()).dress(KIT, "u1")
+
+    def test_every_wizards_reference_dresses_with_its_scripts_prepared_though_its_kit_has_none(self):
+        for name in ("l5_4v4_v1", "l12_4v4_v1", "l5_4v4_team2_v1"):
+            doc = json.loads((REPO / f"packages/bench/builds/{name}.json").read_text())
+            wizard = next(b for b in doc["builds"] if b["class"] == "Wizard")
+            with self.subTest(name):
+                self.assertEqual(ar.dress_kit(wizard, doc["level"], STATIC)["prepared"], wizard["script"]["prepared"])
 
 
 if __name__ == "__main__":
