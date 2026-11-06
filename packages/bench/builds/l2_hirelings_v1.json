@@ -5,7 +5,7 @@
  "tier": "L2",
  "level": 2,
  "game_build": "25605617",
- "draft": "no reference profiles yet: plan step 3 reads each from a respecced hireling of the build's class (route H), and the respec page's command names are still TODO (route-H probe) (2026-11-03)",
+ "draft": "no reference profiles yet: S3 reads each from a respecced hireling of the build's class (route H)",
  "builds": [
   {
    "id": "fighter",

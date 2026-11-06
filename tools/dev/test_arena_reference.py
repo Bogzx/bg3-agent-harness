@@ -109,6 +109,12 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(len(p["cc"]["cantrips"]), 3)
         self.assertEqual(next(u["plan"] for u in p["level_ups"] if u["level"] == 2)["subclass"], "Evocation")
 
+    def test_a_rogues_expertise_is_its_own_pick_not_a_second_class_skill(self):
+        cc = ar.ui_plans(build(2, "rogue"), 2, STATIC)["cc"]
+        script = build(2, "rogue")["script"]["cc"]
+        self.assertEqual(cc["expertise"], script["expertise"])
+        self.assertEqual(cc["skills"], script["skills"] + script["race_skills"])
+
     def test_every_tier_build_has_a_plan(self):
         for lv in (2, 5, 12):
             for bid in ("fighter", "cleric", "wizard", "rogue"):

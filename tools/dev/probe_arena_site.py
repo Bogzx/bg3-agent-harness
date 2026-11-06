@@ -13,7 +13,7 @@ Live, in this order (one load):
      TeleportToPosition, its 2 s settle, Osi.GetPosition).
   3. fine: for the --fine best coarse sites, each line's member spots and their neighbours (x +-0.75, z +-1).
 Offline (--rank FILE), and at the end of a live run: the ranked sites. A site is two lines of --members members at
-the same x (Setup.line: LINE_GAP_M apart along x), GAP_MIN..GAP_MAX m apart in z. It passes when:
+the same x (Setup.line: --line-gap apart along x, default LINE_GAP_M), GAP_MIN..GAP_MAX m apart in z. It passes when:
   - level: all members' landed heights within LEVEL_M (fine) and robust: every neighbour of a member spot within
     ROBUST_M of its line (a landing drift can't lift a member);
   - no joiner (an item or character that can join the fight) within JOIN_M of a member of either line. Items
@@ -100,12 +100,12 @@ def coarse_spots(cx: float, cz: float, radius: float, step: float) -> list[tuple
     return [(round(cx + i * step, 2), round(cz + j * step, 2)) for j in range(-n, n + 1) for i in range(-n, n + 1)]
 
 
-def member_xs(cx: float, members: int) -> list[float]:
-    return [round(cx + (i - (members - 1) / 2) * LINE_GAP_M, 3) for i in range(members)]
+def member_xs(cx: float, members: int, gap: float = LINE_GAP_M) -> list[float]:
+    return [round(cx + (i - (members - 1) / 2) * gap, 3) for i in range(members)]
 
 
-def fine_spots(site: dict[str, Any], members: int) -> list[tuple[float, float]]:
-    xs = member_xs(site["cx"], members)
+def fine_spots(site: dict[str, Any], members: int, gap: float = LINE_GAP_M) -> list[tuple[float, float]]:
+    xs = member_xs(site["cx"], members, gap)
     spots = {(round(x + dx, 3), round(z + dz, 2)) for z in (site["za"], site["zb"]) for x in xs
              for dx, dz in ((0, 0), (-0.75, 0), (0.75, 0), (0, -1), (0, 1))}  # fmt: skip
     return sorted(spots, key=lambda s: (s[1], s[0]))
@@ -157,10 +157,18 @@ def coarse_sites(h: dict, step: float) -> list[dict[str, Any]]:
     return sites
 
 
-def judge(site: dict, h: dict, fine: dict | None, party: list[dict], joiners: list[dict], members: int) -> dict:
+def judge(
+    site: dict,
+    h: dict,
+    fine: dict | None,
+    party: list[dict],
+    joiners: list[dict],
+    members: int,
+    gap: float = LINE_GAP_M,
+) -> dict:
     """The site's verdict: its reasons (none = it passes), the spawns (landed when fine read), the facts."""
     reasons: list[str] = []
-    xs = member_xs(site["cx"], members)
+    xs = member_xs(site["cx"], members, gap)
     spots = {"A": [(x, site["za"]) for x in xs], "B": [(x, site["zb"]) for x in xs]}
     ys = {"A": site["ya"], "B": site["yb"]}
     out: dict[str, Any] = {
@@ -214,19 +222,20 @@ def judge(site: dict, h: dict, fine: dict | None, party: list[dict], joiners: li
     return out
 
 
-def rank(data: dict, members: int = 2) -> list[dict]:
+def rank(data: dict, members: int = 2, gap: float = LINE_GAP_M) -> list[dict]:
     h = heights(data["coarse"], COARSE_OFF_M)
     fine = heights(data.get("fine") or [], FINE_OFF_M)
     fine_keys = {tuple(s) for s in data.get("fine_sites") or []}
     out = []
     for site in coarse_sites(h, data.get("step", 4.0)):
         f = fine if (site["cx"], site["za"], site["zb"]) in fine_keys else None
-        out.append(judge(site, h, f, data.get("party") or [], data.get("joiners") or [], members))
+        out.append(judge(site, h, f, data.get("party") or [], data.get("joiners") or [], members, gap))
     return sorted(out, key=lambda s: (len(s["reasons"]), s["dy"], -min(s["joiner_m"], 99), abs(s["gap"] - 7.8)))
 
 
 def probe(a: argparse.Namespace, evaluate: Callable[..., str], sleep: Callable[[float], None] = time.sleep) -> dict:
-    data: dict[str, Any] = {"cx": a.cx, "cz": a.cz, "radius": a.radius, "step": a.step, "members": a.members}
+    data: dict[str, Any] = {"cx": a.cx, "cz": a.cz, "radius": a.radius, "step": a.step, "members": a.members,
+                            "line_gap": a.line_gap}  # fmt: skip
 
     def save(row: Any = None) -> None:
         if row is not None:
@@ -240,11 +249,12 @@ def probe(a: argparse.Namespace, evaluate: Callable[..., str], sleep: Callable[[
     for spot in coarse_spots(a.cx, a.cz, a.radius, a.step):
         data["coarse"] += land(evaluate, sleep, [spot], a.char, save)
     h = heights(data["coarse"], COARSE_OFF_M)
-    best = sorted((judge(s, h, None, data["party"], data["joiners"], a.members) for s in coarse_sites(h, a.step)),
+    best = sorted((judge(s, h, None, data["party"], data["joiners"], a.members, a.line_gap)
+                   for s in coarse_sites(h, a.step)),
                   key=lambda s: (len(s["reasons"]), s["dy"], abs(s["gap"] - 7.8)))[: a.fine]  # fmt: skip
     data["fine_sites"], data["fine"] = [[s["cx"], s["za"], s["zb"]] for s in best], []
     for s in best:
-        data["fine"] += land(evaluate, sleep, fine_spots(s, a.members), a.char, save)
+        data["fine"] += land(evaluate, sleep, fine_spots(s, a.members, a.line_gap), a.char, save)
     save()
     return data
 
@@ -259,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--step", type=float, default=4.0, help="the coarse grid's step (m)")
     ap.add_argument("--fine", type=int, default=8, help="how many coarse sites get a fine read")
     ap.add_argument("--members", type=int, default=2, help="members per line (arena-v0: 2)")
+    ap.add_argument("--line-gap", type=float, default=LINE_GAP_M, help="members' gap along a line (location.line_gap)")
     ap.add_argument("--char", help="the character to move (default: the host)")
     a = ap.parse_args(argv)
     if bool(a.out) == bool(a.rank):
@@ -270,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
         data = probe(a, io.lua_eval)
     else:
         data = json.loads(a.rank.read_text())
-    sites = rank(data, data.get("members", a.members))
+    sites = rank(data, data.get("members", a.members), data.get("line_gap", a.line_gap))
     print(json.dumps({"sites": sites[:10], "n": len(sites), "passing": sum(not s["reasons"] for s in sites)}, indent=1))
     return 0 if sites and not sites[0]["reasons"] else 1
 

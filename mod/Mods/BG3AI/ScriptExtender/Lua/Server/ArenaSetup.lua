@@ -62,7 +62,8 @@ Setup.SETTLE_MS = 2000        -- after the party, placing, RestoreParty, the see
 Setup.COMBAT_MS = 3000        -- the combat call to all members in one combat (the probe's wait, live)
 Setup.ENEMY_WAIT_MS = 3000    -- the IsEnemy matrix read again until right (live: right at once with the combat)
 Setup.ENEMY_EVERY_MS = 500
-Setup.LINE_GAP_M = 1.5        -- a team's members this far apart on a line along x through its spawn (spike)
+Setup.LINE_GAP_M = 1.5        -- a team's members this far apart on a line along x through its spawn (spike), unless
+                              -- the arena's location.line_gap says otherwise
 Setup.TIMEOUT_MS = 60000
 -- A mirror arena's spots are cleared of surfaces this far around before a twin stands on one (live check 13d: Cedar
 -- spawned on a surface at spot A and read INSURFACE, Dune not: the pair's statuses differed)
@@ -172,11 +173,11 @@ local function vec3(v, what)
     return v
 end
 
--- n positions on a line along x through spot, centred on it (the probe's line_slots).
-function Setup.line(spot, n)
+-- n positions on a line along x through spot, gap (default LINE_GAP_M) apart, centred on it (the probe's line_slots).
+function Setup.line(spot, n, gap)
     local out = {}
     for i = 0, n - 1 do
-        out[#out + 1] = { spot[1] + (i - (n - 1) / 2) * Setup.LINE_GAP_M, spot[2], spot[3] }
+        out[#out + 1] = { spot[1] + (i - (n - 1) / 2) * (gap or Setup.LINE_GAP_M), spot[2], spot[3] }
     end
     return out
 end
@@ -198,13 +199,13 @@ end
 
 -- Refuses spawns that put one team higher (|dy| >= SPAWN_DY_MAX_M) or nearer the other's members than the other is
 -- to its own (the lines run along x: spawns apart along x make pair i's A member nearer B's later pairs).
-function Setup.check_geometry(spawns, n)
+function Setup.check_geometry(spawns, n, gap)
     local dy = math.abs(spawns.A[2] - spawns.B[2])
     if dy >= Setup.SPAWN_DY_MAX_M then
         error(("location.spawns A and B are %.2f m apart in height (y); they must be under %.1f m"):format(dy,
             Setup.SPAWN_DY_MAX_M), 0)
     end
-    Setup.check_cross(Setup.line(spawns.A, n), Setup.line(spawns.B, n), "location.spawns")
+    Setup.check_cross(Setup.line(spawns.A, n, gap), Setup.line(spawns.B, n, gap), "location.spawns")
 end
 
 -- The ground and cloud surface names ("None" for none) of the tile at (x, z) on its own ground: the floor height there
@@ -223,8 +224,8 @@ local function tile_surfaces(x, y, z)
 end
 
 -- The radius around the spawns' midpoint that the mirror check must find mirrored, for n per line.
-function Setup.surface_radius(spawns, n)
-    return dist(spawns.A, spawns.B) / 2 + (n - 1) / 2 * Setup.LINE_GAP_M + Setup.SURFACE_MARGIN_M
+function Setup.surface_radius(spawns, n, gap)
+    return dist(spawns.A, spawns.B) / 2 + (n - 1) / 2 * (gap or Setup.LINE_GAP_M) + Setup.SURFACE_MARGIN_M
 end
 
 -- The radius the surface clear covers (and the report-only read reaches).
@@ -236,12 +237,12 @@ end
 -- with from < |p - midpoint| <= to (from: -1 = all) against p's reflection, each on its own ground (tile_surfaces).
 -- A pair where either tile doesn't read is unread, not a mismatch. {points, read (pairs both read), radius = to,
 -- off = {text}, off_keys = {"x,z" of A's tile} (off's order), keys = {"x,z" = true}}.
-function Setup.check_surfaces(spawns, n, from, to)
+function Setup.check_surfaces(spawns, n, from, to, gap)
     local a, b = spawns.A, spawns.B
     local mx, mz = (a[1] + b[1]) / 2, (a[3] + b[3]) / 2
     local d = math.sqrt((b[1] - a[1]) ^ 2 + (b[3] - a[3]) ^ 2)
     local ux, uz = (b[1] - a[1]) / d, (b[3] - a[3]) / d
-    local r, step = to or Setup.surface_radius(spawns, n), Setup.SURFACE_GRID_M
+    local r, step = to or Setup.surface_radius(spawns, n, gap), Setup.SURFACE_GRID_M
     local r0 = from or -1
     local points, read, off, offk, keys = 0, 0, {}, {}, {}
     local k = math.floor(r / step)
@@ -459,7 +460,7 @@ STEPS[2] = function(job) -- the names after joining; chained per team, on its li
     end
     for _, s in ipairs(Ar.SIDES) do
         for i = 2, #t[s] do call(job, "AttachToPartyGroup", { t[s][i], t[s][1] }) end
-        for i, p in ipairs(Setup.line(job.spawns[s], #t[s])) do
+        for i, p in ipairs(Setup.line(job.spawns[s], #t[s], job.line_gap)) do
             local u = t[s][i]
             call(job, "TeleportToPosition", { u, p[1], p[2], p[3], "", 0, 0, 0, 0, 1 }, { u, p[1], p[2], p[3], "" })
         end
@@ -667,7 +668,7 @@ STEPS[-2] = function(job)
     end
     for i = 1, #mi.pairs do -- every spot free of surfaces first: a pair stands on the same ground
         for _, s in ipairs(Ar.SIDES) do
-            local p = Setup.line(job.spawns[s], #mi.pairs)[i]
+            local p = Setup.line(job.spawns[s], #mi.pairs, job.line_gap)[i]
             for _, layer in ipairs(Setup.SURFACE_LAYERS) do
                 local args = { p[1], p[2], p[3], layer, Setup.SURFACE_CLEAR_M }
                 if not call(job, "RemoveSurfaceLayerAtPosition", args) then
@@ -686,7 +687,7 @@ end
 STEPS[-1] = function(job)
     local mi, M = job.mirror, Ar.Mirror
     local radius = Setup.surface_reach(job.spawns)
-    local sc = Setup.check_surfaces(job.spawns, #mi.pairs)
+    local sc = Setup.check_surfaces(job.spawns, #mi.pairs, nil, nil, job.line_gap)
     local short = sc.read < Setup.SURFACE_READ_MIN * sc.points
     local waited = now_ms() - job.cleared_at
     if (short or #sc.off > 0) and waited < Setup.SURFACE_WAIT_MS then
@@ -711,7 +712,7 @@ STEPS[-1] = function(job)
     end
     for i, p in ipairs(mi.pairs) do
         local spots = {}
-        for k, s in ipairs(Ar.SIDES) do spots[k] = Setup.line(job.spawns[s], #mi.pairs)[i] end
+        for k, s in ipairs(Ar.SIDES) do spots[k] = Setup.line(job.spawns[s], #mi.pairs, job.line_gap)[i] end
         local r = M.spawn({ stats = p.stats, template = p.template, race = p.race, spots = spots,
             names = { p.names.A, p.names.B }, first = job.spawn_order[i] == "A" and 1 or 2 })
         for k, s in ipairs(Ar.SIDES) do
@@ -851,7 +852,11 @@ function Setup.start(args)
     if mirror == nil and #teams.A ~= #teams.B then
         error(("team A lists %d characters, team B %d: the teams must be the same size"):format(#teams.A, #teams.B), 0)
     end
-    Setup.check_geometry(spawns, mirror and #mirror.pairs or #teams.A)
+    local lineGap = type(arena.location) == "table" and arena.location.line_gap or nil
+    if lineGap ~= nil and (type(lineGap) ~= "number" or lineGap <= 0) then
+        error("location.line_gap must be a number above 0 (metres)", 0)
+    end
+    Setup.check_geometry(spawns, mirror and #mirror.pairs or #teams.A, lineGap)
     if args.round_cap ~= nil and not tonumber(args.round_cap) then error("round_cap must be a number", 0) end
     if arena.turn_order ~= nil and not Ar.TURN_ORDERS[arena.turn_order] then
         error("turn_order must be \"alternate\" or \"snake\"", 0)
@@ -863,7 +868,7 @@ function Setup.start(args)
     local host = V.uuid(osi(Osi.GetHostCharacter))
     if not host then error("no host character", 0) end
     local job = RPC.start_job("arena.setup", { timeout_ms = Setup.TIMEOUT_MS, on_tick = tick, arena = arena,
-        teams = teams, names = names, spawns = spawns, host = host:lower(), avatars = avatarList,
+        teams = teams, names = names, spawns = spawns, line_gap = lineGap, host = host:lower(), avatars = avatarList,
         round_cap = tonumber(args.round_cap or arena.round_cap), level = level,
         step = mirror and (mirror.party_xp and -4 or -3) or 1, next_at = 0,
         before = {}, calls = {}, mirror = mirror, spawn_order = spawnOrder })

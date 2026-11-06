@@ -332,9 +332,11 @@ def arena_file(
     spawn_a: list[float],
     spawn_b: list[float],
     static: dict[str, Any] | None = None,
+    line_gap: float | None = None,
 ) -> dict[str, Any]:
     """An arena file for a checked build file: `base`'s save, seed, caps and rule keys, the builds' level, teams and
-    mirror, these spawns on the base's game level. A draft build file makes a draft arena (it can't be played)."""
+    mirror, these spawns on the base's game level, line_gap when it isn't the default. A draft build file makes a draft
+    arena (it can't be played)."""
     keep = ("schema", "save", "seed", "karmic", "round_cap", "wall_cap_min", "turn_cap_s", "condition", "tools_off")
     a = {k: base[k] for k in keep if k in base}
     a["name"], a["title"] = name, doc["title"]
@@ -345,7 +347,9 @@ def arena_file(
     if "draft" in doc:
         a["draft"] = doc["draft"]
     a["location"] = {"level": base["location"]["level"], "spawns": {"A": spawn_a, "B": spawn_b}}
-    mas.check_geometry(spawn_a, spawn_b, len(doc["builds"]))
+    if line_gap is not None:
+        a["location"]["line_gap"] = line_gap
+    mas.check_geometry(spawn_a, spawn_b, len(doc["builds"]), mas.LINE_GAP_M if line_gap is None else line_gap)
     return a | mirror_section(doc, names, static)
 
 

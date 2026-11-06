@@ -91,9 +91,11 @@ def ui_plans(build: dict[str, Any], level: int, static: dict[str, Any]) -> dict[
         plan["bonus"] = cc["ability_bonus"]
     if static["classes"][cls]["levels"]["1"].get("subclasses"):
         plan["subclass"] = _label(sub)
-    skills = list(cc.get("skills", [])) + list(cc.get("race_skills", [])) + list(cc.get("expertise", []))
+    skills = list(cc.get("skills", [])) + list(cc.get("race_skills", []))
     if skills:
         plan["skills"] = skills
+    if cc.get("expertise"):
+        plan["expertise"] = list(cc["expertise"])
     if cc.get("passives"):
         plan["passives"] = [x for ids in cc["passives"] for x in ids]
         names.extend(plan["passives"])
@@ -111,9 +113,10 @@ def ui_plans(build: dict[str, Any], level: int, static: dict[str, Any]) -> dict[
         if u.get("passives"):
             p["passives"] = [x for ids in u["passives"] for x in ids]
             names.extend(p["passives"])
-        sk = [x for ids in u.get("skills", []) + u.get("expertise", []) for x in ids]
-        if sk:
-            p["skills"] = sk
+        for kind in ("skills", "expertise"):
+            picks = [x for ids in u.get(kind, []) for x in ids]
+            if picks:
+                p[kind] = picks
         spells_of(lv, p)
         imp = u.get("improvement")
         if imp:

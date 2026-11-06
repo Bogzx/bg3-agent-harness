@@ -6,7 +6,7 @@ grants nor the kit's boosts, live check 12 step 13; orchestrator D308), and the 
     uv run --project bridge python tools/dev/make_arena_save.py mirror <spec.json>    # {level, teams, mirror}
     uv run --project bridge python tools/dev/make_arena_save.py builds-mirror <builds.json> Ash:Birch ...
     uv run --project bridge python tools/dev/make_arena_save.py builds-arena <builds.json> <base.json> <name> \\
-        --spawn-a x,y,z --spawn-b x,y,z --out <arena.json> Ash:Birch ...
+        --spawn-a x,y,z --spawn-b x,y,z [--line-gap m] --out <arena.json> Ash:Birch ...
     uv run --project bridge python tools/dev/make_arena_save.py symmetry <uuidA>:<uuidB> [...]
     uv run --project bridge python tools/dev/make_arena_save.py reference-read <builds.json> <build id> <uuid> \\
         --evidence <text>                                       # the running game's profile -> the build file
@@ -61,8 +61,9 @@ SCHEMA = "arena-mirror.v1"
 SIDES = ("A", "B")
 PAIRS = 4
 # Spawn geometry, as arena.setup checks it (Server/ArenaSetup.lua Setup.check_geometry): each team on a line along x
-# through its spawn, LINE_GAP_M apart; the spawns under SPAWN_DY_MAX_M apart in height; every distance across the lines
-# the same both ways (A's member i to B's member j = B's i to A's j) within PAIR_DIST_TOL_M.
+# through its spawn, LINE_GAP_M (or the arena's location.line_gap) apart; the spawns under SPAWN_DY_MAX_M apart in
+# height; every distance across the lines the same both ways (A's member i to B's member j = B's i to A's j)
+# within PAIR_DIST_TOL_M.
 LINE_GAP_M = 1.5
 SPAWN_DY_MAX_M = 0.3
 PAIR_DIST_TOL_M = 0.1
@@ -143,18 +144,18 @@ def _vec3(v: Any, what: str) -> list[float]:
     return [float(x) for x in v]
 
 
-def _line(spot: list[float], n: int) -> list[list[float]]:
-    return [[spot[0] + (i - (n - 1) / 2) * LINE_GAP_M, spot[1], spot[2]] for i in range(n)]
+def _line(spot: list[float], n: int, gap: float) -> list[list[float]]:
+    return [[spot[0] + (i - (n - 1) / 2) * gap, spot[1], spot[2]] for i in range(n)]
 
 
-def check_geometry(a: list[float], b: list[float], n: int) -> None:
+def check_geometry(a: list[float], b: list[float], n: int, gap: float = LINE_GAP_M) -> None:
     """SpecError unless both teams stand on the same terms (arena.setup refuses the same spawns)."""
     dy = abs(a[1] - b[1])
     if dy >= SPAWN_DY_MAX_M:
         raise SpecError(
             f"location.spawns A and B are {dy:.2f} m apart in height (y); they must be under {SPAWN_DY_MAX_M} m"
         )
-    la, lb = _line(a, n), _line(b, n)
+    la, lb = _line(a, n, gap), _line(b, n, gap)
     for i in range(n):
         for j in range(n):
             ab, ba = math.dist(la[i], lb[j]), math.dist(lb[i], la[j])
@@ -720,6 +721,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ba.add_argument("names", nargs="+", type=_pair_arg, help="each pair's twins' names, A:B, in the builds' order")
     ba.add_argument("--spawn-a", required=True, type=_spawn_arg, help="x,y,z")
     ba.add_argument("--spawn-b", required=True, type=_spawn_arg, help="x,y,z")
+    ba.add_argument("--line-gap", type=float, help=f"members' gap along a line, m (default {LINE_GAP_M})")
     ba.add_argument("--round-cap", type=int, help="else the base's")
     ba.add_argument("--wall-cap-min", type=float, help="else the base's")
     ba.add_argument("--out", required=True, type=Path)
@@ -746,7 +748,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             arena_builds = _builds()
             base = json.loads(args.base.read_text())
             a = arena_builds.arena_file(
-                arena_builds.load_builds(args.builds), base, args.name, args.names, args.spawn_a, args.spawn_b
+                arena_builds.load_builds(args.builds),
+                base,
+                args.name,
+                args.names,
+                args.spawn_a,
+                args.spawn_b,
+                line_gap=args.line_gap,
             )
             if args.round_cap is not None:
                 a["round_cap"] = args.round_cap

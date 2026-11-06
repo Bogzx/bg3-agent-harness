@@ -201,6 +201,11 @@
           "minLength": 1,
           "description": "the game level the fight is in"
         },
+        "line_gap": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "metres between a team's members along their line (default 1.5): a site too narrow for a 1.5 m line of 4"
+        },
         "spawns": {
           "type": "object",
           "required": [

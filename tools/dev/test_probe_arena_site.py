@@ -48,7 +48,7 @@ class FakeGame:
 
 
 def run(tmp_path, game, fine=3):
-    a = argparse.Namespace(cx=0.0, cz=0.0, radius=8.0, step=4.0, fine=fine, members=2, char=None,
+    a = argparse.Namespace(cx=0.0, cz=0.0, radius=8.0, step=4.0, fine=fine, members=2, line_gap=1.5, char=None,
                            out=tmp_path / "site.json")  # fmt: skip
     data = ps.probe(a, game, sleep=lambda s: None)
     assert json.loads(a.out.read_text()) == data
@@ -102,6 +102,13 @@ def test_a_step_next_to_a_member_spot_is_not_robust(tmp_path):
     s = next(s for s in sites if (s["cx"], s["za"], s["zb"]) == (0.0, -4.0, 4.0))
     assert any(r.startswith("not robust: (-0.75, 5) +0.40 m next to B's line") for r in s["reasons"]), s["reasons"]
     assert s["dy"] == 0.0  # the members themselves stand level
+
+
+def test_the_line_gap_sets_where_the_members_stand():
+    assert ps.member_xs(212.875, 4, 1.25) == [211.0, 212.25, 213.5, 214.75]
+    assert ps.member_xs(213.0, 2) == [212.25, 213.75]  # the default
+    site = {"cx": 212.875, "za": 288.0, "zb": 296.0}
+    assert (212.25, 288.0) in ps.fine_spots(site, 4, 1.25)
 
 
 def test_a_site_without_a_fine_read_never_passes():

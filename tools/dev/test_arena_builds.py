@@ -418,6 +418,7 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
         from bg3bench import arena as barena
 
         self.assertEqual(barena.validate(a, "arena-4v4-l5"), [])
+        self.assertNotIn("line_gap", a["location"])  # the default isn't written
         played = copy.deepcopy(a)
         del played["draft"]
         self.assertTrue(any("has no reference" in e for e in barena.validate(played, "arena-4v4-l5")))
@@ -426,6 +427,15 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
         self.assertEqual(barena.validate(played, "arena-4v4-l5"), [])
         del played["mirror"]["party_xp"]
         self.assertTrue(any("needs mirror.party_xp" in e for e in barena.validate(played, "arena-4v4-l5")))
+
+    def test_arena_file_writes_a_line_gap_and_checks_the_spawns_with_it(self):
+        base = json.loads((REPO / "packages/bench/arenas/arena-v0.1.json").read_text())
+        spots = [212.875, 10.98, 288.0], [212.875, 10.98, 296.0]
+        a = ab.arena_file(ab.check_builds(tier(5)), base, "x", NAMES4, *spots, STATIC, line_gap=1.25)
+        self.assertEqual(a["location"]["line_gap"], 1.25)
+        with self.assertRaisesRegex(mas.SpecError, "must be the same within"):  # 0.1 m off along x: 4 m lines tell
+            mas.check_geometry([0.0, 0.0, 0.0], [0.15, 0.0, 8.0], 4, 3.0)
+        mas.check_geometry([0.0, 0.0, 0.0], [0.15, 0.0, 8.0], 4, 0.25)  # the same offset on short lines passes
 
     def test_reference_read_writes_the_compared_fields_and_refuses_a_wrong_or_partial_read(self):
         with tempfile.TemporaryDirectory() as td:

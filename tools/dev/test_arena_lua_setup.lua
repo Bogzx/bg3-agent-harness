@@ -555,6 +555,33 @@ test_setup("arena.setup refuses spawns 0.3 m or more apart in height, or offset 
         j.status = "interrupted"
     end)
 
+-- A site can be too narrow for a line of 4 at the default gap (S1's P5: exact landing overlaps 4.0 m, a 1.5 m line
+-- of 4 needs 4.5 m), so an arena may name its own; its limits stay the same.
+test_setup("arena.setup: location.line_gap stands the members that far apart; the fairness limits don't move",
+    function()
+        game()
+        local spawns = { A = { 0, 0, 0 }, B = { 0, 0, 10.5 } }
+        local _, j = setup(arena({ location = { spawns = spawns, line_gap = 1.25 } }))
+        eq(j and j.status, "running", "a job")
+        for _ = 1, 100 do
+            if #named("TeleportToPosition") >= 8 or j.status ~= "running" then break end
+            tick()
+        end
+        local xs = {}
+        for i, c in ipairs(named("TeleportToPosition")) do xs[i] = c[3] end
+        eq(enc(xs), enc({ -1.875, -0.625, 0.625, 1.875, -1.875, -0.625, 0.625, 1.875 }), "both lines at 1.25 m")
+        j.status = "interrupted"
+        calls = {}
+        local off = { A = { 0, 0, 0 }, B = { 0.5, 0, 10.5 } }
+        local r = enc(setup(arena({ location = { spawns = off, line_gap = 1.25 } })))
+        assert(r:find("must be the same within 0.1 m", 1, true), r)
+        eq(#calls, 0, "no game call")
+        for _, bad in ipairs({ 0, -1, "1.25" }) do
+            r = enc(setup(arena({ location = { spawns = spawns, line_gap = bad } })))
+            assert(r:find("location.line_gap must be a number above 0", 1, true), r)
+        end
+    end)
+
 test_setup("arena.setup: a member not at the arena's level after joining fails setup with every level; none begun",
     function()
     game()

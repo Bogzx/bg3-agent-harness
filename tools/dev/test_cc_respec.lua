@@ -214,5 +214,30 @@ check(page.commands[#page.commands] == "FinishCreating", "CC: FinishCreating")
 check(table.concat(page.sets, ","):find("raceTab", 1, true) ~= nil, "CC: the race tab shown")
 check(P.ccPage() == P.CC_PAGES[1], "CC: the page found is character creation")
 
+-- 5. expertise is picked in the expertise group: its skills are proficient ones, so the class group lists them too and
+-- a plain search stops there (a Rogue's Perception reads selected, nothing happens; Stealth is toggled as a class pick)
+do
+    local function skill(name, selected)
+        return obj("ls.VM", { Name = name, Selected = selected })
+    end
+    local class = { skill("Perception", true), skill("Stealth", false) }
+    local exp = { skill("Perception", false), skill("Stealth", false) }
+    local groups = { ["AllSkills.ClassProficientSkills"] = obj("ls.VM", { Skills = class }),
+        ["AllSkills.ExpertiseSkills"] = obj("ls.VM", { Skills = exp }) }
+    local toggled, path, command = {}, BG3AI.UI.path, BG3AI.UI.command
+    BG3AI.UI.path = function(_, p) return groups[p] end
+    BG3AI.UI.command = function(_, n, item)
+        if n == "ToggleSkill" then toggled[#toggled + 1] = item end
+        return true
+    end
+    local ctx = { result = { problems = {}, set = {} }, fast = true }
+    P.inner.skillsStage(function() return {} end, ctx, { "Perception", "Stealth" }, "expertise")()
+    check(#toggled == 2 and toggled[1] == exp[1] and toggled[2] == exp[2] and #ctx.result.problems == 0,
+        "expertise: both picked in the expertise group, the class group untouched")
+    P.inner.skillsStage(function() return {} end, ctx, { "Athletics" }, "expertise")()
+    check(ctx.result.problems[1] == "skill Athletics: not offered", "expertise: one not in its group is a problem")
+    BG3AI.UI.path, BG3AI.UI.command = path, command
+end
+
 print(fails == 0 and "ALL OK" or (fails .. " FAILED"))
 os.exit(fails == 0 and 0 or 1)

@@ -371,8 +371,9 @@ local function wantList(v)
     return v
 end
 
--- Skills: toggle each wanted skill on (searching class, race, expertise and feat groups in that order).
-local function skillsStage(getDC, ctx, wanted)
+-- Skills: toggle each wanted skill on (searching class, race, expertise and feat groups in that order; `only` names
+-- one group: expertise's skills are proficient ones, so the class group lists them too and would stop the search).
+local function skillsStage(getDC, ctx, wanted, only)
     return function()
         local dc = getDC()
         local want = wantList(wanted)
@@ -381,7 +382,7 @@ local function skillsStage(getDC, ctx, wanted)
             for _, name in ipairs(want) do
                 local done = false
                 for _, g in ipairs(groups) do
-                    local item = pick(g.skills, name)
+                    local item = (only == nil or g.key == only) and pick(g.skills, name) or nil
                     if item then
                         if UI.prop(item, "Selected") ~= true then
                             local ok, err = UI.command(dc, "ToggleSkill", item)
@@ -687,7 +688,7 @@ end)
 ------------------------------------------------------------------------
 -- ui.cc_apply {plan = {origin?, race?, subrace?, class?, subclass?, deity?, background?,
 --               abilities? = "recommended" | {Str=,Dex=,Con=,Int=,Wis=,Cha=}, bonus? = {"+2 ability","+1 ability"},
---               skills?, cantrips?, spells?, passives?, name?}, finish? = true}
+--               skills?, expertise?, cantrips?, spells?, passives?, name?}, finish? = true}
 ------------------------------------------------------------------------
 
 local function abilitiesStage(ctx, plan)
@@ -872,6 +873,7 @@ RPC.register("ui.cc_apply", function(args)
             return "next", 0
         end },
         { "skills", skillsStage(get, ctx, plan.skills) },
+        { "expertise", skillsStage(get, ctx, plan.expertise, "expertise") },
         { "skills?", skillsReport(get, ctx) },
         { "passives", passivesStage(get, ctx, plan.passives, true) },
         { "spells", spellsStage(pg.widget, get, ctx, plan.spells, plan.cantrips) },

@@ -292,7 +292,7 @@ RPC.register("ui.level_up_options", function(args)
 end)
 
 -- ui.level_up {uuid, plan = {class?, subclass?, deity?, feat?, abilities? = {Str=1, Dex=1} | {Dex=2},
---              skills?, passives?, cantrips?, spells?, allow_defaults?}, finish? = true}
+--              skills?, expertise?, passives?, cantrips?, spells?, allow_defaults?}, finish? = true}
 -- Subclass levels (Wizard 2, Druid 2, most others 3) need plan.subclass unless the page already shows one or
 -- allow_defaults is set: the job fails with result.subclasses listing the choices, and nothing is changed.
 -- Feat levels (4, 8, 12; Fighter 6, Rogue 10) default to Ability Improvement +2 on the class's primary ability.
@@ -567,6 +567,7 @@ RPC.register("ui.level_up", function(args)
             return "next", 0
         end },
         { "skills", skillsStage(get, ctx, plan.skills) },
+        { "expertise", skillsStage(get, ctx, plan.expertise, "expertise") },
         { "skills?", skillsReport(get, ctx) },
         { "passives", passivesStage(get, ctx, plan.passives, plan.allow_defaults) },
         { "passives?", passivesReport(get, ctx) },

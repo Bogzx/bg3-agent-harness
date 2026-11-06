@@ -100,7 +100,7 @@ ARENA_DIR = PACKAGE_ROOT / "arenas"
 SIDES = ("A", "B")
 TEAM_MAX = 4
 # Spawn geometry, as the mod's arena.setup refuses it (Server/ArenaSetup.lua Setup.check_geometry, F2): each team on a
-# line along x through its spawn, LINE_GAP_M apart; the two spawns under SPAWN_DY_MAX_M apart in height; every
+# line along x through its spawn, LINE_GAP_M (or the file's location.line_gap) apart; the two spawns under SPAWN_DY_MAX_M apart in height; every
 # distance across the lines the same both ways (A's member i to B's member j = B's i to A's j) within PAIR_DIST_TOL_M.
 LINE_GAP_M, SPAWN_DY_MAX_M, PAIR_DIST_TOL_M = 1.5, 0.3, 0.1
 ROUND_CAP, WALL_CAP_MIN = 20, 30
@@ -176,9 +176,12 @@ def _check_save(save: Any, draft: bool) -> list[str]:
 
 
 def _check_location(loc: Any, draft: bool) -> list[str]:
-    if not isinstance(loc, dict) or set(loc) != {"level", "spawns"}:
-        return ["location must be {level, spawns}"]
+    if not isinstance(loc, dict) or set(loc) - {"line_gap"} != {"level", "spawns"}:
+        return ["location must be {level, spawns, line_gap?}"]
     errs = [] if _str(loc["level"]) else ["location.level must be the level name"]
+    gap = loc.get("line_gap", LINE_GAP_M)
+    if isinstance(gap, bool) or not isinstance(gap, int | float) or gap <= 0:
+        errs.append("location.line_gap must be a number above 0 (metres)")
     spawns = loc["spawns"]
     if not isinstance(spawns, dict) or set(spawns) != set(SIDES):
         return [*errs, "location.spawns must give A and B a point"]
@@ -193,16 +196,12 @@ def _check_location(loc: Any, draft: bool) -> list[str]:
     return errs
 
 
-def _line(spot: Sequence[float], n: int) -> list[tuple[float, float, float]]:
-    return [(spot[0] + (i - (n - 1) / 2) * LINE_GAP_M, spot[1], spot[2]) for i in range(n)]
-
-
-def check_geometry(spawns: Mapping[str, Sequence[float]], n: int) -> list[str]:
+def check_geometry(spawns: Mapping[str, Sequence[float]], n: int, gap: float = LINE_GAP_M) -> list[str]:
     """What puts one team on other terms than the other for n members a side (the mod's F2 rule); [] = fair."""
     a, b = spawns["A"], spawns["B"]
     if (dy := abs(a[1] - b[1])) >= SPAWN_DY_MAX_M:
         return [f"location.spawns A and B are {dy:.2f} m apart in height (y); they must be under {SPAWN_DY_MAX_M} m"]
-    la, lb = _line(a, n), _line(b, n)
+    la, lb = ([(s[0] + (i - (n - 1) / 2) * gap, s[1], s[2]) for i in range(n)] for s in (a, b))
     for i in range(n):
         for j in range(n):
             ab, ba = math.dist(la[i], lb[j]), math.dist(lb[i], la[j])
@@ -329,7 +328,7 @@ def validate(a: Any, name: str) -> list[str]:
     if not (loc_errs or team_errs or "draft" in a):  # a draft's spots are placeholders
         pairs = a.get("mirror", {}).get("pairs") if isinstance(a.get("mirror"), dict) else None
         n = len(pairs) if isinstance(pairs, list) and pairs else len(a["teams"]["A"])
-        errs += check_geometry(a["location"]["spawns"], n)
+        errs += check_geometry(a["location"]["spawns"], n, a["location"].get("line_gap", LINE_GAP_M))
     level = a.get("level", LEVEL)
     if not _int(level) or not 1 <= level <= LEVEL_MAX:
         errs.append(f"level must be an integer 1..{LEVEL_MAX}")

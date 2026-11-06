@@ -183,10 +183,33 @@ def test_the_builds_arena_is_a_4v4_red_blue_draft_from_the_build_file_with_a_rac
     names = arena.team_names(a)
     assert all(n.startswith("Red ") for n in names["A"]) and all(n.startswith("Blue ") for n in names["B"])
     assert [n.split(" ", 1)[1] for n in names["A"]] == [n.split(" ", 1)[1] for n in names["B"]]
-    assert a["location"]["spawns"] == {"A": None, "B": None} and "TODO" in a["draft"]
+    # S1's P5 cells: a 1.5 m line of 4 doesn't fit the ground that lands exactly, a 1.25 m line does
+    loc = a["location"]
+    assert loc["line_gap"] == 1.25 and "reference" in a["draft"]
+    assert loc["spawns"] == {"A": [212.875, 10.98, 288.0], "B": [212.875, 10.98, 296.0]}
+    assert arena.check_geometry(loc["spawns"], len(pairs), loc["line_gap"]) == []
     assert {k: a[k] for k in ("save", "seed", "karmic")} == {
         k: arena.load_named("crash-mirror-v1")[k] for k in ("save", "seed", "karmic")
     }
+
+
+def test_location_line_gap_is_optional_checked_and_used_by_the_geometry():
+    with_gap = _with(location={**FAIR, "line_gap": 1.25})
+    jsonschema.validate(with_gap, ARENA_SCHEMA)
+    assert arena.validate(with_gap, READY["name"]) == []
+    for bad in (0, -1, "1.25", True):
+        got = arena.validate(_with(location={**FAIR, "line_gap": bad}), READY["name"])
+        assert got == ["location.line_gap must be a number above 0 (metres)"]
+    assert arena.validate(_with(location={**FAIR, "gap": 1.25}), READY["name"]) == [
+        "location must be {level, spawns, line_gap?}"
+    ]
+    # the cross rule scales with the line: this offset fails on a long line and passes on a short one
+    spawns = {"A": [0.0, 0.0, 0.0], "B": [0.5, 0.0, 8.0]}
+    n = 4
+    assert arena.check_geometry(spawns, n, 0.25) == []
+    assert "must be the same within" in arena.check_geometry(spawns, n, 3.0)[0]
+    far = _with(location={"level": FAIR["level"], "spawns": spawns, "line_gap": 3.0})
+    assert any("must be the same within" in e for e in arena.validate(far, READY["name"]))
 
 
 def test_a_draft_may_leave_both_spawns_todo_but_not_one():
