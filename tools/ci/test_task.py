@@ -126,6 +126,21 @@ def test_test_job_leaves_out_only_the_sudo_install_of_ffmpeg(ci: dict[str, list[
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("job", ["test", "e2e"])
+def test_the_apt_step_has_a_limit_of_its_own_below_the_jobs(job: str) -> None:
+    body = re.search(rf"^  {job}:\n(.*?)(?=^  [\w-]+:\n|\Z)", CI_YML.read_text(), re.M | re.S)
+    assert body, job
+    head, *steps = re.split(r"^(?=      - )", body[1], flags=re.M)
+    apt = [step for step in steps if "apt-get" in step]
+    assert len(apt) == 1, apt
+    step_limit = re.search(r"^        timeout-minutes: (\d+)$", apt[0], re.M)
+    job_limit = re.search(r"^    timeout-minutes: (\d+)$", head, re.M)
+    assert step_limit, f"{job}: a slow apt download can use up the whole job"
+    assert job_limit, job
+    assert int(step_limit[1]) < int(job_limit[1])
+
+
+@pytest.mark.integration
 def test_quick_is_the_check_jobs_ruff_steps_and_the_test_jobs_pytest_collected(
     ci: dict[str, list[tuple[str, str]]],
 ) -> None:

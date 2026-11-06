@@ -61,6 +61,9 @@ jobs:
       # bench's Inspect export (test_export_inspect.py) and scipy (test_stats.py's cross-check) skip without them
       - run: uv sync --locked --extra inspect --group crosscheck
       - name: ffmpeg (test_recorder.py and test_video_render.py encode with it)
+        # Slowest pass in 66 runs: 7.3 min. The rest of this job took up to 20.9 min, so past 8 it can't finish in 30.
+        # A mirror serving 40 kB/s keeps sending bytes, so apt's own stall timeout doesn't end it.
+        timeout-minutes: 8
         run: |
           command -v ffmpeg && exit 0
           sudo apt-get update -q && sudo apt-get install -y --no-install-recommends ffmpeg
@@ -110,6 +113,8 @@ jobs:
         if: steps.pw-cache.outputs.cache-hit != 'true'
         run: uv run playwright install chromium
       - name: Install chromium's system libraries and ffmpeg (the recorder test encodes with libx264)
+        # The test job's ffmpeg limit scaled to this step's 84 MB. Six of 698 runs sat here until the job's 30 min ended.
+        timeout-minutes: 10
         run: |
           uv run playwright install-deps chromium
           command -v ffmpeg || sudo apt-get install -y --no-install-recommends ffmpeg
