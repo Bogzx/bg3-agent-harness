@@ -190,4 +190,30 @@ local function passiveListsStage(getDC, ctx, lists)
 end
 P.inner.passiveListsStage = passiveListsStage
 
+-- A class's equipment choice, a Bard's instrument: Validity.ClassSelectors.EquipmentSelectors marks the class page, and
+-- ToggleEquipment takes the entry (CCLib_k.xaml). A plan names none: a reference's dress removes the item and a twin
+-- has none, so an open selector takes its first entry. Respec only (`moves`), and each selector here takes one (the
+-- row's SelectEquipment(list, 1, ...)), so a toggle can't take off one already held.
+local function equipmentStage(getDC, ctx, moves)
+    return function()
+        if not moves then return "next", 0 end
+        local dc = getDC()
+        for _, s in ipairs(list(UI.path(dc, "ClassProgressionDetails.NotSubEquipmentSelectors"))) do
+            local had = tonumber(UI.prop(s, "SelectedEquipmentCount"))
+            local max = tonumber(UI.prop(s, "MaxSelectedEquipmentCount"))
+            local first = list(UI.prop(s, "Equipments"))[1]
+            ctx.result.set.equipment = { had = had, max = max }
+            if had ~= max then
+                local ok, err = UI.command(dc, "ToggleEquipment", first)
+                if not ok then
+                    ctx.result.problems[#ctx.result.problems + 1] = "equipment choice: " .. tostring(err)
+                end
+                ctx.result.set.equipment.took_first = ok
+            end
+        end
+        return "next", 0
+    end
+end
+P.inner.equipmentStage = equipmentStage
+
 P.inner.abilitiesStage, P.inner.abilityBonusStage, P.inner.picksStage = abilitiesStage, abilityBonusStage, picksStage

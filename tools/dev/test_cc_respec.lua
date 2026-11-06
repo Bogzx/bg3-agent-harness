@@ -575,5 +575,38 @@ do
     filled(false)
 end
 
+-- The instrument: an open selector takes its first entry, a full one is left, a new game's page isn't touched
+do
+    local function apply(name, have)
+        local names = name == "CharacterRespec" and REAL.tabs or { classTab = "classTab" }
+        open(name, names, name == "CharacterRespec" and REAL.complete or "IsCharacterComplete")
+        local lute, flute = obj("ls.VM", {}), obj("ls.VM", {})
+        local sel = obj("ls.VMSel", { SelectedEquipmentCount = have, MaxSelectedEquipmentCount = 1,
+            Equipments = { lute, flute } })
+        local path, command = BG3AI.UI.path, BG3AI.UI.command
+        local took = {}
+        BG3AI.UI.path = function(_, k)
+            if k == "ClassProgressionDetails.NotSubEquipmentSelectors" then return { sel } end
+            return nil
+        end
+        BG3AI.UI.command = function(_, n, it)
+            if n == "ToggleEquipment" then took[#took + 1] = it end
+            return true
+        end
+        RESPEC.tabs, RESPEC.finish, RESPEC.complete = REAL.tabs, REAL.finish, REAL.complete
+        local res = run("ui.cc_apply", { plan = { class = "Wizard" }, finish = false })
+        BG3AI.UI.path, BG3AI.UI.command = path, command
+        return took, lute, res
+    end
+    local took, lute, res = apply("CharacterRespec", 0)
+    check(#took == 1 and took[1] == lute, "instrument: an open selector takes its first entry")
+    check(res.result.set.equipment.took_first == true, "instrument: the result says so")
+    took = apply("CharacterRespec", 1)
+    check(#took == 0, "instrument: a selector already full is left alone")
+    took = apply("CharacterCreation", 0)
+    check(#took == 0, "instrument: a new game's page is left alone")
+    filled(false)
+end
+
 print(fails == 0 and "ALL OK" or (fails .. " FAILED"))
 os.exit(fails == 0 and 0 or 1)

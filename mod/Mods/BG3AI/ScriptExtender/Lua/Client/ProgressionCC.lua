@@ -909,6 +909,7 @@ RPC.register("ui.cc_apply", function(args)
         { "skills?", skillsReport(get, ctx) },
         { "passive_lists", I.passiveListsStage(get, ctx, plan.passive_lists) },
         { "passives", passivesStage(get, ctx, plan.passives, true, true) },
+        { "equipment", I.equipmentStage(get, ctx, pg.widget == "CharacterRespec") },
         { "spells", spellsStage(pg.widget, get, ctx, plan.spells, plan.cantrips, pg.widget == "CharacterRespec") },
         { "spells?", spellsReport(get, ctx) },
         { "picks?", I.picksStage(get, ctx, plan) },
