@@ -17,6 +17,7 @@
 -- unrolled = true (and a referee record), never as failed: the agent must not order it again.
 
 local RPC = BG3AI.RPC
+local U = BG3AI.Util
 local G = BG3AI.Guard
 local A = BG3AI.Actions
 
@@ -288,6 +289,43 @@ function A.cast_paused(char)
     if not ok or type(names) ~= "table" then return false end
     for _, n in ipairs(names) do if n == A.CAST_PAUSED_COMP then return true end end
     return false
+end
+
+-- L5 scratch (ops/logs/live.md, 00:39:40): a paused cast's job ends `interrupted`, so on_finish's resource audit never
+-- saw it land: Blue Birch's released Healing Word healed and left its slots at 4/4. Normal play goes the same way. The
+-- job leaves its audit here, and the cast's CastedSpell runs it once the game has settled, as a finished job's does.
+-- An audit pays only what the game didn't, so a lost cast's entry and a later cast of the spell can't pay twice.
+A.held_audits = A.held_audits or {}
+
+function A.hold_audit(job, matches, audit)
+    A.held_audits[#A.held_audits + 1] = { matches = matches, audit = audit, side = job.side }
+end
+
+function A.held_cast_landed(caster, spell)
+    for _, h in ipairs(A.held_audits) do
+        if not h.landed_ms and h.matches({ caster, spell }) then
+            h.landed_ms = RPC.now_ms()
+            return
+        end
+    end
+end
+
+function A.held_audit_tick()
+    for i = #A.held_audits, 1, -1 do
+        local h = A.held_audits[i]
+        if h.landed_ms and RPC.now_ms() - h.landed_ms >= A.CAST_SETTLE_MS then
+            table.remove(A.held_audits, i)
+            U.with_side(h.side, h.audit)
+        end
+    end
+end
+
+if not A.held_audit_subscribed then
+    A.held_audit_subscribed = true
+    Ext.Events.Tick:Subscribe(function()
+        local ok, err = pcall(A.held_audit_tick)
+        if not ok then Ext.Utils.PrintWarning("[BG3AI] held cast audit: " .. tostring(err)) end
+    end)
 end
 
 -- CastedSpell of the job's cast: true = report it as cast. A cast whose state was never seen, or whose clear failed

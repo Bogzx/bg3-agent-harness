@@ -924,20 +924,28 @@ reg("cast", function(args)
         end,
         on_finish = function(job)
             if job.jump_marked then pcall(BG3AI.Nav.inflightDone, "jump") end -- NAV-7: only its own marker
-            if not job.casted then return end
             -- A hotbar cast is the player's own: the game charged it (nothing extra from us).
             if job.ui then return end
             -- Resource audit: charge whatever the engine did not.
-            local after = G.resources(char)
-            local charged = {}
-            for _, p in ipairs(check.payers) do
-                local before = (check.snapshot[p.name] or {})[p.level] or 0
-                local now = (after[p.name] or {})[p.level] or 0
-                local owed = p.amount - (before - now)
-                if owed > 0.01 and G.deduct(char, p.name, p.level, owed) then
-                    charged[#charged + 1] = { resource = G.friendly(p.name), level = p.level > 0 and p.level or nil, amount = owed }
+            local function audit()
+                local after = G.resources(char)
+                local charged = {}
+                for _, p in ipairs(check.payers) do
+                    local before = (check.snapshot[p.name] or {})[p.level] or 0
+                    local now = (after[p.name] or {})[p.level] or 0
+                    local owed = p.amount - (before - now)
+                    if owed > 0.01 and G.deduct(char, p.name, p.level, owed) then
+                        charged[#charged + 1] = { resource = G.friendly(p.name),
+                            level = p.level > 0 and p.level or nil, amount = owed }
+                    end
                 end
+                return charged
             end
+            if not job.casted then
+                if type(job.result) == "table" and job.result.paused then A.hold_audit(job, matches, audit) end
+                return
+            end
+            local charged = audit()
             if #charged > 0 and type(job.result) == "table" then job.result.charged_by_guard = charged end
         end,
     })

@@ -533,6 +533,7 @@ function A.dispatch(event, args)
     elseif (event == "CastSpell" or event == "CastedSpell") and args[1] then
         U.each_side(A.foe_cast, event, args[1], args[2]) -- "outside the party" is per side in an arena
         A.track_cast(event, args[1], args[2])
+        if event == "CastedSpell" then A.held_cast_landed(args[1], args[2]) end
         A.scroll_cast(event, args[1])
         A.note_cast(args[1]) -- the idle teleport watch: a jump right after it is the caster's spell (ActionsMove)
     elseif event == "ReactionInterruptUsed" and args[1] then

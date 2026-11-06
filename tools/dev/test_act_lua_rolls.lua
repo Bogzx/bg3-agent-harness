@@ -168,6 +168,53 @@ test("cast start: a cast held paused for a reaction is reported as paused, its t
     world[P1].comp_names = nil
 end)
 
+-- L5 scratch 00:39:40: the released cast healed and its slot stayed 4/4: the job had ended `interrupted`, so nothing
+-- audited the landing. Not an arena case: nothing here has a side.
+local function held_heal(amount)
+    combat_setup(9)
+    spell("Target_HeldHeal", { TargetRadius = "18", SpellType = "Target", Level = 1,
+        UseCosts = "BonusActionPoint:1;SpellSlotsGroup:1:1:1" })
+    local res = world[P1].comps.ActionResources.Resources
+    res.BonusActionPoint = { { Level = 0, Amount = 1 } }
+    res.SpellSlot = { { Level = 1, Amount = amount } }
+    world[NPC].pos = { 1.5, 0, 0 }
+    local j = job(op("cast", { char = P1, spell = "Target_HeldHeal", target = NPC }))
+    eq(j.status, "running", "started " .. tostring(j.error))
+    tick(15)
+    world[P1].comp_names = { PAUSED }
+    tick(20)
+    eq(j.status, "interrupted", "held " .. tostring(j.error))
+    world[P1].comp_names = nil
+    return res
+end
+
+test("cast start: a paused cast that lands afterwards pays what the game didn't, once (L5 scratch)", function()
+    local res = held_heal(4)
+    eq(res.SpellSlot[1].Amount, 4, "nothing paid while it is held")
+    res.BonusActionPoint[1].Amount = 0 -- the game pays the bonus action, not the slot
+    A.dispatch("CastedSpell", { P1, "Target_HeldHeal", "Target", "None", 0 })
+    tick(10)
+    eq(res.SpellSlot[1].Amount, 3, "the slot is paid")
+    eq(res.BonusActionPoint[1].Amount, 0, "the bonus isn't paid twice")
+    A.dispatch("CastedSpell", { P1, "Target_HeldHeal", "Target", "None", 0 })
+    tick(10)
+    eq(res.SpellSlot[1].Amount, 3, "one landing, one payment")
+end)
+
+test("cast start: a paused cast that never lands pays nothing, and a later cast of it pays once (L5 scratch)", function()
+    local res = held_heal(4)
+    tick(100)
+    eq(res.SpellSlot[1].Amount, 4, "a lost cast is free")
+    res.BonusActionPoint[1].Amount = 1
+    local j = job(op("cast", { char = P1, spell = "Target_HeldHeal", target = NPC }))
+    eq(j.status, "running", "cast again " .. tostring(j.error))
+    A.dispatch("CastSpell", { P1, "Target_HeldHeal", "Target", "None", 0 })
+    A.dispatch("CastedSpell", { P1, "Target_HeldHeal", "Target", "None", 0 })
+    tick(20)
+    eq(j.status, "done", "done " .. tostring(j.error))
+    eq(res.SpellSlot[1].Amount, 3, "one slot for the one cast that landed")
+end)
+
 test("cast start: a short pause that clears lets the cast finish as usual", function()
     local j = swing()
     world[P1].comp_names = { PAUSED }
