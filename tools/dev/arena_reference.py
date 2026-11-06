@@ -166,14 +166,37 @@ def _lua_list(ids: list[str]) -> str:
     return "{" + ",".join(_lua_str(x) for x in ids) + "}"
 
 
+# After the party join (S1 read these before it; a pending level-up shows a LEVEL UP line, and Sym.FIELDS has neither).
+LEVEL_STATE_LUA = """
+local V = Mods.BG3AI.BG3AI.Visibility
+local out = {}
+for _, u in ipairs(Ext.Json.Parse(%s)) do
+    local e = V.entity(u)
+    out[#out + 1] = { uuid = u, level = e.EocLevel.Level, available = e.AvailableLevel.Level,
+        can_level_up = e.CanLevelUp ~= nil }
+end
+return Ext.Json.Stringify(out)
+"""
+
+
 def setup_check(game: Any, arena: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     """arena.setup on the loaded start save (S4). -> (exit code, what to log): 0 when it stood the match up (every twin
-    its build's), 1 with the error and its reference rows when it didn't. A match stood up is left unplayed: reload."""
+    its build's, none with a level-up pending), 1 with the error and its rows when it didn't. A match stood up is left
+    unplayed: load again."""
     r = game.run_job("arena.setup", {"arena": arena, "round_cap": arena.get("round_cap")}, wait_s=JOB_WAIT_S)
     res = r.result if isinstance(r.result, dict) else {}
     keep = ("reference", "xp", "not_applied", "teams", "members", "surfaces", "spawn_order")
     rec = {"status": r.status, "error": r.error} | {k: res[k] for k in keep if k in res}
-    return (0 if r.status == "done" else 1), rec
+    if r.status != "done":
+        return 1, rec
+    twins = [u for side in res.get("teams", {}).values() for u in side]
+    if twins:
+        rec["level_state"] = json.loads(game.eval(LEVEL_STATE_LUA % _lua_str(json.dumps(twins)), context="server"))
+        pending = [x["uuid"] for x in rec["level_state"] if x["can_level_up"] or x["available"] != x["level"]]
+        if pending:
+            rec["error"] = f"a level-up pending after the party join: {', '.join(pending)}"
+            return 1, rec
+    return 0, rec
 
 
 class Live:

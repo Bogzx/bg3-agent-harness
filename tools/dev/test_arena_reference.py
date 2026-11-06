@@ -30,8 +30,11 @@ class Job:
 
 
 class FakeGame:
-    def __init__(self, jobs: list[Job]) -> None:
-        self.jobs, self.finished = jobs, 0
+    def __init__(self, jobs: list[Job], levels: list[dict[str, Any]] | None = None) -> None:
+        self.jobs, self.finished, self.levels = jobs, 0, levels
+
+    def eval(self, code: str, context: str = "client", timeout: float = 12.0) -> str:
+        return json.dumps(self.levels)
 
     def run_job(self, op: str, args: dict[str, Any], context: str = "server", wait_s: float = 0.0) -> Job:
         return self.jobs.pop(0)
@@ -174,6 +177,17 @@ class SetupCheckTest(unittest.TestCase):
         self.assertIn("not their builds", rec["error"])
         code, rec = ar.setup_check(FakeGame([Job("done", {"xp": {"added": 6072}})]), {})
         self.assertEqual((code, rec["xp"]), (0, {"added": 6072}))
+
+    def test_a_twin_with_a_level_up_pending_after_the_party_join_fails_it(self):
+        # S1 read AvailableLevel and CanLevelUp before any join, and Sym.FIELDS doesn't compare them
+        teams = {"teams": {"A": ["a1"], "B": ["b1"]}}
+        ok = {"uuid": "a1", "level": 2, "available": 2, "can_level_up": False}
+        code, rec = ar.setup_check(FakeGame([Job("done", teams)], [ok, ok | {"uuid": "b1"}]), {})
+        self.assertEqual((code, len(rec["level_state"])), (0, 2))
+        for bad in ({"available": 3}, {"can_level_up": True}):
+            code, rec = ar.setup_check(FakeGame([Job("done", teams)], [ok, ok | {"uuid": "b1"} | bad]), {})
+            self.assertEqual(code, 1)
+            self.assertIn("b1", rec["error"])
 
 
 KIT = {"items": [{"item": "WPN_X", "root": "r", "count": 1, "equip": True}], "prepared": ["Target_Bless"]}
