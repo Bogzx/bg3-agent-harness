@@ -1140,7 +1140,12 @@
        "count": 2,
        "equip": false
       }
-     ]
+     ],
+     "spell_abilities": {
+      "Target_DancingLights": "Charisma",
+      "Target_HuntersMark": "Wisdom",
+      "Target_CureWounds": "Wisdom"
+     }
     },
     "reference": {
      "profile": {

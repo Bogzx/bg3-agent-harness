@@ -69,6 +69,27 @@ class RaceTest(unittest.TestCase):
         self.assertEqual((r["race"], r["spells"]), (SELDARINE, ["Target_DancingLights"]))
         self.assertIn("ProficiencyBonus(Skill,Perception)", r["boosts"])
 
+    def test_a_spell_keeps_the_ability_its_row_gives_else_its_classs(self):
+        doc = json.loads((REPO / "packages/bench/builds/l2_hirelings_v1.json").read_text())
+        b = next(x for x in doc["builds"] if x["class"] == "Ranger")
+        r = mas.kit_plan(ab.kit_of(b, 2, STATIC), "Ranger", 2, STATIC)
+        self.assertEqual(
+            r["kit"]["spell_abilities"],
+            {"Target_DancingLights": "Charisma", "Target_HuntersMark": "Wisdom", "Target_CureWounds": "Wisdom"},
+        )
+        self.assertNotIn("spell_abilities", r["kit"]["race"])
+        self.assertTrue(all("ability" not in c for c in r["kit"]["choices"]), "nothing the mod doesn't read")
+
+    def test_a_kit_with_no_spells_of_its_own_has_no_spell_abilities(self):
+        r = mas.kit_plan(kit("Fighter", "HalfElf_Wood"), "Fighter", 2, STATIC)
+        self.assertNotIn("spell_abilities", r["kit"])
+
+    def test_a_row_that_names_no_ability_and_a_class_with_none_writes_nothing(self):
+        part = mas.race_plan(kit("Fighter", "Drow_Seldarine"), STATIC, "x")[1]
+        self.assertEqual(part["spell_abilities"], {"Target_DancingLights": "Charisma"}, "the row's own")
+        self.assertIsNone(mas._row_ability(["list", "", ""], 2))
+        self.assertIsNone(mas._row_ability(["list"], 2))
+
     def test_a_race_spell_list_not_in_the_data_is_refused(self):
         st = copy.deepcopy(STATIC)
         del st["spell_lists"]["d707ec70-da8a-457b-9b69-7cf5205eef0e"]
@@ -132,7 +153,7 @@ class BuildsTest(unittest.TestCase):
 
     def test_a_rated_file_needs_every_reference_on_its_game_build(self):
         d = doc()
-        del d["draft"]
+        d.pop("draft", None)
         for b in d["builds"]:
             b["reference"] = None  # a live read may already be in the file
         with self.assertRaisesRegex(ab.BuildError, "build fighter: no reference profile"):
@@ -204,9 +225,13 @@ class BuildsTest(unittest.TestCase):
 
     def test_validate_cli_draft_ok_rated_refused(self):
         out, err = io.StringIO(), io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
-            self.assertEqual(mas.main(["validate", str(BUILDS)]), 0)
-            self.assertEqual(mas.main(["validate", "--rated", str(BUILDS)]), 1)
+        with tempfile.TemporaryDirectory() as t:
+            draft = Path(t) / "draft.json"
+            draft.write_text(json.dumps({**doc(), "draft": "references not read yet"}))
+            with redirect_stdout(out), redirect_stderr(err):
+                self.assertEqual(mas.main(["validate", str(draft)]), 0)
+                self.assertEqual(mas.main(["validate", "--rated", str(draft)]), 1)
+                self.assertEqual(mas.main(["validate", "--rated", str(BUILDS)]), 0, "all four references are in")
         self.assertIn("l2_hirelings_v1: ok (draft)", out.getvalue())
         self.assertIn("l2_hirelings_v1 is a draft", err.getvalue())
         with tempfile.TemporaryDirectory() as t:

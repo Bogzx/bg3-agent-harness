@@ -5,6 +5,8 @@
 -- parts and AddSpells included (live 2026-11-02, live check 11 load 3: POC_Player_Fighter's table is Origin_Laezel's,
 -- and a copy got exactly its Str +2 Int +1, Gith_MartialProdigy and Mage Hand, but no class table: no Second Wind).
 -- The choices (skills, fighting style, spells, the +2/+1) are the kit's (Server/ArenaMirror.lua), not the entry's.
+-- SpellCastingAbility is CASTING for every class: _Hero's own, so what a real player's stats read whatever its class
+-- (references, live 2026-11-06: Intelligence on a Ranger and a Barbarian; its spells' rows carry their own ability).
 -- Made every session, before any save loads, so a reloaded twin finds its entry (none is persisted in a save).
 -- Abilities: POC_Player_<Class>'s (Shared Character.txt); the Rogue's Dex 17 there carries the old racial +2 (15
 -- here); the Barbarian's POC entry is the Fighter's. The classes (orchestrator D300, D308): no subclass by level 2
@@ -20,20 +22,21 @@ Ar.Stats = AS
 AS.PREFIX = "BG3AI_Arena_"
 AS.LEVELS = { 1 }
 AS.ABILITIES = { "Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma" }
+AS.CASTING = "Intelligence"
 AS.CLASSES = { -- table: the class's progression table (ClassDescriptions / Progressions.lsx)
-    Fighter = { table = "ba4e707e-4bbd-4630-963b-ce2f2947f971", casting = "Intelligence",
+    Fighter = { table = "ba4e707e-4bbd-4630-963b-ce2f2947f971",
         abilities = { 15, 13, 14, 10, 12, 8 } },
-    Rogue = { table = "9a44e828-92db-4d6c-acbc-a4f8ef340415", casting = "Intelligence",
+    Rogue = { table = "9a44e828-92db-4d6c-acbc-a4f8ef340415",
         abilities = { 8, 15, 14, 12, 13, 10 } },
-    Barbarian = { table = "60bbcc97-5381-4898-bc15-908c072895de", casting = "Intelligence",
+    Barbarian = { table = "60bbcc97-5381-4898-bc15-908c072895de",
         abilities = { 15, 13, 14, 10, 12, 8 } },
-    Ranger = { table = "8f068974-ed32-43fc-a9d9-028be1c01a9c", casting = "Wisdom",
+    Ranger = { table = "8f068974-ed32-43fc-a9d9-028be1c01a9c",
         abilities = { 12, 15, 13, 8, 14, 10 } },
-    -- the 4v4 builds' healer and caster (website repo ops/logs/arena-4v4-builds.md §2; tables and casting from
+    -- the 4v4 builds' healer and caster (website repo ops/logs/arena-4v4-builds.md §2; tables from
     -- ClassDescriptions.lsx, tools/dev/arena_static.json): their subclass (Life at 1, Evocation at 2) is the kit's
-    Cleric = { table = "64474b62-b4f5-46b3-b94a-c676c6da3116", casting = "Wisdom",
+    Cleric = { table = "64474b62-b4f5-46b3-b94a-c676c6da3116",
         abilities = { 14, 10, 14, 8, 15, 10 } },
-    Wizard = { table = "d18eda7e-4b7d-490d-9952-cd33a3c60479", casting = "Intelligence",
+    Wizard = { table = "d18eda7e-4b7d-490d-9952-cd33a3c60479",
         abilities = { 8, 14, 14, 15, 12, 8 } },
 }
 AS.ORDER = { "Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard" } -- AS.build's order
@@ -51,7 +54,7 @@ function AS.build()
             if not s then error("Ext.Stats.Create made no " .. name, 0) end
             s.Class = class
             s.Level = level
-            s.SpellCastingAbility = c.casting
+            s.SpellCastingAbility = AS.CASTING
             s.Progressions = c.table
             for i, a in ipairs(AS.ABILITIES) do s[a] = c.abilities[i] end
             names[#names + 1] = name

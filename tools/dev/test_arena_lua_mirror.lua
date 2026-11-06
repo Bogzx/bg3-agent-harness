@@ -67,7 +67,7 @@ local function twin(u, over)
     over = over or {}
     world[u] = { pos = { 0, 0, 0 }, comps = { ServerCharacter = {}, Race = { Race = over.race or HALFELF },
         Data = { StatsId = over.stats }, EocLevel = { Level = over.level or 1 },
-        BoostsContainer = {}, PassiveContainer = {}, SpellBook = {},
+        BoostsContainer = {}, PassiveContainer = { Passives = {} }, SpellBook = { Spells = {} },
         InventoryOwner = { Inventories = {
             { InventoryData = { Type = "Equipment" }, InventoryContainer = { Items = {} } },
             { InventoryData = { Type = "Inventory" }, InventoryContainer = { Items = over.bag or {} } } } } } }
@@ -249,11 +249,13 @@ test("stat entries: one per class and level at StatsLoaded with the switch, from
         local f1 = stats.BG3AI_Arena_Fighter_L1
         eq(enc({ f1.Class, f1.Level, f1.Progressions, f1.Strength, f1.Charisma }),
             enc({ "Fighter", 1, "ba4e707e-4bbd-4630-963b-ce2f2947f971", 15, 8 }), "Fighter L1")
-        eq(stats.BG3AI_Arena_Ranger_L1.SpellCastingAbility, "Wisdom", "the Ranger casts with Wisdom")
+        for name, s in pairs(stats) do
+            eq(s.SpellCastingAbility, "Intelligence", name .. " reads _Hero's, as a player does")
+        end
         local c1, w1 = stats.BG3AI_Arena_Cleric_L1, stats.BG3AI_Arena_Wizard_L1
-        eq(enc({ c1.Progressions, c1.SpellCastingAbility, c1.Wisdom, w1.Progressions, w1.SpellCastingAbility,
-            w1.Intelligence }), enc({ "64474b62-b4f5-46b3-b94a-c676c6da3116", "Wisdom", 15,
-            "d18eda7e-4b7d-490d-9952-cd33a3c60479", "Intelligence", 15 }), "the 4v4 healer and caster (Cleric, Wizard)")
+        eq(enc({ c1.Progressions, c1.Wisdom, w1.Progressions, w1.Intelligence }),
+            enc({ "64474b62-b4f5-46b3-b94a-c676c6da3116", 15, "d18eda7e-4b7d-490d-9952-cd33a3c60479", 15 }),
+            "the 4v4 healer and caster (Cleric, Wizard)")
         local cost = { [8] = 0, [9] = 1, [10] = 2, [11] = 3, [12] = 4, [13] = 5, [14] = 7, [15] = 9 }
         for class, c in pairs(Ar.Stats.CLASSES) do
             local n = 0
@@ -321,6 +323,7 @@ test("mirror_kit: the same calls on both twins in the kit's order, then each ite
         local r = Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit() })
         local j = RPC.jobs[r.job]
         eq(#calls, 0, "nothing at the call")
+        clock = clock + Ar.Mirror.SETTLE_MS
         tick()
         local per = {}
         for _, c in ipairs(calls) do
@@ -961,4 +964,5 @@ test("a kit's prepared has no game call: named in the result; a part nothing rea
 
 -- The next part's helpers (test_arena_lua_tier.lua; `calls` is a new table per game).
 MIRROR = { stub = stub, guarded = guarded, named = named, mirrorArena = mirrorArena, mirrorSetup = mirrorSetup,
-    HOST = HOST, twin = twin, calls = function() return calls end }
+    HOST = HOST, twin = twin, calls = function() return calls end, kit = kit, runJob = runJob, T1 = T1, T2 = T2,
+    HALFELF = HALFELF }

@@ -307,6 +307,30 @@ local function unaccepted(list, accepted)
     return out
 end
 
+-- A field as reference_diff compares it, so that a stored reference stays as it was read:
+-- boosts by type, since one boost reads two ways: AddBoosts' `ActionResource|ActionResource|Movement,9,0|`, a
+--   progression's `ActionResource|||` (S4, live 2026-11-06); what its text says is compared by resources, skills and
+--   derived. Ability rows left out: the respec stores the base as boosts, a twin has it in its stats, `abilities`
+--   compares the scores (orchestrator's ruling).
+-- statuses without INSURFACE: where a character stood when read, nothing of its build (the same ruling).
+local function comparable(f, v)
+    if type(v) ~= "table" then return v end
+    local out = {}
+    if f == "boosts" then
+        for _, row in ipairs(v) do
+            local t = tostring(row):match("^[^|]*")
+            if t ~= "Ability" then out[#out + 1] = t end
+        end
+        return out
+    elseif f == "statuses" then
+        for _, id in ipairs(v) do
+            if id ~= "INSURFACE" then out[#out + 1] = id end
+        end
+        return out
+    end
+    return v
+end
+
 -- A twin's profile against reference {profile, accepted = [{field, only_twin, only_reference, why}]}:
 -- {ok, diffs = [{field, only_twin, only_reference}], accepted = [same], unread = [field]}.
 -- A field that doesn't read on either side is unread and not ok: it would hide a difference.
@@ -322,7 +346,7 @@ function Sym.reference_diff(profile, reference)
         if t == nil or r == nil then
             out.unread[#out.unread + 1] = f
         else
-            local ft, fr = flat(t, f == "abilities"), flat(r, f == "abilities")
+            local ft, fr = flat(comparable(f, t), f == "abilities"), flat(comparable(f, r), f == "abilities")
             local onlyT, onlyR = beyond(ft, fr), beyond(fr, ft)
             local a = accepted[f] or {}
             local badT, badR = unaccepted(onlyT, a.only_twin), unaccepted(onlyR, a.only_reference)
