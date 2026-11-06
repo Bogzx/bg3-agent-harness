@@ -958,6 +958,161 @@
      "root": "efcb70b7-868b-4214-968a-e23f6ad586bc"
     }
    ]
+  },
+  "Bard": {
+   "table": "229c98da-2cd1-4a5e-8051-9d90ec7931e7",
+   "casting": "Charisma",
+   "levels": {
+    "1": {
+     "Boosts": "ActionResource(BardicInspiration,3,0);ActionResource(SpellSlot,2,1);ProficiencyBonus(SavingThrow,Dexterity);ProficiencyBonus(SavingThrow,Charisma);Proficiency(LightArmor);Proficiency(SimpleWeapons);Proficiency(HandCrossbows);Proficiency(Longswords);Proficiency(Rapiers);Proficiency(Shortswords);Proficiency(MusicalInstrument);Attribute(UseMusicalInstrumentForCasting)",
+     "PassivesAdded": "BardicInspiration;BardSpellcasting;UnlockedSpellSlotLevel1",
+     "Selectors": "SelectSkills(ed664663-93b9-4070-a54b-3c7b19c0e7b4,3);SelectSpells(61f79a30-2cac-4a7a-b5fe-50c89d307dd6,2,0,BardCantrip,,,AlwaysPrepared);SelectSpells(dcb45167-86bd-4297-9b9d-c295be51af5b,4,0,BardSpells);SelectEquipment(aab8c5b5-eacf-4867-8e5f-bd4de3a9132e,1,BardInstrument);SelectAbilityBonus(b9149c8e-52c8-46e5-9cb6-fc39301c05fe,AbilityBonus,2,1)",
+     "uuid": "374c3aae-828b-44d8-b4e3-51ba802977dd",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "ActionResource(SpellSlot,1,1)",
+     "PassivesAdded": "JackOfAllTrades",
+     "Selectors": "SelectSpells(dcb45167-86bd-4297-9b9d-c295be51af5b,1,1,BardSpells);AddSpells(80225e21-5acd-4122-b779-488dae33a31c)",
+     "uuid": "7a2f66b5-7555-49f2-833b-f3d79affc7ca",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "ActionResource(SpellSlot,1,1);ActionResource(SpellSlot,2,2)",
+     "PassivesAdded": "UnlockedSpellSlotLevel2",
+     "Selectors": "SelectSpells(7ea8f476-97a1-4256-8f10-afa76a845cce,1,1,BardSpells);SelectSkillsExpertise(f974ebd6-3725-4b90-bb5c-2b647d41615d,2)",
+     "uuid": "26f64038-6033-48d5-9da7-38e8c95ce712",
+     "subclasses": 4
+    },
+    "4": {
+     "Boosts": "ActionResource(SpellSlot,1,2)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(61f79a30-2cac-4a7a-b5fe-50c89d307dd6,1,0,BardCantrip,,,AlwaysPrepared);SelectSpells(7ea8f476-97a1-4256-8f10-afa76a845cce,1,1,BardSpells)",
+     "uuid": "c58396f8-4cdb-47e8-bba3-36d8c59406ea",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "5": {
+     "Boosts": "ActionResource(BardicInspiration,1,0);ActionResource(SpellSlot,2,3)",
+     "PassivesAdded": "FontOfInspiration;BardicInspiration_d8;UnlockedSpellSlotLevel3",
+     "Selectors": "SelectSpells(c213ca01-3767-457b-a5c8-fd4c1dd656e2,1,1,BardSpells)",
+     "uuid": "3ca383a7-d545-4e01-8d00-00c965d3e604",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "ActionResource(SpellSlot,1,3)",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(d84fc8ab-293e-437f-9825-e3e313f78060);SelectSpells(c213ca01-3767-457b-a5c8-fd4c1dd656e2,1,1,BardSpells)",
+     "uuid": "c3fc8172-ca21-46e1-9447-e856ad063689",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "ActionResource(SpellSlot,1,4)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(75e04c40-be8f-40a5-9acc-0b5d59d5f3a6,1,1,BardSpells)",
+     "uuid": "9aa0f1f1-8074-4fe7-919e-804dc0030406",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "ActionResource(SpellSlot,1,4);ActionResource(BardicInspiration,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(75e04c40-be8f-40a5-9acc-0b5d59d5f3a6,1,1,BardSpells)",
+     "uuid": "b08fd01b-47e9-455c-83fc-075323142456",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "9": {
+     "Boosts": "ActionResource(SpellSlot,1,4);ActionResource(SpellSlot,1,5)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bd71fffb-e4d2-4233-9a31-13d43fba36e3,1,1,BardSpells)",
+     "uuid": "b1f811c8-4831-488a-bd1d-47e9883d2823",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "ActionResource(SpellSlot,1,5)",
+     "PassivesAdded": "BardicInspiration_d10",
+     "Selectors": "SelectSpells(61f79a30-2cac-4a7a-b5fe-50c89d307dd6,1,0,BardCantrip,,,AlwaysPrepared);SelectSpells(bd71fffb-e4d2-4233-9a31-13d43fba36e3,1,1,BardSpells);SelectSkillsExpertise(f974ebd6-3725-4b90-bb5c-2b647d41615d,2);SelectSpells(858d4322-9e9f-4aa4-aada-9c68835dc6fe,2,0,BardMagicalSecrets)",
+     "uuid": "b898b2bd-7cd3-480c-877c-4ccd391f2b2c",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "ActionResource(SpellSlot,1,6)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(586a8796-34f4-41f5-a3ef-95738561d55d,1,1,BardSpells)",
+     "uuid": "4f9b2f00-fd70-487c-9038-83412eb5abc0",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(586a8796-34f4-41f5-a3ef-95738561d55d,1,1,BardSpells)",
+     "uuid": "36301759-1445-4cc4-a3c2-f186b8da0309",
+     "subclasses": 0,
+     "AllowImprovement": true
+    }
+   },
+   "equipment": [
+    {
+     "item": "WPN_Rapier",
+     "type": "Weapon",
+     "root": "7061f489-4b13-4982-aa09-cf0ad961e75f"
+    },
+    {
+     "item": "WPN_HandCrossbow",
+     "type": "Weapon",
+     "root": "a5d843ab-c3af-4e60-a925-bb2e15828938"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "ARM_Bard",
+     "type": "Armor",
+     "root": "da345d08-2186-4e4a-857c-3fd6a104cec6"
+    },
+    {
+     "item": "ARM_Boots_Leather",
+     "type": "Armor",
+     "root": "969bab00-b269-46a5-a7e9-dd4887814719"
+    },
+    {
+     "item": "OBJ_Scroll_Revivify",
+     "type": "Object",
+     "root": "c1c3e4fb-d68c-4e10-afdc-d4550238d50e"
+    },
+    {
+     "item": "OBJ_Keychain",
+     "type": "Object",
+     "root": "ee329627-dbee-405f-b9a6-b260de9ad34c"
+    },
+    {
+     "item": "OBJ_Bag_AlchemyPouch",
+     "type": "Object",
+     "root": "b7543ff4-5010-4c01-9bcd-4da1047aebfc"
+    },
+    {
+     "item": "ARM_Camp_Body",
+     "type": "Armor",
+     "root": "f369f4fa-2da7-4693-a147-16cfaf02bca5"
+    },
+    {
+     "item": "ARM_Camp_Shoes",
+     "type": "Armor",
+     "root": "6bb7a595-7646-48a9-9c44-d39f16c1c5cb"
+    },
+    {
+     "item": "OBJ_Backpack_CampSupplies",
+     "type": "Object",
+     "root": "efcb70b7-868b-4214-968a-e23f6ad586bc"
+    }
+   ]
   }
  },
  "races": {
@@ -1104,6 +1259,27 @@
      "Selectors": ""
     }
    ]
+  },
+  "Halfling_Lightfoot": {
+   "race": "a8828cb9-589d-489e-8373-6495eb31ffc1",
+   "rows": [
+    {
+     "race": "Halfling",
+     "table": "7e1ae395-6f2a-456b-ab64-1012c18065d4",
+     "uuid": "963edcba-c572-4f51-b447-8810bbb43a8e",
+     "Boosts": "ActionResource(Movement,7.5,0)",
+     "PassivesAdded": "Halfling_Lucky;Halfling_Brave",
+     "Selectors": ""
+    },
+    {
+     "race": "Halfling_Lightfoot",
+     "table": "fa29312c-6ec6-4bf9-9613-6d99feb57467",
+     "uuid": "bc2d257b-a405-4f58-891e-3083c5f71127",
+     "Boosts": "",
+     "PassivesAdded": "Halfling_LightfootStealth",
+     "Selectors": ""
+    }
+   ]
   }
  },
  "races_source": "A1 races (orchestrator D411), read 2026-11-03 from the installed game's paks with tools/pak.py, read-only (no game run): Shared.pak Public/Shared/Races/Races.lsx (race and subrace ids, ParentGuid, ProgressionTableUUID); Public/Shared + Public/SharedDev Progressions/Progressions.lsx, the level-1 row of the parent race's table and of the subrace's (SharedDev's row wins over Shared's with the same UUID; Gustav, GustavDev, GustavX and the hotfix paks carry none of these rows); Public/Shared/Lists/SpellLists.lsx (the Drow cantrip list). `race` is the id a template of that race reads (Races.lsx UUID of the subrace, or the race when it has none); `rows` the level-1 rows in the order the kit applies them, parent first.",
@@ -1156,6 +1332,10 @@
   "Sage": {
    "uuid": "8807a6c6-d8cf-494b-aec2-cc01d7517a56",
    "passive": "Background_Sage"
+  },
+  "Entertainer": {
+   "uuid": "229775c9-3044-4779-a3bb-532c39238e03",
+   "passive": "Background_Entertainer"
   }
  },
  "hirelings_source": "Each class's hireling (route H's reference, A1 D411), read 2026-11-03 with tools/pak.py: Shared.pak Public/SharedDev/Origins/Origins.lsx Hireling_<Class> (UUID, RaceUUID, SubRaceUUID, BackgroundUUID, GlobalTemplate, LockRace true); Gustav.pak Mods/GustavDev/Globals/SYS_Hirelings/Characters/_merged.lsf S_GLO_Hirelings_<Class> (MapKey = GlobalTemplate, TemplateName = the root); Shared.pak Public/SharedDev/RootTemplates/_merged.lsf Hirelings_Stats_Player_<Class> (its ParentTemplateId) and Public/Shared/RootTemplates/_merged.lsf the parent's Race (BASE_HalfElves_Female_Wood, BASE_Humans_Female -> BASE_Humans, BASE_Dwarves_Female_Hill, BASE_Elves_Male_Drow_Seldarine). Live-read: the Fighter's template race (live check 9, d9401d40 Race 76057327), and the Cleric's and Wizard's templates and races with Ext.Template.GetAllRootTemplates (S1, 2026-11-06: Race 4fda6bce, 2cf6c770); arena.mirror_spawn refuses a template of another race, so the others fail closed until read.",
@@ -1202,6 +1382,14 @@
    "background": "Sage",
    "template": "3d24f5eb-7220-4e00-bc02-3e6ac819ac26",
    "template_name": "Hirelings_Stats_Player_Wizard"
+  },
+  "Bard": {
+   "origin": "54b02e05-56e7-4f55-8a73-78ce8a479493",
+   "race": "Halfling_Lightfoot",
+   "background": "Entertainer",
+   "template": null,
+   "template_name": null,
+   "todo": "the root template (S_GLO_Hirelings_<Class> TemplateName, a binary .lsf) is not read yet: arena.mirror_spawn needs it; read it live (Ext.Template) or with an .lsf reader"
   }
  },
  "subclasses": {
@@ -3358,12 +3546,111 @@
      "subclasses": 0
     }
    }
+  },
+  "LoreCollege": {
+   "class": "Bard",
+   "uuid": "d21368ac-c776-465c-9dcf-6123dd52734f",
+   "table": "36e6ea13-317e-4e6e-ac63-fe6d50e9f014",
+   "levels": {
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "CuttingWords",
+     "Selectors": "SelectSkills(ed664663-93b9-4070-a54b-3c7b19c0e7b4,3)",
+     "uuid": "a951662b-afb5-4eae-abcf-ec4a501ac6df",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(175ceed7-5a53-4f48-823c-41c4f72d18ae,2,0,BardMagicalSecrets)",
+     "uuid": "8ddbdfce-20ff-452e-b945-6b5f6f0c7e78",
+     "subclasses": 0
+    }
+   }
+  },
+  "ValorCollege": {
+   "class": "Bard",
+   "uuid": "2b46330d-0ada-4eb5-a131-3d250a41ca6a",
+   "table": "d58a305f-3ccf-440c-b069-2abd9235ac03",
+   "levels": {
+    "3": {
+     "Boosts": "Proficiency(MediumArmor);Proficiency(Shields);Proficiency(MartialWeapons)",
+     "PassivesAdded": "CombatInspiration",
+     "Selectors": "",
+     "uuid": "517fc6b8-bdf4-4687-a7fc-9d94b559f787",
+     "subclasses": 0,
+     "PassivesRemoved": "BardicInspiration"
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "ExtraAttack",
+     "Selectors": "",
+     "uuid": "eb3a178a-03d1-4300-bdaa-129656a5536c",
+     "subclasses": 0
+    }
+   }
+  },
+  "SwordsCollege": {
+   "class": "Bard",
+   "uuid": "c4bd5252-d68a-4330-9431-5e8ab24c5f29",
+   "table": "68f61c89-be48-41aa-acb6-2f3bd15303c7",
+   "levels": {
+    "3": {
+     "Boosts": "Proficiency(MediumArmor);Proficiency(Scimitars)",
+     "PassivesAdded": "",
+     "Selectors": "SelectPassives(11f3b209-eb13-42d2-9fec-46dfc68fe619,1,FightingStyle);AddSpells(246ad664-1a53-4d42-8a5e-0ed5cda6af62)",
+     "uuid": "647925f6-a7de-44a8-834c-1bc6e496921a",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "ExtraAttack",
+     "Selectors": "",
+     "uuid": "b5a994cc-e76a-4e55-b2d7-ac8ec665c2f1",
+     "subclasses": 0
+    }
+   }
+  },
+  "GlamourCollege": {
+   "class": "Bard",
+   "uuid": "a06241d2-c432-472c-8c7d-84228d530cfa",
+   "table": "376220ae-e871-4ca5-8521-ec46fa2cd117",
+   "levels": {
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "MantleOfInspiration_Unlock",
+     "Selectors": "",
+     "uuid": "534a3151-5a0a-4da1-bd5f-ccdb50cbc964",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "MantleOfInspiration_Unlock2",
+     "Selectors": "AddSpells(3b45a71a-971b-41b2-806e-8560d4410b52)",
+     "uuid": "c5d05b09-91e5-4438-8ff7-99e0054fdc8e",
+     "subclasses": 0,
+     "PassivesRemoved": "MantleOfInspiration_Unlock"
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "MantleOfInspiration_Unlock3",
+     "Selectors": "",
+     "uuid": "e854fe69-741e-459b-a74a-2ef7a481298f",
+     "subclasses": 0,
+     "PassivesRemoved": "MantleOfInspiration_Unlock2"
+    }
+   }
   }
  },
  "items": {
   "ARM_Barbarian": {
    "type": "Armor",
    "root": "f6599c3f-cfcd-4721-9cc2-1df5d8ff0154",
+   "rarity": "Common"
+  },
+  "ARM_Bard": {
+   "type": "Armor",
+   "root": "da345d08-2186-4e4a-857c-3fd6a104cec6",
    "rarity": "Common"
   },
   "ARM_Boots_Leather": {
@@ -3536,6 +3823,21 @@
    "root": "ce8a894c-3dc6-48dc-bb8f-af5390890d43",
    "rarity": "Rare"
   },
+  "WPN_HandCrossbow": {
+   "type": "Weapon",
+   "root": "a5d843ab-c3af-4e60-a925-bb2e15828938",
+   "rarity": "Common"
+  },
+  "WPN_HandCrossbow_1": {
+   "type": "Weapon",
+   "root": "d2f396c2-9b1b-4eea-bf21-2f25934f092d",
+   "rarity": "Uncommon"
+  },
+  "WPN_HandCrossbow_2": {
+   "type": "Weapon",
+   "root": "ab150a98-0a8e-4ee2-9dca-580d77f99be3",
+   "rarity": "Rare"
+  },
   "WPN_Handaxe": {
    "type": "Weapon",
    "root": "46b64a36-8446-45bd-98e8-ee81e3136baa",
@@ -3589,6 +3891,21 @@
   "WPN_Quarterstaff_2": {
    "type": "Weapon",
    "root": "e1e112b2-5465-4e37-acdc-372666ec1521",
+   "rarity": "Rare"
+  },
+  "WPN_Rapier": {
+   "type": "Weapon",
+   "root": "7061f489-4b13-4982-aa09-cf0ad961e75f",
+   "rarity": "Common"
+  },
+  "WPN_Rapier_1": {
+   "type": "Weapon",
+   "root": "5a6cea10-b3f6-4370-8eed-0b69b4ba531a",
+   "rarity": "Uncommon"
+  },
+  "WPN_Rapier_2": {
+   "type": "Weapon",
+   "root": "5c572e8e-8693-48cf-b494-2df0341f7ced",
    "rarity": "Rare"
   },
   "WPN_Shortbow": {
@@ -3985,6 +4302,14 @@
     "Projectile_WitchBolt"
    ]
   },
+  "11f3b209-eb13-42d2-9fec-46dfc68fe619": {
+   "kind": "passives",
+   "name": "Swords College Fighting Style",
+   "ids": [
+    "FightingStyle_Dueling",
+    "FightingStyle_TwoWeaponFighting"
+   ]
+  },
   "12653b66-e36c-4b0b-872d-b61a1b2a3411": {
    "kind": "spells",
    "name": "Barbarian Giant 5",
@@ -4005,6 +4330,61 @@
    "ids": [
     "Target_DominatePerson",
     "Target_Seeming"
+   ]
+  },
+  "175ceed7-5a53-4f48-823c-41c4f72d18ae": {
+   "kind": "spells",
+   "name": "Lore Bard Magical Secrets 6",
+   "ids": [
+    "Target_AnimateDead",
+    "Shout_AuraOfVitality",
+    "Target_CallLightning",
+    "Target_Counterspell",
+    "Shout_CrusadersMantle",
+    "Target_Daylight_Container",
+    "Projectile_Fireball",
+    "Target_Fly",
+    "Target_GaseousForm",
+    "Target_Haste",
+    "Target_HungerOfHadar",
+    "Zone_LightningBolt",
+    "Shout_HealingWord_Mass",
+    "Target_RemoveCurse",
+    "Teleportation_Revivify",
+    "Target_SleetStorm",
+    "Target_Slow",
+    "Shout_SpiritGuardians",
+    "Target_VampiricTouch",
+    "Target_ArcaneLock",
+    "Shout_Blur",
+    "Target_Darkness",
+    "Target_Darkvision",
+    "Target_MistyStep",
+    "Shout_PassWithoutTrace",
+    "Projectile_RayOfEnfeeblement",
+    "Projectile_ScorchingRay",
+    "Target_SpikeGrowth",
+    "Target_SpiritualWeapon",
+    "Target_Web",
+    "Shout_ArmorOfAgathys",
+    "Target_Bless",
+    "Projectile_ChromaticOrb",
+    "Target_Command_Container",
+    "Target_Entangle",
+    "Shout_FalseLife",
+    "Projectile_GuidingBolt",
+    "Shout_HellishRebuke",
+    "Target_Hex",
+    "Target_HuntersMark",
+    "Projectile_IceKnife",
+    "Projectile_MagicMissile",
+    "Target_Sanctuary",
+    "Target_Smite_Thunderous",
+    "Target_ChillTouch",
+    "Projectile_EldritchBlast",
+    "Projectile_FireBolt",
+    "Projectile_RayOfFrost",
+    "Target_SacredFlame"
    ]
   },
   "17803035-4762-4143-8f2f-1143d47e4f40": {
@@ -4185,6 +4565,18 @@
     "Shout_TurnUndead"
    ]
   },
+  "246ad664-1a53-4d42-8a5e-0ed5cda6af62": {
+   "kind": "spells",
+   "name": "Bard Blade Flourish spells",
+   "ids": [
+    "Zone_BladeFlourish_Slashing",
+    "Target_BladeFlourish_Defensive",
+    "Projectile_BladeFlourish_Defensive",
+    "Target_BladeFlourish_Mobile",
+    "Projectile_BladeFlourish_Mobile",
+    "Projectile_BladeFlourish_Slashing"
+   ]
+  },
   "269d1a3b-eed8-4131-8901-a562238f5289": {
    "kind": "spells",
    "name": "Cleric SLevel 1",
@@ -4361,6 +4753,13 @@
    "name": "Berserker Barbarian level 10",
    "ids": [
     "Target_IntimidatingPresence"
+   ]
+  },
+  "3b45a71a-971b-41b2-806e-8560d4410b52": {
+   "kind": "spells",
+   "name": "Glamour Bard Level 6 Mantle of Majesty",
+   "ids": [
+    "Target_MantleOfMajesty"
    ]
   },
   "3cae2e56-9871-4cef-bba6-96845ea765fa": {
@@ -4557,6 +4956,64 @@
     "Shout_DestructiveWave"
    ]
   },
+  "586a8796-34f4-41f5-a3ef-95738561d55d": {
+   "kind": "spells",
+   "name": "Bard SLevel 6",
+   "ids": [
+    "Target_Eyebite",
+    "Target_IrresistibleDance",
+    "Target_DominatePerson",
+    "Target_GreaterRestoration",
+    "Target_HoldMonster",
+    "Target_CureWounds_Mass",
+    "Target_PlanarBinding",
+    "Target_Seeming",
+    "Target_Confusion",
+    "Teleportation_DimensionDoor",
+    "Target_FreedomOfMovement",
+    "Target_Invisibility_Greater",
+    "Target_Polymorph",
+    "Target_BestowCurse",
+    "Zone_Fear",
+    "Target_FeignDeath",
+    "Target_GlyphOfWarding",
+    "Target_HypnoticPattern",
+    "Target_PlantGrowth",
+    "Target_SpeakWithDead",
+    "Target_StinkingCloud",
+    "Target_Blindness",
+    "Target_CalmEmotions",
+    "Target_CloudOfDaggers",
+    "Target_CrownOfMadness",
+    "Shout_DetectThoughts",
+    "Target_EnhanceAbility",
+    "Target_Enthrall",
+    "Target_HeatMetal",
+    "Target_HoldPerson",
+    "Target_Invisibility",
+    "Target_Knock",
+    "Target_LesserRestoration",
+    "Target_PhantasmalForce",
+    "Shout_SeeInvisibility",
+    "Target_Shatter",
+    "Target_Silence",
+    "Target_AnimalFriendship",
+    "Target_Bane",
+    "Target_CharmPerson",
+    "Target_CureWounds",
+    "Shout_DisguiseSelf",
+    "Target_DissonantWhispers",
+    "Target_FaerieFire",
+    "Shout_FeatherFall",
+    "Target_HealingWord",
+    "Target_Heroism",
+    "Target_Longstrider",
+    "Target_Sleep",
+    "Shout_SpeakWithAnimals",
+    "Target_HideousLaughter",
+    "Zone_Thunderwave"
+   ]
+  },
   "5bb07252-9a62-465a-936f-0ee475b586d1": {
    "kind": "spells",
    "name": "Gloom Stalker Ranger 5",
@@ -4674,6 +5131,56 @@
     "NaturalExplorer_WastelandWander_Poison"
    ]
   },
+  "75e04c40-be8f-40a5-9acc-0b5d59d5f3a6": {
+   "kind": "spells",
+   "name": "Bard SLevel 4",
+   "ids": [
+    "Target_Confusion",
+    "Teleportation_DimensionDoor",
+    "Target_FreedomOfMovement",
+    "Target_Invisibility_Greater",
+    "Target_Polymorph",
+    "Target_BestowCurse",
+    "Zone_Fear",
+    "Target_FeignDeath",
+    "Target_GlyphOfWarding",
+    "Target_HypnoticPattern",
+    "Target_PlantGrowth",
+    "Target_SpeakWithDead",
+    "Target_StinkingCloud",
+    "Target_Blindness",
+    "Target_CalmEmotions",
+    "Target_CloudOfDaggers",
+    "Target_CrownOfMadness",
+    "Shout_DetectThoughts",
+    "Target_EnhanceAbility",
+    "Target_Enthrall",
+    "Target_HeatMetal",
+    "Target_HoldPerson",
+    "Target_Invisibility",
+    "Target_Knock",
+    "Target_LesserRestoration",
+    "Target_PhantasmalForce",
+    "Shout_SeeInvisibility",
+    "Target_Shatter",
+    "Target_Silence",
+    "Target_AnimalFriendship",
+    "Target_Bane",
+    "Target_CharmPerson",
+    "Target_CureWounds",
+    "Shout_DisguiseSelf",
+    "Target_DissonantWhispers",
+    "Target_FaerieFire",
+    "Shout_FeatherFall",
+    "Target_HealingWord",
+    "Target_Heroism",
+    "Target_Longstrider",
+    "Target_Sleep",
+    "Shout_SpeakWithAnimals",
+    "Target_HideousLaughter",
+    "Zone_Thunderwave"
+   ]
+  },
   "7ba90f2b-5e5f-410f-a61d-1ffdf3876790": {
    "kind": "spells",
    "name": "Cleric Knowledge Domain Channel Divinity",
@@ -4695,6 +5202,43 @@
     "Shout_SupremeSneak"
    ]
   },
+  "7ea8f476-97a1-4256-8f10-afa76a845cce": {
+   "kind": "spells",
+   "name": "Bard spells level 2",
+   "ids": [
+    "Target_Blindness",
+    "Target_CalmEmotions",
+    "Target_CloudOfDaggers",
+    "Target_CrownOfMadness",
+    "Shout_DetectThoughts",
+    "Target_EnhanceAbility",
+    "Target_Enthrall",
+    "Target_HeatMetal",
+    "Target_HoldPerson",
+    "Target_Invisibility",
+    "Target_Knock",
+    "Target_LesserRestoration",
+    "Target_PhantasmalForce",
+    "Shout_SeeInvisibility",
+    "Target_Shatter",
+    "Target_Silence",
+    "Target_AnimalFriendship",
+    "Target_Bane",
+    "Target_CharmPerson",
+    "Target_CureWounds",
+    "Shout_DisguiseSelf",
+    "Target_DissonantWhispers",
+    "Target_FaerieFire",
+    "Shout_FeatherFall",
+    "Target_HealingWord",
+    "Target_Heroism",
+    "Target_Longstrider",
+    "Target_Sleep",
+    "Shout_SpeakWithAnimals",
+    "Target_HideousLaughter",
+    "Zone_Thunderwave"
+   ]
+  },
   "7f7340a0-faf3-4122-bd3f-37a5434dd6cf": {
    "kind": "passives",
    "name": "Totem Warrior lvl 3 path",
@@ -4712,6 +5256,13 @@
    "ids": [
     "Target_AnimateDead",
     "Target_VampiricTouch"
+   ]
+  },
+  "80225e21-5acd-4122-b779-488dae33a31c": {
+   "kind": "spells",
+   "name": "Song of Rest",
+   "ids": [
+    "Shout_SongOfRest"
    ]
   },
   "804e3405-7758-4496-8d30-7e61794baae8": {
@@ -4860,6 +5411,74 @@
     "Target_HideousLaughter",
     "Zone_Thunderwave",
     "Projectile_WitchBolt"
+   ]
+  },
+  "858d4322-9e9f-4aa4-aada-9c68835dc6fe": {
+   "kind": "spells",
+   "name": "Bard Magical Secrets 10",
+   "ids": [
+    "Projectile_Smite_Banishing_Container",
+    "Zone_ConeOfCold",
+    "Target_ConjureElemental_Container",
+    "Target_Contagion",
+    "Wall_WallOfStone",
+    "Target_Banishment",
+    "Target_Blight",
+    "Target_DeathWard",
+    "Target_DominateBeast",
+    "Shout_FireShield",
+    "Target_GuardianOfFaith",
+    "Target_IceStorm",
+    "Wall_WallOfFire",
+    "Target_AnimateDead",
+    "Shout_AuraOfVitality",
+    "Target_CallLightning",
+    "Target_Counterspell",
+    "Shout_CrusadersMantle",
+    "Target_Daylight_Container",
+    "Projectile_Fireball",
+    "Target_Fly",
+    "Target_GaseousForm",
+    "Target_Haste",
+    "Target_HungerOfHadar",
+    "Zone_LightningBolt",
+    "Shout_HealingWord_Mass",
+    "Target_RemoveCurse",
+    "Teleportation_Revivify",
+    "Target_SleetStorm",
+    "Target_Slow",
+    "Shout_SpiritGuardians",
+    "Target_VampiricTouch",
+    "Target_ArcaneLock",
+    "Shout_Blur",
+    "Target_Darkness",
+    "Target_Darkvision",
+    "Target_MistyStep",
+    "Shout_PassWithoutTrace",
+    "Projectile_RayOfEnfeeblement",
+    "Projectile_ScorchingRay",
+    "Target_SpikeGrowth",
+    "Target_SpiritualWeapon",
+    "Target_Web",
+    "Shout_ArmorOfAgathys",
+    "Target_Bless",
+    "Projectile_ChromaticOrb",
+    "Target_Command_Container",
+    "Target_Entangle",
+    "Shout_FalseLife",
+    "Projectile_GuidingBolt",
+    "Shout_HellishRebuke",
+    "Target_Hex",
+    "Target_HuntersMark",
+    "Projectile_IceKnife",
+    "Projectile_MagicMissile",
+    "Target_Sanctuary",
+    "Target_Smite_Thunderous",
+    "Target_ChillTouch",
+    "Projectile_EldritchBlast",
+    "Projectile_FireBolt",
+    "Projectile_RayOfFrost",
+    "Target_SacredFlame"
    ]
   },
   "86d4d2c3-56d9-4e78-ba6e-5fbbcde96438": {
@@ -5349,6 +5968,107 @@
     "Projectile_WitchBolt"
    ]
   },
+  "bd71fffb-e4d2-4233-9a31-13d43fba36e3": {
+   "kind": "spells",
+   "name": "Bard SLevel 5",
+   "ids": [
+    "Target_DominatePerson",
+    "Target_GreaterRestoration",
+    "Target_HoldMonster",
+    "Target_CureWounds_Mass",
+    "Target_PlanarBinding",
+    "Target_Seeming",
+    "Target_Confusion",
+    "Teleportation_DimensionDoor",
+    "Target_FreedomOfMovement",
+    "Target_Invisibility_Greater",
+    "Target_Polymorph",
+    "Target_BestowCurse",
+    "Zone_Fear",
+    "Target_FeignDeath",
+    "Target_GlyphOfWarding",
+    "Target_HypnoticPattern",
+    "Target_PlantGrowth",
+    "Target_SpeakWithDead",
+    "Target_StinkingCloud",
+    "Target_Blindness",
+    "Target_CalmEmotions",
+    "Target_CloudOfDaggers",
+    "Target_CrownOfMadness",
+    "Shout_DetectThoughts",
+    "Target_EnhanceAbility",
+    "Target_Enthrall",
+    "Target_HeatMetal",
+    "Target_HoldPerson",
+    "Target_Invisibility",
+    "Target_Knock",
+    "Target_LesserRestoration",
+    "Target_PhantasmalForce",
+    "Shout_SeeInvisibility",
+    "Target_Shatter",
+    "Target_Silence",
+    "Target_AnimalFriendship",
+    "Target_Bane",
+    "Target_CharmPerson",
+    "Target_CureWounds",
+    "Shout_DisguiseSelf",
+    "Target_DissonantWhispers",
+    "Target_FaerieFire",
+    "Shout_FeatherFall",
+    "Target_HealingWord",
+    "Target_Heroism",
+    "Target_Longstrider",
+    "Target_Sleep",
+    "Shout_SpeakWithAnimals",
+    "Target_HideousLaughter",
+    "Zone_Thunderwave"
+   ]
+  },
+  "c213ca01-3767-457b-a5c8-fd4c1dd656e2": {
+   "kind": "spells",
+   "name": "Bard SLevel 3",
+   "ids": [
+    "Target_BestowCurse",
+    "Zone_Fear",
+    "Target_FeignDeath",
+    "Target_GlyphOfWarding",
+    "Target_HypnoticPattern",
+    "Target_PlantGrowth",
+    "Target_SpeakWithDead",
+    "Target_StinkingCloud",
+    "Target_Blindness",
+    "Target_CalmEmotions",
+    "Target_CloudOfDaggers",
+    "Target_CrownOfMadness",
+    "Shout_DetectThoughts",
+    "Target_EnhanceAbility",
+    "Target_Enthrall",
+    "Target_HeatMetal",
+    "Target_HoldPerson",
+    "Target_Invisibility",
+    "Target_Knock",
+    "Target_LesserRestoration",
+    "Target_PhantasmalForce",
+    "Shout_SeeInvisibility",
+    "Target_Shatter",
+    "Target_Silence",
+    "Target_AnimalFriendship",
+    "Target_Bane",
+    "Target_CharmPerson",
+    "Target_CureWounds",
+    "Shout_DisguiseSelf",
+    "Target_DissonantWhispers",
+    "Target_FaerieFire",
+    "Shout_FeatherFall",
+    "Target_HealingWord",
+    "Target_Heroism",
+    "Target_Longstrider",
+    "Target_Sleep",
+    "Shout_SpeakWithAnimals",
+    "Target_HideousLaughter",
+    "Zone_Thunderwave"
+   ]
+  },
   "c35cb4e6-2690-4e1f-bd89-69f4f69ae818": {
    "kind": "spells",
    "name": "Cleric Trickery Domain channel divinity",
@@ -5422,6 +6142,13 @@
    "name": "Drow cantrip",
    "ids": [
     "Target_DancingLights"
+   ]
+  },
+  "d84fc8ab-293e-437f-9825-e3e313f78060": {
+   "kind": "spells",
+   "name": "Bard Countercharm",
+   "ids": [
+    "Target_Countercharm"
    ]
   },
   "da3203d8-750a-4de1-b8eb-1eccfccddf46": {
@@ -5553,6 +6280,30 @@
    "name": "Bladesinging Wizard, Bladesong",
    "ids": [
     "Shout_Bladesong"
+   ]
+  },
+  "ed664663-93b9-4070-a54b-3c7b19c0e7b4": {
+   "kind": "skills",
+   "name": "Bard Skill List",
+   "ids": [
+    "Acrobatics",
+    "AnimalHandling",
+    "Arcana",
+    "Athletics",
+    "Deception",
+    "History",
+    "Insight",
+    "Intimidation",
+    "Investigation",
+    "Medicine",
+    "Nature",
+    "Perception",
+    "Performance",
+    "Persuasion",
+    "Religion",
+    "SleightOfHand",
+    "Stealth",
+    "Survival"
    ]
   },
   "eee6250e-b75a-4012-a3da-e6452a53ed8b": {

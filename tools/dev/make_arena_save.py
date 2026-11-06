@@ -69,7 +69,7 @@ SPAWN_DY_MAX_M = 0.3
 PAIR_DIST_TOL_M = 0.1
 # The arena's classes: each needs our stat entry (Shared/ArenaStats.lua) and its hireling in arena_static.json. The
 # Cleric (subclass at 1) and Wizard (at 2) need the kit's subclass part (ops/logs/arena-4v4-builds.md G5).
-CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard")
+CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard", "Bard")
 LEVELS = (1, 2)  # the arena's level: what the twins read after MakePlayer (setup fails on any other)
 TIERS = (2, 5, 12)  # a build file's level (arena-4v4-builds.md; arena.setup's tier-XP step: mirror.party_xp)
 PREPARERS = ("Cleric", "Wizard")  # prepare casting-modifier + level spells (min 1) from what they have

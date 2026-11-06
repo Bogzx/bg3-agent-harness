@@ -42,7 +42,7 @@ import pak  # tools/pak.py
 STATIC = Path(__file__).resolve().parent / "arena_static.json"
 PAKS = ("Shared.pak", "Gustav.pak", "GustavX.pak")
 MODULES = ("Shared", "SharedDev", "Gustav", "GustavDev", "GustavX")
-CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard")
+CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard", "Bard")
 MAX_LEVEL = 12
 POTIONS = ("OBJ_Potion_Healing", "OBJ_Potion_Healing_Greater", "OBJ_Potion_Healing_Superior")
 NULL = "00000000-0000-0000-0000-000000000000"
