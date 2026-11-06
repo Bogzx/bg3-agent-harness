@@ -188,7 +188,7 @@ RPC.register("ui.react", function(args)
     local w = reactionPopup() or error("no reaction prompt on screen")
     -- an arena side answers only a prompt for its own characters (one that names nobody of its team is not its own)
     local side = RPC.side and RPC.side()
-    if side and S.reactionSide(S.reactionRows(w)) ~= side then error("not your reaction", 0) end
+    if side and S.promptSide(S.reactionRows(w), S.heldInterrupt()) ~= side then error("not your reaction", 0) end
     local dc = try(function() return w.DataContext end)
     local ev = UI.path(dc, "Data.InterruptEvents.1") or error("no pending interrupt")
     if args.use ~= false then

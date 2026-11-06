@@ -146,7 +146,7 @@ class ReactTool(Base):
         super().setUp()
         self.p = FakePrompt()
         saved = world_tools._inp
-        world_tools._inp = lambda: self.p
+        world_tools._inp = lambda own_prompt=False: self.p
         self.addCleanup(setattr, world_tools, "_inp", saved)
         base = self.g.rpc
         self.g.rpc = lambda op, args=None, context="server", **kw: (

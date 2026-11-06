@@ -706,7 +706,33 @@ if not Ar.listening then
     Ext.Events.Tick:Subscribe(function()
         local ok, err = pcall(Ar.phase_check)
         if not ok then Ext.Utils.PrintWarning("[BG3AI] arena phase: " .. tostring(err)) end
+        ok, err = pcall(Ar.hud_check)
+        if not ok then Ext.Utils.PrintWarning("[BG3AI] arena HUD: " .. tostring(err)) end
     end)
+end
+
+-- L5 reads (live.md 01:03:22): a twin's reaction prompt shows only while a twin holds the HUD: with the host selected
+-- the game held all 8 and no client showed it; on a portrait click it came up at once, whichever twin that was. So
+-- the HUD stays on a living team member. It isn't the reactor's: any twin showed it, and a side's own select still
+-- moves it between twins.
+Ar.HUD_CHECK_MS = 1000
+function Ar.hud_check()
+    if not Ar.active() then return end
+    local G = BG3AI.Guard
+    local now = G.now_ms()
+    if Ar.hud_at and now - Ar.hud_at < Ar.HUD_CHECK_MS then return end
+    Ar.hud_at = now
+    local first
+    for _, s in ipairs(Ar.SIDES) do
+        for _, u in ipairs(Ar.state.teams[s] or {}) do
+            if not G.is_dead(u) then
+                local ok, cc = pcall(function() return V.entity(u).ClientControl end)
+                if ok and cc ~= nil then return end
+                first = first or u
+            end
+        end
+    end
+    if first then G.osi("MakePlayerActive", first) end
 end
 
 -- The round of the combat u is in now: CombatRoundStarted's (G.round_of), else the engine's turn order; nil out of

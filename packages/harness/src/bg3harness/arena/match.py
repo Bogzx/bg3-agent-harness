@@ -98,8 +98,13 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    give: the runner declines it (`ui.react {use: false}`, no side) and writes `arena_reaction_unowned {round,
    detail}`. Both ops are the mod's client context's, as the bridge sends them. It reads `ui.state` for one only
    once a turn (or the wait for the first) is UNOWNED_CHECK_S old, then at most every UNOWNED_CHECK_S: a turn that
-   moves on costs no read. The same read finds a prompt one side owns (its rows name only that side's characters)
-   while the other side's phase is on: until the next read or the next phase, that side's model time counts as the
+   moves on costs no read; while the game holds for a reaction, every REACTION_POLL_S. A prompt its owner leaves open
+   for the arena's turn_cap_s from that first read (what a turn gets: a shorter bound would take reactions from slow
+   models only) is declined the same way (`arena_reaction_declined {round, side, detail}`). A hold with no prompt on
+   screen for REACTION_STUCK_S, or still there that long after a decline, is one nobody can clear: the match ends
+   `fault`, so it can't hang. The same read finds a prompt one side owns (the
+   mod's `owner`, from the game's own observer) while the other side's phase is on: until the next read or the next
+   phase, that side's model time counts as the
    phase's progress on the stall clock (the game waits for its answer, not for the acting side; fairness audit
    S2-1).
 6. An agent that exits while the fight is on is resumed in the same conversation with RESUME; exit 0 counts toward
@@ -150,6 +155,8 @@ STALL_CAPS = 3  # a phase idle this many times its turn cap (turn_cap_s x member
 STALL_MIN_S = 300.0  # ... and at least this long has stalled
 STALL_CALLS = 3  # the tool calls of each side an arena_stall record shows
 UNOWNED_CHECK_S = 15.0  # a turn this old: ui.state is read for a prompt no team owns, then at most this often
+REACTION_POLL_S = 2.0  # while the game holds for a reaction: ui.state this often
+REACTION_STUCK_S = 60.0  # a hold with no prompt to answer this long, or this long after its decline, ends the match
 END_FIELDS = ("winner", "reason", "rounds", "hp_left_A", "hp_left_B")
 # the runner's ends that make the match invalid (rerun, never graded): the game failed, our client side failed past
 # its resume (client_fault), an operator's abort, the money cap
@@ -453,26 +460,61 @@ def _prompt_owner(rx: Mapping[str, Any], ref: Referee) -> str | None:
     return owners.pop() if len(owners) == 1 and None not in owners else None
 
 
-def _reaction_check(spec: ArenaSpec, game: ArenaGame, ref: Referee, log: Callable[[str], None]) -> str | None:
-    """The game client's reaction prompt (ui.state with no side): one no team owns (reaction.unowned) is declined and
-    arena_reaction_unowned written; returns the side that owns an open one (None: no prompt, or none owned)."""
+@dataclass
+class _Hold:
+    """The hold the last read found: the game's key for it, when it was first read, when it was declined."""
+
+    key: str | None = None
+    since: float = 0.0
+    declined: float | None = None
+
+
+def _reaction_check(
+    spec: ArenaSpec, game: ArenaGame, ref: Referee, log: Callable[[str], None], hold: _Hold, now: float
+) -> str | None:
+    """Reads the game client's reaction state (ui.state with no side). Declines a prompt no team owns at once and one
+    its owner left open for the turn cap; ends the match on a hold nobody can clear (REACTION_STUCK_S). Returns
+    the side that owns an open prompt (None: no prompt, or none owned)."""
     try:
         ui = game.rpc("ui.state", {}, context="client") or {}
-        rx = ui.get("reaction") if ui.get("screen") == "reaction" else None
-        if not isinstance(rx, dict):
-            return None
-        if not rx.get("unowned"):
-            return _prompt_owner(rx, ref)
+    except Exception as e:  # read again at the next check
+        log(f"arena {spec.name}: the reaction check failed: {e}")
+        return None
+    rx = ui.get("reaction") if ui.get("screen") == "reaction" else None
+    rx = rx if isinstance(rx, dict) else None
+    held = ui.get("held_reaction") if isinstance(ui.get("held_reaction"), dict) else None
+    if rx is None and held is None:
+        hold.key = None
+        return None
+    key = str((held or {}).get("key") or (rx or {}).get("prompt") or "")
+    if key != hold.key:
+        hold.key, hold.since, hold.declined = key, now, None
+    age = now - hold.since
+    owner = (held or {}).get("side") if rx is None else None
+    if rx is None or hold.declined is not None:
+        if now - (hold.since if hold.declined is None else hold.declined) >= REACTION_STUCK_S:
+            raise _Ended("fault", detail=f"a reaction held the game {age:.0f} s with no answer left to give ({key})")
+        return owner
+    unowned = bool(rx.get("unowned"))
+    owner = None if unowned else rx.get("owner") or _prompt_owner(rx, ref)
+    if not unowned and age < spec.turn_cap_s:
+        return owner
+    try:
         job = game.rpc("ui.react", {"use": False}, context="client") or {}
     except Exception as e:  # read again at the next check
-        log(f"arena {spec.name}: the unowned reaction check failed: {e}")
-        return None
+        log(f"arena {spec.name}: declining a reaction prompt failed: {e}")
+        return owner
     if job.get("status") == "failed":
-        log(f"arena {spec.name}: declining an unowned reaction prompt failed: {job.get('error')}")
-        return None
+        log(f"arena {spec.name}: declining a reaction prompt failed: {job.get('error')}")
+        return owner
+    hold.declined = now
     detail = str(rx.get("prompt") or "")
-    ref.event("arena_reaction_unowned", round=ref.round, detail=detail)
-    log(f"arena {spec.name}: declined a reaction prompt no team owns ({detail})")
+    if unowned:
+        ref.event("arena_reaction_unowned", round=ref.round, detail=detail)
+        log(f"arena {spec.name}: declined a reaction prompt no team owns ({detail})")
+    else:
+        ref.event("arena_reaction_declined", round=ref.round, side=owner, detail=detail)
+        log(f"arena {spec.name}: declined side {owner}'s unanswered reaction prompt ({detail})")
     return None
 
 
@@ -594,6 +636,7 @@ def run_arena(
     seen_turns, turn_at, ui_read = 0, started, started  # the turns so far, when the last began, the last ui.state
     idle, tick_at, moved_sig = 0.0, started, None  # the stall's idle clock, its last tick, the last progress read
     prompt_side: str | None = None  # the side whose reaction prompt the last ui.state read found open (S2-1)
+    hold = _Hold()
     camera_seen: str | None = None  # the last arena.camera answer (on, skipped: why, failed: error), logged on change
     seen_model = dict.fromkeys(SIDES, 0.0)
 
@@ -673,9 +716,9 @@ def run_arena(
                 raise _Ended("wall_cap")
             if len(ref.turns) != seen_turns:
                 seen_turns, turn_at, prompt_side = len(ref.turns), now, None
-            if now - max(turn_at, ui_read) >= UNOWNED_CHECK_S:
+            if now - max(turn_at, ui_read) >= (REACTION_POLL_S if hold.key else UNOWNED_CHECK_S):
                 ui_read = now
-                prompt_side = _reaction_check(spec, game, ref, log)
+                prompt_side = _reaction_check(spec, game, ref, log, hold, now)
             for s in SIDES:
                 ex = runs[s].done()
                 if ex is None:
