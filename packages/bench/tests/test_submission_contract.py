@@ -9,7 +9,7 @@ from pathlib import Path
 import jsonschema
 import pytest
 
-from bg3bench.submission import bundle, codes
+from bg3bench.submission import bundle, codes, ticket_hash
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schema"
 
@@ -85,6 +85,46 @@ def test_bad_envelopes_fail(over):
     assert errors(envelope(**over))
 
 
+TICKET = {
+    "id": "6f1c2a3b-0000-4000-8000-123456789abc",
+    "nonce": "a" * 64,
+    "root": "b" * 64,
+    "lines": {"facts.jsonl": 2},
+}
+
+
+def test_the_ticket_is_optional_and_its_shape_closed():
+    assert "ticket" not in envelope() and errors(envelope()) == []
+    lines = {"facts.jsonl": 230, "rolls.jsonl": 0, "S001.events.jsonl": 483, "S001-c1.events.jsonl": 9}
+    assert errors(envelope(ticket=TICKET | {"lines": lines})) == []
+    for bad in (
+        {k: v for k, v in TICKET.items() if k != "root"},
+        TICKET | {"extra": 1},
+        TICKET | {"id": "not-a-uuid"},
+        TICKET | {"nonce": "A" * 64},
+        TICKET | {"root": "b" * 63},
+        TICKET | {"lines": {"facts.jsonl": -1}},
+        TICKET | {"lines": {"facts.jsonl": 1.5}},
+    ):
+        assert errors(envelope(ticket=bad)), bad
+
+
+@pytest.mark.parametrize(
+    "name", ["facts.jsonl", "rolls.jsonl", "S001.events.jsonl", "S001-c12.events.jsonl", "S0123-r1.events.jsonl"]
+)
+def test_a_stream_name_the_hash_takes_is_one_the_schema_takes(name):
+    assert ticket_hash.is_stream(name)
+    assert errors(envelope(ticket=TICKET | {"lines": {name: 1}})) == []
+
+
+@pytest.mark.parametrize(
+    "name", ["manifest.json", "S01.events.jsonl", "S001.fights.jsonl", "A.events.jsonl", "../facts.jsonl", "x"]
+)
+def test_a_name_that_is_no_stream_is_refused_by_both(name):
+    assert not ticket_hash.is_stream(name)
+    assert errors(envelope(ticket=TICKET | {"lines": {name: 1}}))
+
+
 def test_bundle_hash_is_canonical():
     a = envelope()
     b = dict(reversed(list(a.items())))
@@ -130,14 +170,20 @@ def test_check_codes_are_the_plan_table():
         *("F01", "F02", "F03", "F04", "P01", "P02", "C01", "C02", "C03", "C04", "D01", "D02"),
         *("X01", "X02", "X03", "X04", "X05", "X06", "X07", "G01", "G02", "A01", "A02"),
         *("E01", "E02", "E03", "E04", "S01", "S02"),
+        *("T01", "T02", "T03", "T04", "T05", "T06", "T07"),
     ]
     for c in codes.CHECKS:
         assert c.where and set(c.where) <= {"panel", "worker", "job"}
         assert (c.severity == "flag") <= (c.flag is not None)
     # the panel runs everything but the cross-submission checks and the video duration
-    assert {c.code for c in codes.CHECKS if "panel" not in c.where} == {"D01", "D02", "X07", "E02"}
+    assert {c.code for c in codes.CHECKS if "panel" not in c.where} == {"D01", "D02", "X07", "E02", "T02"}
     # the Worker scans the small files, the job's validate every file (final)
     assert codes.BY_CODE["S01"].where == ("panel", "worker", "job")
+    # a ticket's owner, cell and single use are the Worker's, and the one flag is beat_gaps
+    assert codes.BY_CODE["T02"].where == ("worker",)
+    assert [(c.code, c.flag) for c in codes.CHECKS if c.code.startswith("T") and c.severity == "flag"] == [
+        ("T07", "beat_gaps")
+    ]
 
 
 def test_codes_prints_the_checks_file(capsys):

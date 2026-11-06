@@ -24,6 +24,9 @@ the video's id line, stays the same. Upload takes only a final bundle with its v
 
 The site token and the .env values never appear in a response: the values are passed to the pack's scrub and the
 validator's scrub check only.
+
+A ticketed run whose end the site never got (bg3bench.tickets: offline as it finished) tries again at `prepare` and at
+`upload`, through the `resend_end` the panel passes. Until it lands the site shows the run as "no result".
 """
 
 from __future__ import annotations
@@ -31,15 +34,16 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import os
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 from urllib import error as urlerror
 from urllib import request as urlrequest
-from urllib.parse import urlparse
 
+from bg3bench import tickets
 from bg3bench.serve.panel import PanelError
 from bg3bench.serve.video import VIDEO
 
@@ -98,10 +102,15 @@ class BenchSubmission:
         except ImportError:
             raise PanelError("this bench has no bg3bench.submission yet: it can't pack a run") from None
 
+    def _release_doc(self) -> dict[str, Any] | None:
+        doc = _read_json(self.release) if self.release else None
+        return doc if isinstance(doc, dict) else None
+
     def pack(
         self, run_dir: Path, out_dir: Path, *, attempt: int, unsubmitted_valid: int, literals: Sequence[str]
     ) -> tuple[str, Path]:
         pack = self._mod("pack")
+        doc = self._release_doc()
         try:
             p = pack.pack(
                 run_dir,
@@ -109,6 +118,7 @@ class BenchSubmission:
                 attempt=pack.Attempt(attempt, unsubmitted_valid),
                 literals=literals,
                 panel_version=self.panel_version,
+                ticket_required=None if doc is None else doc.get("tickets") is not None,
             )
         except pack.PackError as e:
             raise PanelError(str(e)) from None
@@ -135,19 +145,20 @@ class BenchSubmission:
         if self.release is None or not self.release.is_file():
             raise PanelError(f"no release file of the suite to validate against ({self.release}): see --release")
         release = validate.Release.from_json(json.loads(self.release.read_text(encoding="utf-8")))
-        verdict = validate.validate(bundle_dir, release, where="panel", submission=submission, literals=literals)
+        ran = _read_json(bundle_dir.parent / tickets.TICKET_FILE)  # the pack's copy: what the run told the site
+        end = ran.get("end") if isinstance(ran, dict) else None
+        verdict = validate.validate(
+            bundle_dir, release, where="panel", submission=submission, literals=literals, local_end=end
+        )
         return verdict.as_json()
 
 
 def site_url(url: str | None) -> str:
     """The site's base URL: https, or http on this machine only (a local copy of the site)."""
-    if not url:
-        raise PanelError("no site URL: start the panel with --site or $BG3BENCH_SITE")
-    u = urlparse(url)
-    local = u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost")
-    if not (u.scheme == "https" or local) or not u.hostname or u.path not in ("", "/") or u.query:
-        raise PanelError(f"bad site URL {url!r}: https://<host> only")
-    return f"{u.scheme}://{u.netloc}"
+    try:
+        return tickets.base_url(url)
+    except ValueError as e:
+        raise PanelError(str(e)) from None
 
 
 Open = Callable[..., Any]
@@ -155,10 +166,12 @@ Open = Callable[..., Any]
 
 @dataclass(frozen=True)
 class HttpSite:
-    """The real Site: the site's JSON API over HTTPS (standard library)."""
+    """The real Site: the site's JSON API over HTTPS (standard library). `headers`: the Access service token from the
+    environment, for a site behind Cloudflare Access (staging)."""
 
     base: str
-    urlopen: Open = urlrequest.urlopen
+    urlopen: Open = tickets.open_url
+    headers: Mapping[str, str] = field(default_factory=lambda: tickets.access_headers(os.environ))
 
     def _call(self, req: urlrequest.Request) -> tuple[int, dict[str, Any]]:
         try:
@@ -183,6 +196,7 @@ class HttpSite:
             data=archive,
             method="POST",
             headers={
+                **self.headers,
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/gzip",
                 "X-Archive-Sha256": hashlib.sha256(archive).hexdigest(),
@@ -196,7 +210,7 @@ class HttpSite:
             raise PanelError(f"bad submission id {submission_id!r}")
         req = urlrequest.Request(
             f"{self.base}/api/submissions/{submission_id}",
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            headers={**self.headers, "Authorization": f"Bearer {token}", "Accept": "application/json"},
         )
         return self._call(req)
 
@@ -256,11 +270,13 @@ def prepare(
     attempt_n: int,
     unsubmitted_valid: int,
     literals: Sequence[str],
+    resend_end: Callable[[str], object] = lambda run: None,
 ) -> dict[str, Any]:
     """Pack and validate run_dir into root/<run>/<k>/; returns what the Submit dialog shows."""
     base = root / run_dir.name
     if (base / SUBMISSION).is_file():
         raise PanelError(f"{run_dir.name} is submitted already")
+    resend_end(run_dir.name)
     base.mkdir(parents=True, exist_ok=True)
     k = 1 + max((int(p.name) for p in base.iterdir() if p.is_dir() and p.name.isdigit()), default=0)
     sha, bdir = bundler.pack(
@@ -392,9 +408,18 @@ def add_videos(root: Path, items: Any, bundler: Bundler, *, literals: Sequence[s
     return results
 
 
-def upload(root: Path, run: str, *, bundle_sha256: Any, token: str | None, site: Site) -> dict[str, Any]:
+def upload(
+    root: Path,
+    run: str,
+    *,
+    bundle_sha256: Any,
+    token: str | None,
+    site: Site,
+    resend_end: Callable[[str], object] = lambda run: None,
+) -> dict[str, Any]:
     base = root / _safe_name(run)
     prepared = _prepared(base, run, bundle_sha256)
+    resend_end(run)
     if not prepared.get("final"):
         raise PanelError(f"{run}: render the evidence video first: the site takes the bundle with its render")
     bdir = Path(prepared["bundle_dir"])

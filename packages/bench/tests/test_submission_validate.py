@@ -131,6 +131,8 @@ def release_for(d: Path) -> validate.Release:
 
 
 VIDEO = {"youtube_id": "dQw4w9WgXcQ", "duration_s": 0, "mp4_sha256": None}
+TICKET_CODES = ("T01", "T02", "T03", "T04", "T05", "T06", "T07")
+NOT_TICKET_CODES = [c.code for c in codes.CHECKS if c.code not in TICKET_CODES]
 
 
 def ctx_for(env: dict, duplicate: str | None = None) -> validate.Context:
@@ -168,7 +170,7 @@ def test_good_bundles_are_accepted(good):
     assert [r.code for r in v.checks] == [c.code for c in codes.CHECKS if c.code in {r.code for r in v.checks}]
     assert v.bundle_sha256 == bundle.sha256_bytes((bdir / bundle.ENVELOPE).read_bytes())
     doc = v.as_json()
-    assert doc["accepted"] and doc["flags"] == [] and len(doc["checks"]) == len(codes.CHECKS)
+    assert doc["accepted"] and doc["flags"] == [] and len(doc["checks"]) == len(NOT_TICKET_CODES)
 
 
 def test_a_run_whose_first_snapshot_came_late_is_accepted_with_x01_not_checkable(tmp_path):
@@ -188,7 +190,7 @@ def test_panel_runs_its_checks_offline(good):
     v = validate.validate(bdir, release, where="panel")
     assert v.accepted
     codes_run = {r.code for r in v.checks}
-    assert codes_run == {c.code for c in codes.CHECKS if "panel" in c.where}
+    assert codes_run == {c.code for c in codes.CHECKS if "panel" in c.where} - set(TICKET_CODES)
     assert {r.code for r in v.checks if r.ok is None} == {"E01"}  # no YouTube lookup injected
 
 
@@ -890,7 +892,7 @@ def test_validate_cli_prints_the_verdict(good, tmp_path, capsys):
 def test_worker_scope_runs_only_the_workers_checks(good):
     bdir, release = good
     v = validate.validate(bdir, release, where="worker")
-    assert {r.code for r in v.checks} == {c.code for c in codes.CHECKS if "worker" in c.where}
+    assert {r.code for r in v.checks} == {c.code for c in codes.CHECKS if "worker" in c.where} - set(TICKET_CODES)
 
 
 def test_f01_holds_the_total_to_8_mib(tmp_path):

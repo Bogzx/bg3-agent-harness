@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   attempts, autoSummary, bytes, choicesLine, formProblems, matrixState, minutes, renderNote, saveChip, startProblem,
-  pairLinks, relaunches, uploadProblem, validateProblem, verdict, videoProblem, wantsVideo, youtubeId, youtubeNote,
+  pairLinks, relaunches, ticketLine, ticketNote, uploadProblem, validateProblem, verdict, videoProblem, wantsVideo,
+  youtubeId, youtubeNote,
 } from "./run";
 import type { Plan, VideoTodo, PlanForm, Prepared, ProfileRow, RunChoices, RunRow, ScenarioRow } from "./types";
 
@@ -18,9 +19,42 @@ function run(over: Partial<RunRow>): RunRow {
   return {
     run_id: "r", dir: "d", series: null, scenario: "s", model: "m", condition: "rules", client: "pi",
     created: null, passed: null, score: null, outcome: null, t_pass_s: null, wall_s: null, cost_usd: null,
-    valid: true, invalid_reason: null, pilot: [], recovered_launches: [], luck_z: null, saves_bytes: 0, ...over,
+    valid: true, invalid_reason: null, pilot: [], recovered_launches: [], luck_z: null, saves_bytes: 0, ticket: null,
+    ...over,
   };
 }
+
+describe("ticketNote", () => {
+  const t = { required: true, token: true, site: true, will: true };
+  it("says nothing for a suite without tickets", () => {
+    expect(ticketNote({ required: false, token: true, site: true, will: false })).toBeNull();
+  });
+  it("says what is sent when runs take a ticket, unsubmitted ones too", () => {
+    const note = ticketNote(t) ?? "";
+    expect(note).toMatch(/also for runs you never submit/);
+    expect(note).toMatch(/no game text, score or cost/);
+  });
+  it("says a run can't be submitted without a token or a site", () => {
+    expect(ticketNote({ ...t, token: false, will: false })).toMatch(/^Without a site token.*can't be submitted/);
+    expect(ticketNote({ ...t, site: false, will: false })).toMatch(/^Without a site URL.*can't be submitted/);
+  });
+});
+
+describe("ticketLine", () => {
+  const t = {
+    id: "i", issued_at: 1, expires_at: 2, beats_sent: 45, beats_landed: 44, beats_stopped: null,
+    end: { outcome: "valid", reason: null, delivered: true },
+  };
+  it("shows the beats and whether the end landed", () => {
+    expect(ticketLine(null)).toBeNull();
+    expect(ticketLine(t)).toBe("ticket: 44 of 45 beats, end delivered");
+    expect(ticketLine({ ...t, end: { ...t.end, delivered: false } })).toMatch(/end not delivered: Validate and Upload/);
+    expect(ticketLine({ ...t, end: null })).toBe("ticket: 44 of 45 beats, no end sent");
+  });
+  it("says a ticket the site closed can't be submitted", () => {
+    expect(ticketLine({ ...t, beats_stopped: 410 })).toMatch(/HTTP 410.*can't be submitted/);
+  });
+});
 
 describe("youtubeNote", () => {
   it("warns about long scenarios unless the account is verified", () => {
@@ -84,6 +118,7 @@ const okPlan: Plan = {
   jobs: [{ id: "j", model: "m", client: "pi", profile: "p", scenario: "s", condition: "rules", repeat: 1, max_cost: 1 }],
   reserve_usd: 1, budget: { file: "b", cap: 5, spent: 0, error: null }, fits_budget: true, needs_max_cost: [],
   skipped: {}, gaps: { p: [] }, youtube: { verified: true, long_scenarios: [], warn: false },
+  ticket: { required: false, token: false, site: true, will: false },
 };
 
 describe("startProblem", () => {

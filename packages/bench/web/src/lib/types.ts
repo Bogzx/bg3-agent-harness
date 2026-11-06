@@ -69,6 +69,8 @@ export interface Plan {
   skipped: Record<string, string>;
   gaps: Record<string, string[]>;
   youtube: { verified: boolean | null; long_scenarios: string[]; warn: boolean };
+  /** the suite's runs need a ticket from the site; `will`: Start gives them one (a token and a site are set) */
+  ticket: { required: boolean; token: boolean; site: boolean; will: boolean };
 }
 
 export interface PlanForm {
@@ -124,6 +126,18 @@ export interface RunRow {
   recovered_launches: { t: number; attempt: number | null; save: string; error: string | null }[];
   luck_z: number | null;
   saves_bytes: number;
+  ticket: RunTicket | null;
+}
+
+/** A run's ticket from the site, as this machine kept it (bg3bench.tickets.view). */
+export interface RunTicket {
+  id: string | null;
+  issued_at: number | null;
+  expires_at: number | null;
+  beats_sent: number;
+  beats_landed: number;
+  beats_stopped: number | null;
+  end: { outcome: string | null; reason: string | null; delivered: boolean | null } | null;
 }
 
 export interface Prefs {
