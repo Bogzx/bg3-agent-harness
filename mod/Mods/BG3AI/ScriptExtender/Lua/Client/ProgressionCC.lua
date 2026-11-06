@@ -636,7 +636,8 @@ local function spellsReport(getDC, ctx)
             if s.complete == false and s.open > 0 then
                 local waiting = 0
                 for _, nd in ipairs(ctx.result.needs_clicks or {}) do
-                    if not nd.remove and (nd.cantrips == nil or nd.cantrips == s.cantrips) then waiting = waiting + 1 end
+                    local kind = nd.cantrips == nil or nd.cantrips == s.cantrips
+                    if kind and not nd.remove then waiting = waiting + 1 end
                 end
                 if waiting < s.open then
                     missingPick(ctx, "spell choice '" .. s.title .. "' needs "

@@ -788,10 +788,12 @@ RPC.register("ui.level_up_spell_probe", function(args)
     if switched then out.switched = true return out end
     if not tabOk then out.tab = "no sub-tab for this selector" end
     local mine = {}
-    for _, it in ipairs(list(UI.prop(s.sel, args.remove and "Additions" or "Available"))) do mine[tostring(it)] = true end
+    local pool = args.remove and "Additions" or "Available"
+    for _, it in ipairs(list(UI.prop(s.sel, pool))) do mine[tostring(it)] = true end
     local buttons = args.remove and PICK_BUTTONS or SPELL_BUTTONS
     local n = 0
-    for _, b in ipairs(UI.findAll(w, function(e) return buttons[UI.name(e) or ""] == true end, { prune = true, max = 80000 })) do
+    local function isButton(e) return buttons[UI.name(e) or ""] == true end
+    for _, b in ipairs(UI.findAll(w, isButton, { prune = true, max = 80000 })) do
         local it = buttonItem(b)
         if it ~= nil and mine[tostring(it)] then
             n = n + 1

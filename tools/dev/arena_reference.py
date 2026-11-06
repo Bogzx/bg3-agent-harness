@@ -261,7 +261,7 @@ class Live:
             raise RefStepError(f"CharacterRespec didn't open (pages {pages})")
         res = self.cc_apply(cc)
         log["clicked"] = []
-        for _ in range(CLICK_PASSES):  # a hireling's own picks off, then the plan's on; the page says when none are left
+        for _ in range(CLICK_PASSES):  # a hireling's own picks off, then the plan's on, until the page asks for none
             needs = res.get("needs_clicks") or []
             if not needs:
                 break

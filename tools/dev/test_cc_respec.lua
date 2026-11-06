@@ -484,8 +484,9 @@ do
     q.spellSelectors = { selector({}, { "Shield" }, false) }
     q.spellSelectors[1]._p.Additions = { obj("ls.VM", { Spell = obj("ls.VM", {}) }), obj("ls.VM", {}) }
     r = applySkills(q, { class = "Fighter", spells = { "Shield" } })
-    check(table.concat(r.result.problems, ";"):find("spell pick #1: no name", 1, true) ~= nil and needsOf(r) == "+Shield",
-        "spells: a pick with no name is named, an empty slot is no pick (" .. table.concat(r.result.problems, ";") .. ")")
+    probs = table.concat(r.result.problems, ";")
+    check(probs:find("spell pick #1: no name", 1, true) ~= nil and needsOf(r) == "+Shield",
+        "spells: a pick with no name is named, an empty slot is no pick (" .. probs .. ")")
 
     -- the probe finds the pick's button in the Additions, from another tab
     local UIm = BG3AI.UI
@@ -496,7 +497,8 @@ do
     local buttons = { list = obj("ls.VM", {}) }
     buttons.list.name = "subTabsSpellsList"
     local function button(n, it)
-        local b = obj("ls.VM", { TemplatedParent = obj("ls.VM", { Content = it, ActualWidth = 88, ActualHeight = 88 }) })
+        local cell = obj("ls.VM", { Content = it, ActualWidth = 88, ActualHeight = 88 })
+        local b = obj("ls.VM", { TemplatedParent = cell })
         b.name = n
         return b
     end
