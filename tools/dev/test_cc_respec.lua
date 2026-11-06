@@ -612,6 +612,18 @@ do
     p2 = probe({ name = "Sleep", remove = true })
     check(p2.switched == nil and p2.index == 2 and p2.n == 2, "probe: the panel's up, the sub-tab reads unselected: "
         .. "the pick's own button, among the Additions' only (" .. tostring(p2.index) .. "/" .. tostring(p2.n) .. ")")
+    do -- a level-up has no page entry, so the scan after the tab switch is its only way to a spell's button
+        local P_ = BG3AI.Progression
+        local ccPage0, luDC0 = P_.ccPage, P_.luDC
+        local luDC = obj("ls.DC", {})
+        P_.ccPage = function() return nil end
+        P_.luDC = function() return luDC end
+        sub._p.IsSelected = true
+        local ok, res = pcall(probe, { name = "Sleep", remove = true })
+        P_.ccPage, P_.luDC = ccPage0, luDC0
+        check(ok and res.index == 2 and res.n == 2, "probe: a level-up finds the button after the tab switch ("
+            .. (ok and tostring(res.index) or tostring(res)) .. ")")
+    end
     book._p.Additions[2] = nil
     check(probe({ name = "Sleep", remove = true }).placed == true, "probe: a pick that's off says so")
     UIm.path, UIm.findAll, UIm.name = path, findAll, name

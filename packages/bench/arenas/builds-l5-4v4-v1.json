@@ -8,7 +8,7 @@
  "karmic": false,
  "round_cap": 20,
  "wall_cap_min": 60.0,
- "turn_cap_s": 60,
+ "turn_cap_s": 90,
  "condition": "rules",
  "tools_off": "arena-v1",
  "name": "builds-l5-4v4-v1",
