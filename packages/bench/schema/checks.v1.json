@@ -316,6 +316,82 @@
       "flag": null,
       "weekly": false,
       "summary": "no hidden reasoning in the events"
+    },
+    {
+      "code": "T01",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "bundle.json names a ticket (F03 holds its id, nonce, root and lines to the schema)"
+    },
+    {
+      "code": "T02",
+      "where": [
+        "worker"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "the ticket exists, is the submitter's, its cell equals the bundle's, the nonce is the server's, no other reserving submission holds it"
+    },
+    {
+      "code": "T03",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "root and lines recompute from the bundle's files; every stream is named and ends in a complete line"
+    },
+    {
+      "code": "T04",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "every stored beat's root recomputes at its line counts under the server's nonce; counts never fall or pass the file; the end's root is the bundle's"
+    },
+    {
+      "code": "T05",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "the lines' times fit the server's: clock offset, a start after issue, no stale beat, a watched wall_s, no line past expiry"
+    },
+    {
+      "code": "T06",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "reject",
+      "flag": null,
+      "weekly": false,
+      "summary": "at most half the run is outside beat range"
+    },
+    {
+      "code": "T07",
+      "where": [
+        "panel",
+        "job"
+      ],
+      "severity": "flag",
+      "flag": "beat_gaps",
+      "weekly": false,
+      "summary": "no gap between beats over 300 s"
     }
   ]
 }
