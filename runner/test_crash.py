@@ -73,7 +73,7 @@ FAKE_LAUNCH = """#!/bin/sh
 echo "fake game $@"
 logs="$(dirname "$0")/runtime/logs"
 mkdir -p "$logs"
-echo "[ 1.0] stats: 15754 stats via the rarity run at 0x3" > "$logs/bg3le-$BG3AI_LAUNCH_STAMP.log.$$"
+echo "[ 1.0] stats: 15754 stats via the rarity run at 0x3" > "$logs/bg3le-$BG3AI_LAUNCH_STAMP.log.0"
 exec sleep 3600
 """
 
