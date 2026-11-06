@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import arena_reference as ar
 import make_arena_save as mas
+import probe_route_h as rh
 
 STATIC = mas.load_static()
 REPO = Path(__file__).resolve().parents[2]
@@ -45,8 +46,16 @@ class FakeGame:
 
 
 class FakeRoute:
-    def __init__(self, opens: bool = True, deny: tuple[str, ...] = (), inventory: bool = True) -> None:
+    def __init__(
+        self,
+        opens: bool = True,
+        deny: tuple[str, ...] = (),
+        inventory: bool = True,
+        applies: bool = True,
+        items_go: bool = True,
+    ) -> None:
         self.opens, self.deny, self.inventory, self.sent = opens, deny, inventory, []
+        self.applies, self.items_go, self.left = applies, items_go, 2
 
     def ev(self, code: str, context: str = "server") -> Any:
         self.sent.append(code)
@@ -57,10 +66,30 @@ class FakeRoute:
                 return {"ok": False, "error": "refused"}
         if "GetItemByTemplateInInventory" in code:
             return {"ok": True, "ret": "item-1" if self.inventory else None}
+        if code == rh.PRE:
+            return {"mark": 7}
+        if code == rh.PAGES:
+            return [] if self.applies else ["CharacterRespec"]
+        if code == rh.BOX_READ:
+            return {"box": False}
+        if "Osi.RequestDelete" not in code and "deleted = n" in code:  # the count: one read later they're gone
+            self.left = self.left if not self.items_go else max(self.left - 1, 0)
+            return {"deleted": self.left}
         return {"ok": True, "deleted": 2}
 
     def page_open(self, widget: str) -> tuple[bool, Any]:
         return self.opens, [widget] if self.opens else []
+
+    def events(self, mark: int) -> list[dict[str, Any]]:
+        self.mark = mark
+        return [{"e": "RespecCompleted", "args": ["u1"]}] if self.applies else []
+
+    def wait(self, read: Any, done: Any, wait_s: float) -> tuple[bool, Any]:
+        for _ in range(4):
+            r = read()
+            if done(r):
+                return True, r
+        return False, r
 
 
 def live(game: FakeGame, route: FakeRoute, level_up: Any = None, click: Any = None, prepare: Any = None) -> ar.Live:
@@ -116,7 +145,7 @@ class PlanTest(unittest.TestCase):
         cc = ar.ui_plans(build(2, "rogue"), 2, STATIC)["cc"]
         script = build(2, "rogue")["script"]["cc"]
         self.assertEqual(cc["expertise"], script["expertise"])
-        self.assertEqual(cc["skills"], script["skills"] + script["race_skills"])
+        self.assertEqual((cc["class_skills"], cc["race_skills"]), (script["skills"], script["race_skills"]))
 
     def test_a_bards_college_and_expertise_are_level_3_picks(self):
         ups = {u["level"]: u["plan"] for u in ar.ui_plans(build(5, "bard"), 5, STATIC)["level_ups"]}
@@ -150,10 +179,29 @@ class RespecTest(unittest.TestCase):
     def test_the_whole_flow_with_spell_clicks_applies_again_finishes_and_levels(self):
         g = FakeGame([Job("done", {"needs_clicks": [{"name": "Bless"}]}), Job("done", DONE)])
         ups: list[dict[str, Any]] = []
-        log = live(g, FakeRoute(), level_up=lambda w, p: ups.append(p) or "ok").respec(PLANS, "u1")
+        r = FakeRoute()
+        log = live(g, r, level_up=lambda w, p: ups.append(p) or "level_up: done").respec(PLANS, "u1")
         self.assertEqual(log["clicked"]["picked"], ["Bless"])
         self.assertEqual(g.finished, 1)
         self.assertEqual(len(ups), 1)
+        self.assertEqual((r.mark, log["events"][0]["e"]), (7, "RespecCompleted"))
+
+    def test_no_level_up_before_the_respec_has_landed(self):
+        ups: list[Any] = []
+        g = FakeGame([Job("done", DONE)])
+        with self.assertRaisesRegex(ar.RefStepError, "respec not applied"):
+            live(g, FakeRoute(applies=False), level_up=lambda w, p: ups.append(p) or "x").respec(PLANS, "u1")
+        self.assertEqual((g.finished, ups), (1, []))
+
+    def test_a_level_up_that_says_anything_but_done_stops_it(self):
+        g = FakeGame([Job("done", DONE)])
+        with self.assertRaisesRegex(ar.RefStepError, "nothing to do"):
+            live(g, FakeRoute(), level_up=lambda w, p: "level_up: nothing to do").respec(PLANS, "u1")
+
+    def test_an_incomplete_page_says_what_it_bought(self):
+        res = {"complete": False, "problems": [], "set": {"abilities": {"points_left": 6}}}
+        with self.assertRaisesRegex(ar.RefStepError, "points_left': 6"):
+            live(FakeGame([Job("done", res)]), FakeRoute()).respec(PLANS, "u1")
 
     def test_it_stops_at_a_page_that_doesnt_open_a_failed_job_problems_clicks_and_level_ups(self):
         with self.assertRaisesRegex(ar.RefStepError, "didn't open"):
@@ -173,6 +221,12 @@ class RespecTest(unittest.TestCase):
             )
         with self.assertRaisesRegex(ar.RefStepError, "StartRespec"):
             live(FakeGame([]), FakeRoute(deny=("StartRespec",))).respec(PLANS, "u1")
+
+
+class ReadLevelsTest(unittest.TestCase):
+    def test_it_prints_what_a_level_up_needs(self):
+        g = FakeGame([], [{"uuid": "u1", "level": 1, "available": 2, "can_level_up": True}])
+        self.assertEqual(ar.level_state(g, ["u1"])[0]["available"], 2)
 
 
 class SetupCheckTest(unittest.TestCase):
@@ -210,6 +264,16 @@ class DressTest(unittest.TestCase):
         self.assertEqual(added, [["Bless"]])
         order = [next((f for f in ("RequestDelete", "TemplateAddTo", "Equip") if f in c), "") for c in r.sent]
         self.assertEqual([x for x in order if x], ["RequestDelete", "TemplateAddTo", "Equip"])
+        counts = [i for i, c in enumerate(r.sent) if c == ar.ITEMS_LEFT_LUA % ar._lua_str("u1")]
+        added_at = next(i for i, c in enumerate(r.sent) if "TemplateAddTo" in c)
+        self.assertEqual(len(counts), 2)  # 1 left, then 0
+        self.assertLess(counts[-1], added_at)
+
+    def test_items_that_never_go_stop_it_before_anything_is_added(self):
+        r = FakeRoute(items_go=False)
+        with self.assertRaisesRegex(ar.RefStepError, "didn't go"):
+            live(FakeGame([]), r).dress(KIT, "u1")
+        self.assertFalse(any("TemplateAddTo" in c for c in r.sent))
 
     def test_an_item_that_never_arrives_or_a_refused_prepare_stops_it(self):
         with self.assertRaisesRegex(ar.RefStepError, "didn't reach"):

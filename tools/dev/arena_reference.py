@@ -33,6 +33,7 @@ import probe_route_h as rh
 
 REPO = Path(__file__).resolve().parents[2]
 ITEM_WAIT_S = 5.0
+FINISH_WAIT_S = 15.0  # the respec applied: page closed and RespecCompleted, as probe_route_h's EVENT_WAIT_S
 POLL_S = 0.25
 JOB_WAIT_S = 120.0
 # The page's label for a subclass (pick() takes a unique substring): what's left of the game's name.
@@ -93,9 +94,10 @@ def ui_plans(build: dict[str, Any], level: int, static: dict[str, Any]) -> dict[
         plan["bonus"] = cc["ability_bonus"]
     if static["classes"][cls]["levels"]["1"].get("subclasses"):
         plan["subclass"] = _label(sub)
-    skills = list(cc.get("skills", [])) + list(cc.get("race_skills", []))
-    if skills:
-        plan["skills"] = skills
+    if cc.get("skills"):
+        plan["class_skills"] = list(cc["skills"])
+    if cc.get("race_skills"):
+        plan["race_skills"] = list(cc["race_skills"])
     if cc.get("expertise"):
         plan["expertise"] = list(cc["expertise"])
     if cc.get("passives"):
@@ -181,6 +183,10 @@ return Ext.Json.Stringify(out)
 """
 
 
+def level_state(game: Any, uuids: list[str]) -> list[dict[str, Any]]:
+    return json.loads(game.eval(LEVEL_STATE_LUA % _lua_str(json.dumps(uuids)), context="server"))
+
+
 def setup_check(game: Any, arena: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     """arena.setup on the loaded start save (S4). -> (exit code, what to log): 0 when it stood the match up (every twin
     its build's, none with a level-up pending), 1 with the error and its rows when it didn't. A match stood up is left
@@ -193,7 +199,7 @@ def setup_check(game: Any, arena: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         return 1, rec
     twins = [u for side in res.get("teams", {}).values() for u in side]
     if twins:
-        rec["level_state"] = json.loads(game.eval(LEVEL_STATE_LUA % _lua_str(json.dumps(twins)), context="server"))
+        rec["level_state"] = level_state(game, twins)
         pending = [x["uuid"] for x in rec["level_state"] if x["can_level_up"] or x["available"] != x["level"]]
         if pending:
             rec["error"] = f"a level-up pending after the party join: {', '.join(pending)}"
@@ -243,6 +249,10 @@ class Live:
         log: dict[str, Any] = {"who": who}
         names = self.names(plans["names"])
         cc = translate(plans["cc"], names)
+        pre = self.route.ev(rh.PRE)  # installs the route's listeners; its mark is where this respec's events start
+        mark = pre.get("mark") if isinstance(pre, dict) else None
+        if not isinstance(mark, int | float):
+            raise RefStepError(f"no event mark: {pre}")
         self.osi("StartRespec", who)
         opened, pages = self.route.page_open("CharacterRespec")
         if not opened:
@@ -257,20 +267,50 @@ class Live:
             res = self.cc_apply(cc)
         log["cc"] = res
         if res.get("problems") or res.get("complete") is not True:
-            raise RefStepError(f"the respec page isn't complete: {res.get('problems')} {res.get('validity')}")
+            set_ = res.get("set") or {}
+            raise RefStepError(
+                f"the respec page isn't complete: {res.get('problems')} {res.get('validity')} "
+                f"abilities {set_.get('abilities')} skills {set_.get('skills')}"
+            )
         log["finish"] = self.game.rpc("ui.cc_finish", {}, context="client")
+        log["events"] = self.applied(int(mark))
         log["level_ups"] = []
         for u in plans["level_ups"]:
             text = self.level_up(who, translate(u["plan"], names))
             log["level_ups"].append({"level": u["level"], "out": text})
-            if "FAILED" in text or "REFUSED" in text:
+            if not text.startswith("level_up: done"):
                 raise RefStepError(f"level {u['level']}: {text}")
         return log
+
+    def applied(self, mark: int) -> list[dict[str, Any]]:
+        """FinishCreating only asks: the respec has landed when its page is gone and RespecCompleted fired, and a
+        level-up before that reads the old character. -> the events; RefStepError with what shows instead."""
+
+        def look() -> dict[str, Any]:
+            return {"pages": self.route.ev(rh.PAGES, "client"), "events": self.route.events(mark)}
+
+        def landed(r: dict[str, Any]) -> bool:
+            gone = isinstance(r["pages"], list) and "CharacterRespec" not in r["pages"]
+            return gone and any(e.get("e") == "RespecCompleted" for e in r["events"])
+
+        ok, r = self.route.wait(look, landed, FINISH_WAIT_S)
+        if not ok:
+            box = self.route.ev(rh.BOX_READ, "client")
+            raise RefStepError(f"respec not applied in {FINISH_WAIT_S:.0f} s: {r}, box {box}")
+        return r["events"]
 
     def dress(self, kit: dict[str, Any], who: str) -> dict[str, Any]:
         """The hireling's items out, the kit's in, by the calls arena.mirror_kit makes, then its prepared spells by the
         spellbook page. A profile's equipment, inventory, AC and derived then compare with a twin's."""
         log: dict[str, Any] = {"removed": self.route.ev(CLEAR_LUA % _lua_str(who)), "items": []}
+        # RequestDelete lands later, and a kit item of the same template would be found in the old one's place.
+        gone, left = self.route.wait(
+            lambda: self.route.ev(ITEMS_LEFT_LUA % _lua_str(who)),
+            lambda r: isinstance(r, dict) and r.get("deleted") == 0,
+            ITEM_WAIT_S,
+        )
+        if not gone:
+            raise RefStepError(f"the hireling's items didn't go in {ITEM_WAIT_S:.0f} s: {left}")
         for it in kit["items"]:
             self.osi("TemplateAddTo", it["root"], who, it["count"], 0)
             end, item = self.clock() + ITEM_WAIT_S, None
@@ -305,6 +345,7 @@ for _, inv in ipairs(Mods.BG3AI.BG3AI.Util.items(e.InventoryOwner.Inventories)) 
 end
 return Ext.Json.Stringify({ deleted = n })
 """
+ITEMS_LEFT_LUA = CLEAR_LUA.replace("Osi.RequestDelete(iu) ", "")  # the same walk, counting only
 
 
 def _find(path: Path, build_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -352,7 +393,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         if a.step == "read-levels":
             p = game.rpc("arena.profile", {"uuid": a.who})
-            print(json.dumps({k: p.get(k) for k in ("name", "level", "classes", "max_hp", "race")}, indent=1))
+            read = {k: p.get(k) for k in ("name", "level", "classes", "max_hp", "race")}
+            print(json.dumps({**read, "level_state": level_state(game, [a.who])}, indent=1))
             return 0
         doc, b = _find(a.builds, a.build)
         if a.step == "respec":

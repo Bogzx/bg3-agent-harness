@@ -133,6 +133,8 @@ class BuildsTest(unittest.TestCase):
     def test_a_rated_file_needs_every_reference_on_its_game_build(self):
         d = doc()
         del d["draft"]
+        for b in d["builds"]:
+            b["reference"] = None  # a live read may already be in the file
         with self.assertRaisesRegex(ab.BuildError, "build fighter: no reference profile"):
             ab.check_builds(d)
         for b in d["builds"]:

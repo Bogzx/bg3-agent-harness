@@ -241,5 +241,220 @@ do
     BG3AI.UI.path, BG3AI.UI.command = path, command
 end
 
+-- 6. the point buy on the respec page, from live 2026-11-06 launch 3 (cc-options-fighter-stop.json): a hireling's
+-- +2 Str and +1 Con stay through ResetAbilities and sit in Value, RaceBonus reads nothing, Improvement marks the pick.
+do
+    local NAMES6 = { "Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma" }
+    local function cost(n) return n <= 13 and n - 8 or 5 + (n - 13) * 2 end
+    local function page6(start, picks, read)
+        local p = { abilities = {}, base = {}, cols = {}, refuse = {} }
+        for _, n in ipairs(NAMES6) do
+            p.base[n] = start[n]
+            p.abilities[#p.abilities + 1] = obj("ls.VM", { Ability = n, CanIncrease = true, CanDecrease = true })
+        end
+        for bonus, on in pairs(picks) do
+            local items = {}
+            for _, n in ipairs(NAMES6) do
+                items[#items + 1] = obj("ls.VM", { Ability = n, Improvement = read and (n == on and 1 or 0) or nil })
+            end
+            p.cols[#p.cols + 1] = obj("ls.VM", { AbilityBonus = bonus, BonusAbilities = items, _on = on })
+        end
+        function p.sync()
+            local spent = 0
+            for _, a in ipairs(p.abilities) do
+                local n, add = a._p.Ability, 0
+                for _, c in ipairs(p.cols) do
+                    if c._p._on == n then add = add + c._p.AbilityBonus end
+                    for _, it in ipairs(c._p.BonusAbilities) do
+                        if read then it._p.Improvement = it._p.Ability == c._p._on and 1 or 0 end
+                    end
+                end
+                a._p.Value = p.base[n] + add
+                spent = spent + cost(p.base[n])
+            end
+            dc._p.UnusedAbilityPoints = 27 - spent
+        end
+        return p
+    end
+    local function apply(p, plan)
+        open("CharacterRespec", REAL.tabs, REAL.complete)
+        p.sync()
+        local path, command = BG3AI.UI.path, BG3AI.UI.command
+        BG3AI.UI.path = function(_, k)
+            if k == "DummyCharacter.Stats.Abilities" then return p.abilities end
+            if k == "RaceProgressionDetails.AbilityBonusSelection" then return p.cols end
+            return nil
+        end
+        BG3AI.UI.command = function(_, n, a)
+            if n == "ResetAbilities" then
+                for k in pairs(p.base) do p.base[k] = 8 end
+            elseif n == "SelectNextAbilityBonus" then
+                if p.stuck then return true end -- the live press: ok, and nothing moves
+                local at = 0
+                for i, x in ipairs(NAMES6) do if x == a._p._on then at = i end end
+                a._p._on = NAMES6[at % #NAMES6 + 1]
+            elseif n == "IncreaseAbility" or n == "DecreaseAbility" then
+                local name = a._p.Ability
+                if p.refuse[name] and p.base[name] >= p.refuse[name] then return false, "not allowed" end
+                p.base[name] = p.base[name] + (n == "IncreaseAbility" and 1 or -1)
+            end
+            p.sync()
+            return true
+        end
+        RESPEC.tabs, RESPEC.finish, RESPEC.complete = REAL.tabs, REAL.finish, REAL.complete
+        local res = run("ui.cc_apply", { plan = plan, finish = false })
+        BG3AI.UI.path, BG3AI.UI.command = path, command
+        return res
+    end
+    local WANT = { Strength = 15, Dexterity = 13, Constitution = 14, Intelligence = 10, Wisdom = 12, Charisma = 8 }
+    local STOP = { Strength = 13, Dexterity = 13, Constitution = 13, Intelligence = 10, Wisdom = 12, Charisma = 8 }
+    local plan = { class = "Fighter", abilities = WANT }
+
+    local p = page6(STOP, { [2] = "Strength", [1] = "Constitution" }, true)
+    local r = apply(p, plan)
+    check(r and r.status == "done", "point buy: done (" .. tostring(r and r.error) .. ")")
+    check(p.base.Strength == 15 and p.base.Constitution == 14 and p.abilities[1]._p.Value == 17
+        and p.abilities[3]._p.Value == 15, "point buy: 15 and 14 bought under the kept +2 and +1, 17 and 15 shown")
+    check(dc._p.UnusedAbilityPoints == 0 and #r.result.problems == 0, "point buy: every point spent, no problem")
+    local picked = {}
+    for _, c in ipairs(r.result.set.abilities.bonus) do picked[c.bonus] = c.picked end
+    check(picked[2] == "Strength" and picked[1] == "Constitution", "point buy: the view reads the picks by Improvement")
+
+    p = page6(STOP, { [2] = "Strength", [1] = "Constitution" }, false)
+    r = apply(p, plan)
+    check(table.concat(r.result.problems, ";"):find("abilities: 6 points left", 1, true) ~= nil,
+        "point buy: a pick that doesn't read stops as live did, now named")
+
+    p = page6(STOP, { [2] = "Strength", [1] = "Constitution" }, true)
+    p.refuse.Strength = 13
+    r = apply(p, plan)
+    check(table.concat(r.result.problems, ";"):find("Strength bought 13, wanted 15: not allowed", 1, true) ~= nil,
+        "point buy: a press the page refuses is named (" .. table.concat(r.result.problems, ";") .. ")")
+
+    -- the Rogue's page, cc-options-rogue-stop.json: +2 Dexterity stays, the +1 moves off Intelligence
+    local ROGUE = { Strength = 8, Dexterity = 15, Constitution = 14, Intelligence = 12, Wisdom = 13, Charisma = 10 }
+    local rplan = { class = "Fighter", abilities = ROGUE, bonus = { "Dexterity", "Constitution" } }
+    p = page6(ROGUE, { [2] = "Dexterity", [1] = "Intelligence" }, true)
+    r = apply(p, rplan)
+    check(#r.result.problems == 0 and p.abilities[3]._p.Value == 15 and p.abilities[4]._p.Value == 12,
+        "bonus: the +1 moved to Constitution (" .. table.concat(r.result.problems, ";") .. ")")
+    local got = {}
+    for _, c in ipairs(r.result.set.abilities.bonus) do got[c.bonus] = c.picked end
+    check(got[2] == "Dexterity" and got[1] == "Constitution", "bonus: the page reads the plan's picks")
+    check(r.result.before.abilities.bonus ~= nil, "cc_apply: keeps what the page opened with")
+    p = page6(ROGUE, { [2] = "Dexterity", [1] = "Intelligence" }, true)
+    p.stuck = true
+    r = apply(p, rplan)
+    local probs = table.concat(r.result.problems, ";")
+    check(probs:find("bonus Constitution: not picked after 6 presses", 1, true) ~= nil
+        and probs:find("bonus Constitution: the page has Intelligence", 1, true) ~= nil,
+        "bonus: a column that won't move is named (" .. probs .. ")")
+
+    -- skills and expertise, as that read: every group full of the hireling's picks
+    local CLASS = { "Deception", "Intimidation", "Performance", "Acrobatics", "Investigation", "Athletics", "Insight",
+        "Perception", "SleightOfHand", "Stealth" }
+    local BACKGROUND = { SleightOfHand = true, Stealth = true }
+    local function skillPage()
+        local q = { own = { class = { Deception = true, Performance = true, Acrobatics = true, Athletics = true },
+            race = { Persuasion = true }, expertise = { SleightOfHand = true, Stealth = true } },
+            max = { class = 4, race = 1, expertise = 2 }, groups = {} }
+        local function group(key, names)
+            local items = {}
+            for i, n in ipairs(names) do items[i] = obj("ls.VM", { Name = n, _g = key }) end
+            q.groups[key] = obj("ls.VM", { Skills = items, MaxSelectedSkillCount = q.max[key] })
+        end
+        group("class", CLASS)
+        group("race", { "Persuasion", "Athletics", "Perception", "Investigation" })
+        group("expertise", { "SleightOfHand", "Stealth", "Perception", "Athletics" })
+        function q.sync()
+            local function has(n) return BACKGROUND[n] or q.own.class[n] or q.own.race[n] end
+            for key, g in pairs(q.groups) do
+                for _, it in ipairs(g._p.Skills) do
+                    local n = it._p.Name
+                    if key == "expertise" then
+                        it._p.Selected, it._p.Enabled = q.own.expertise[n] == true, has(n) == true
+                    else
+                        it._p.Selected = has(n) == true
+                        local other = key == "class" and "race" or "class"
+                        it._p.Enabled = not (BACKGROUND[n] or q.own[other][n])
+                    end
+                end
+            end
+        end
+        function q.toggle(it)
+            local key, n = it._p._g, it._p.Name
+            if it._p.Enabled == false or q.stuck then return end
+            local count = 0
+            for _ in pairs(q.own[key]) do count = count + 1 end
+            if q.own[key][n] then q.own[key][n] = nil
+            elseif count < q.max[key] then q.own[key][n] = true end -- a full group ignores it, and says nothing
+            q.sync()
+        end
+        q.sync()
+        return q
+    end
+    local function applySkills(q, skillPlan)
+        open("CharacterRespec", REAL.tabs, REAL.complete)
+        local path, command = BG3AI.UI.path, BG3AI.UI.command
+        BG3AI.UI.path = function(_, k)
+            if k == "AllSkills.ClassProficientSkills" then return q.groups.class end
+            if k == "AllSkills.RaceProficientSkills" then return q.groups.race end
+            if k == "AllSkills.ExpertiseSkills" then return q.groups.expertise end
+            if k == "ClassProgressionDetails.NotSubPassiveSelectors" then return q.selectors end
+            return nil
+        end
+        BG3AI.UI.command = function(_, n, it)
+            if n == "ToggleSkill" then q.toggle(it)
+            elseif n == "TogglePassive" and q.passive then q.passive(it) end
+            return true
+        end
+        RESPEC.tabs, RESPEC.finish, RESPEC.complete = REAL.tabs, REAL.finish, REAL.complete
+        local res = run("ui.cc_apply", { plan = skillPlan, finish = false })
+        BG3AI.UI.path, BG3AI.UI.command = path, command
+        return res
+    end
+    local SKILLS = { class = "Fighter", class_skills = { "Acrobatics", "Perception", "Deception", "Investigation" },
+        race_skills = { "Athletics" }, expertise = { "Stealth", "Perception" } }
+    local q = skillPage()
+    r = applySkills(q, SKILLS)
+    check(#r.result.problems == 0, "skills: no problem (" .. table.concat(r.result.problems, ";") .. ")")
+    check(q.own.class.Performance == nil and q.own.class.Perception and q.own.class.Investigation
+        and q.own.race.Athletics and q.own.race.Persuasion == nil, "skills: class and race picks moved to the plan's")
+    check(q.own.expertise.SleightOfHand == nil and q.own.expertise.Perception and q.own.expertise.Stealth,
+        "expertise: moved, once Perception is proficient")
+
+    q = skillPage()
+    q.stuck = true
+    r = applySkills(q, SKILLS)
+    probs = table.concat(r.result.problems, ";")
+    for _, want in ipairs({ "skill Perception: not on the page (class)", "skill Investigation: not on the page (class)",
+        "skill Athletics: not on the page (race)", "skill Perception: not on the page (expertise)" }) do
+        check(probs:find(want, 1, true) ~= nil, "end check names " .. want)
+    end
+
+    -- a full selector ignores the toggle as a skill group does: the Ranger's favoured enemy
+    Ext.StaticData = { Get = function() return nil end, GetAll = function() return {} end }
+    q = skillPage()
+    local function passive(n, v) return obj("ls.VM", { Name = n, Value = v, Enabled = true }) end
+    local items = { passive("Sanctified Stalker", 1), passive("Bounty Hunter", 0) }
+    q.selectors = { obj("ls.VM", { Passives = items, MaxSelectedPassiveCount = 1, IsComplete = true }) }
+    q.passive = function(it)
+        local on = 0
+        for _, x in ipairs(items) do on = on + x._p.Value end
+        if it._p.Value == 1 then it._p.Value = 0 elseif on < 1 then it._p.Value = 1 end
+    end
+    r = applySkills(q, { class = "Fighter", passives = { "Bounty Hunter" } })
+    check(items[2]._p.Value == 1 and items[1]._p.Value == 0 and #r.result.problems == 0,
+        "passives: a selector's pick moved (" .. table.concat(r.result.problems, ";") .. ")")
+    q.passive, items[1]._p.Value, items[2]._p.Value = function() end, 1, 0
+    r = applySkills(q, { class = "Fighter", passives = { "Bounty Hunter" } })
+    check(table.concat(r.result.problems, ";"):find("passive Bounty Hunter: not on the page", 1, true) ~= nil,
+        "end check names a passive that didn't land")
+    r = applySkills(skillPage(), { class = "Fighter", spells = { "Bless" } })
+    check(table.concat(r.result.problems, ";"):find("spell Bless: not on the page", 1, true) ~= nil,
+        "end check names a spell that didn't land")
+    filled(false)
+end
+
 print(fails == 0 and "ALL OK" or (fails .. " FAILED"))
 os.exit(fails == 0 and 0 or 1)

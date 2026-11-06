@@ -394,19 +394,6 @@ local function tabStage(ctx, tab)
     end
 end
 
--- Press the realized, visible button named one of `names` whose DataContext is `item`.
-local function pressFor(widgetName, names, item)
-    local w = visibleWidget(widgetName)
-    if not w then return false, "page not open" end
-    local want = {}
-    for _, n in ipairs(names) do want[n] = true end
-    local hits = UI.findAll(w, function(e)
-        return want[UI.name(e) or ""] == true and same(UI.prop(e, "DataContext"), item)
-    end, { prune = true, max = 40000 })
-    if #hits == 0 then return false, "button not on screen" end
-    return UI.press(hits[1])
-end
-
 ------------------------------------------------------------------------
 -- Selectors shared by CC and level up: skills, passives, spells
 ------------------------------------------------------------------------
@@ -778,6 +765,10 @@ local function validity(dc)
     local out = v and meta(v) or {}
     local name = v and str(UI.prop(v, "Name"))
     if name then out.Name = name end
+    for _, k in ipairs({ "RacialSelectors", "ClassSelectors" }) do -- what the page's marks bind to
+        local m = v and UI.prop(v, k) and meta(UI.prop(v, k))
+        if m and next(m) then out[k] = m end
+    end
     local app = str(UI.prop(dc, "AppearanceValidationError"))
     if app then out.appearance = app end
     if next(out) == nil then return nil end
@@ -788,13 +779,14 @@ end
 P.inner = { try = try, isObj = isObj, same = same, str = str, label = label, ident = ident, set = set,
     list = list, norm = norm, pick = pick, view = view, abilityName = abilityName, abilityOf = abilityOf,
     visibleWidget = visibleWidget, widgetDC = widgetDC, pages = pages, selectTab = selectTab,
-    tabStage = tabStage, pressFor = pressFor, skillGroups = skillGroups, skillsView = skillsView,
+    tabStage = tabStage, skillGroups = skillGroups, skillsView = skillsView,
     passiveSelectors = passiveSelectors, passivesView = passivesView, spellSelectors = spellSelectors,
     selectorState = selectorState, spellsView = spellsView, validity = validity }
 
 -- The rest of the module, in this order (split for the 1000-line cap). Each part reads P and the
 -- helpers in P.inner.
-for _, part in ipairs({ "Client/ProgressionCC.lua", "Client/ProgressionLevelUp.lua" }) do
+for _, part in ipairs({ "Client/ProgressionCC.lua", "Client/ProgressionAbilities.lua",
+    "Client/ProgressionLevelUp.lua" }) do
     Ext.Require(part)
 end
 
