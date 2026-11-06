@@ -262,14 +262,16 @@ end
 -- the command that ends it; complete, the property that enables finish; tabs, "same" (CharacterCreation's tab element
 -- names) or {cc tab name = this page's}; naming, whether it has the naming page; keeps, the plan keys the page has no
 -- list for (CharacterRespec.xaml binds class, subclass, deity, abilities, skills and the race's selectors, but no
--- origin, race or subrace: respec keeps the race). A name left nil is TODO: CharacterRespec's are what the route-H
--- probe's page dump reads (probe_route_h.py respec, its `names`), and every op that needs one fails at the call,
--- naming the page and the name, before anything on the page changes.
+-- origin, race, subrace or background: respec keeps them). CharacterRespec's names are Game.pak's CharacterRespec.xaml
+-- and route-H window 3's page dump (website ops/logs/live.md: proceedButton FinishCreating, IsEnabled
+-- IsCharacterCompleteExceptName; classTab, subClassTab, deityTab, abilityTab, no backgroundTab). A name left nil is
+-- unknown, and every op that needs one fails at the call, naming the page and the name, before anything changes.
 P.CC_PAGES = {
     { widget = "CharacterCreation", finish = "FinishCreating", complete = "IsCharacterComplete", tabs = "same",
       naming = true, keeps = {} },
-    { widget = "CharacterRespec", finish = nil, complete = nil, tabs = nil, -- TODO: the route-H probe's names
-      naming = false, keeps = { origin = true, race = true, subrace = true } },
+    { widget = "CharacterRespec", finish = "FinishCreating", complete = "IsCharacterCompleteExceptName",
+      tabs = { classTab = "classTab", subClassTab = "subClassTab", deityTab = "deityTab", abilityTab = "abilityTab" },
+      naming = false, keeps = { origin = true, race = true, subrace = true, background = true } },
 }
 
 -- The first open page of P.CC_PAGES and its DataContext, or nil.

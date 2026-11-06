@@ -354,3 +354,129 @@ class TierTest(unittest.TestCase):
             "Intelligence above 20",
             12,
         )
+
+
+def ref_of(b: dict[str, Any], **over: Any) -> dict[str, Any]:
+    prof = {f: [] for f in ab.REFERENCE_FIELDS} | {"level": 5, "name": "Lia"}
+    return {
+        "profile": prof,
+        "game_build": "25605617",
+        "hireling": STATIC["hirelings"][b["class"]]["origin"],
+        "evidence": "live.md test",
+    } | over
+
+
+def with_templates() -> dict[str, Any]:
+    st = copy.deepcopy(STATIC)
+    for c, h in st["hirelings"].items():
+        h["template"] = h.get("template") or f"tpl-{c}"
+    return st
+
+
+NAMES4 = [("Red Ash", "Blue Ash"), ("Red Bay", "Blue Bay"), ("Red Elm", "Blue Elm"), ("Red Oak", "Blue Oak")]
+
+
+class ReferenceAndArenaFileTest(unittest.TestCase):
+    """G6/G7: the tier's XP window, the references in the arena file; reference-read and -diff against a fake game."""
+
+    def test_party_xp_is_the_tiers_window_from_the_games_table(self):
+        self.assertEqual(ab.party_xp(2, STATIC), {"total": 300, "below": 900})
+        self.assertEqual(ab.party_xp(5, STATIC), {"total": 6500, "below": 13000})
+        self.assertEqual(ab.party_xp(12, STATIC), {"total": 100000})
+
+    def test_the_mirror_section_has_party_xp_and_each_read_reference(self):
+        d = tier(5)
+        d["builds"][0]["reference"] = ref_of(d["builds"][0])
+        m = ab.mirror_section(ab.check_builds(d), NAMES4, with_templates())["mirror"]
+        self.assertEqual(m["party_xp"], {"total": 6500, "below": 13000})
+        self.assertEqual(
+            m["pairs"][0]["reference"], {"profile": d["builds"][0]["reference"]["profile"], "accepted": []}
+        )
+        self.assertNotIn("reference", m["pairs"][1])
+
+    def test_accepted_differences_need_a_field_entries_and_why_once_per_field(self):
+        d = tier(5)
+        b = d["builds"][0]
+        good = {"field": "classes", "only_twin": ["a"], "only_reference": ["b"], "why": "P2"}
+        b["reference"] = ref_of(b, accepted=[good])
+        ab.check_builds(d)
+        for bad, want in (
+            ([{**good, "why": " "}], "accepted difference"),
+            ([{**good, "only_twin": [], "only_reference": []}], "accepted difference"),
+            ([good, good], "twice"),
+            ("x", "must list"),
+        ):
+            b["reference"] = ref_of(b, accepted=bad)
+            with self.assertRaisesRegex(ab.BuildError, want):
+                ab.check_builds(d)
+
+    def test_arena_file_takes_the_bases_rules_and_the_builds_and_checks_the_spawns(self):
+        base = json.loads((REPO / "packages/bench/arenas/arena-v0.1.json").read_text())
+        a = ab.arena_file(ab.check_builds(tier(5)), base, "arena-4v4-l5", NAMES4, [213.0, 10.98, 288.0],
+                          [213.0, 10.98, 296.0], with_templates())  # fmt: skip
+        self.assertEqual((a["level"], a["save"], a["name"]), (5, base["save"], "arena-4v4-l5"))
+        self.assertEqual(a["location"]["level"], base["location"]["level"])
+        self.assertIn("draft", a)  # a draft build file can't make a playable arena
+        with self.assertRaisesRegex(mas.SpecError, "height"):
+            ab.arena_file(tier(5), base, "x", NAMES4, [0.0, 0.0, 0.0], [0.0, 1.0, 8.0], with_templates())
+        sys.path.insert(0, str(REPO / "packages/bench/src"))
+        from bg3bench import arena as barena
+
+        self.assertEqual(barena.validate(a, "arena-4v4-l5"), [])
+        played = copy.deepcopy(a)
+        del played["draft"]
+        self.assertTrue(any("has no reference" in e for e in barena.validate(played, "arena-4v4-l5")))
+        for p, b in zip(played["mirror"]["pairs"], tier(5)["builds"], strict=True):
+            p["reference"] = {"profile": ref_of(b)["profile"], "accepted": []}
+        self.assertEqual(barena.validate(played, "arena-4v4-l5"), [])
+        del played["mirror"]["party_xp"]
+        self.assertTrue(any("needs mirror.party_xp" in e for e in barena.validate(played, "arena-4v4-l5")))
+
+    def test_reference_read_writes_the_compared_fields_and_refuses_a_wrong_or_partial_read(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "b.json"
+            path.write_text(json.dumps(tier(5)))
+            prof = {f: [] for f in ab.REFERENCE_FIELDS} | {"level": 5, "name": "Lia", "hp": 3}
+            ab.reference_read(lambda op, a: prof, path, "fighter", "u1", "live.md X")
+            got = json.loads(path.read_text())["builds"][0]["reference"]
+            self.assertEqual(set(got["profile"]), set(ab.REFERENCE_FIELDS))  # no name or current HP
+            self.assertEqual(got["hireling"], STATIC["hirelings"]["Fighter"]["origin"])
+            ab.check_builds(json.loads(path.read_text()))
+            with self.assertRaisesRegex(ab.BuildError, "reads level 2"):
+                ab.reference_read(lambda op, a: prof | {"level": 2}, path, "fighter", "u1", "x")
+            with self.assertRaisesRegex(ab.BuildError, "spells doesn't read"):
+                ab.reference_read(lambda op, a: prof | {"spells": None}, path, "fighter", "u1", "x")
+            with self.assertRaisesRegex(ab.BuildError, "no build"):
+                ab.reference_read(lambda op, a: prof, path, "nobody", "u1", "x")
+
+    def test_reference_diff_sends_the_reference_and_needs_one(self):
+        d = tier(5)
+        with self.assertRaisesRegex(ab.BuildError, "no reference yet"):
+            ab.reference_diff(lambda op, a: {}, d, "fighter", "u1")
+        d["builds"][0]["reference"] = ref_of(d["builds"][0])
+        asked = []
+        r = ab.reference_diff(lambda op, a: asked.append((op, a)) or {"ok": True}, d, "fighter", "u1")
+        self.assertTrue(r["ok"])
+        self.assertEqual(asked[0][0], "arena.reference_diff")
+        self.assertEqual(asked[0][1]["uuid"], "u1")
+
+    def test_the_second_team_is_valid_and_a_subclass_rows_removed_passive_is_in_the_kits_grants(self):
+        d = ab.load_builds(REPO / "packages/bench/builds/l5_4v4_team2_v1.json")
+        self.assertIn("draft", d)
+        self.assertEqual([b["class"] for b in d["builds"]], ["Barbarian", "Cleric", "Wizard", "Ranger"])
+        __import__("jsonschema").validate(
+            d, json.loads((REPO / "packages/bench/schema/arena-builds.v1.schema.json").read_text())
+        )
+        k = plan(d, "barbarian")
+        self.assertEqual(k["grants"]["passives_removed"], ["RageUnlock"])
+        self.assertIn(["TotemSpirit_Bear"], [c["ids"] for c in k["choices"] if c["kind"] == "passives"])
+        self.assertNotIn("passives_removed", plan(tier(5), "fighter")["grants"])
+
+    def test_no_build_on_a_team_holds_a_knock_down_source(self):
+        banned = {"Target_Grease", "Projectile_IceKnife", "Zone_Thunderwave", "Target_HideousLaughter", "Target_Sleep",
+                  "TripAttack", "PushingAttack", "MenacingAttack", "TotemSpirit_Elk"}  # fmt: skip
+        for path in sorted((REPO / "packages/bench/builds").glob("l*_4v4_*.json")):
+            d = json.loads(path.read_text())
+            for b in d["builds"]:
+                with self.subTest(file=path.name, build=b["id"]):
+                    self.assertFalse(banned & set(json.dumps(b["script"]).replace('"', " ").replace(",", " ").split()))

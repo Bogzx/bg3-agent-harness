@@ -6,6 +6,11 @@
 -- Nightwarden Minthara is Minthara once she joins): setup fails when it differs, listing both. Every party member on
 -- no team (the avatar too) sits out. The steps are the arena spike's, which the probe ran by hand
 -- (tools/dev/probe_arena.py setup + hostile; live 2026-11-01/02, ops/logs/live.md "arena spike" .. "phases live 3"):
+--  -4. a mirror arena with mirror.party_xp {total, below?}: the host's XP brought to the tier before any twin exists
+--      (a copy snaps to the party's level at MakePlayer: live builds-1 load 2, 900 XP gave a level-3 Fighter): when it
+--      reads under total, AddExplorationExperience for the difference, read back until it reads at least total
+--      (XP_WAIT_MS). Above the window (below, the next level's total) setup fails: no call takes XP away. The host
+--      itself stays at its level with a level-up pending (same live read), so the twins' level is what step 7 checks.
 --  -3. a mirror arena: the field cleaned (Server/ArenaField.lua: within the surface clear's reach, pickable items
 --      deleted, traps disarmed, locks opened, doors opened, usable objects disabled, destructibles invulnerable),
 --      read back a tick later in step -2: the items still active must be the same set on both halves (else setup
@@ -27,7 +32,10 @@
 --   3. where they landed (Setup.check_landed: each pair under SPAWN_DY_MAX_M apart in height, the cross distances
 --      the same both ways), then RestoreParty(host), then SetHitpointsPercentage 100 for anyone it left short; the
 --      seed and Karmic Dice
---   4. each team its own spare "Hero Player<N>" faction (never the bare "Hero": the companions' factions descend from
+--   4. a mirror arena whose pairs carry a build's `reference`: each pair's A twin against it (its B twin is its mirror
+--      by then; Symmetry.reference_diff), after RestoreParty so the resources read full, before anyone is hostile.
+--      Every pair is read, then setup fails listing what differs and isn't accepted; the result's `reference` has them.
+--      each team its own spare "Hero Player<N>" faction (never the bare "Hero": the companions' factions descend from
 --      it), SetRelation hostile both ways, SetHostileAndEnterCombat (EnterCombat pairs if not all members in one
 --      combat)
 --   5. the IsEnemy matrix read every 0.5 s up to 3 s (live: SetRelation alone doesn't change it; it is right with
@@ -86,6 +94,10 @@ Setup.TEAM_MAX = 4             -- two teams of 4 fill the party of 8 the spike s
 Setup.SPAWN_DY_MAX_M = 0.3
 Setup.PAIR_DIST_TOL_M = 0.1
 Setup.SITTER_MIN_M = 10.0 -- a sitter this far or more from every member of both lines (fairness audit S1-3)
+-- AddExplorationExperience shows in the host's Experience within this. Not measured (live builds-1 read it seconds
+-- later); the same later-tick bound as a kit's items. A grant that never lands fails setup.
+Setup.XP_WAIT_MS = 5000
+Setup.XP_EVERY_MS = 250
 
 local function osi(fn, ...) return V.osi(fn, ...) end
 local function now_ms() return Ext.Utils.MonotonicTime() end
@@ -473,8 +485,35 @@ STEPS[4] = function(job) -- full HP; the arena's seed and Karmic Dice
     return Setup.SETTLE_MS
 end
 
-STEPS[5] = function(job) -- hostile teams, one combat
+-- Each pair with a reference: its A twin read against it. -> every failed pair's diff as text (job.reference: the rows)
+function Setup.check_references(job)
+    local rows, bad = {}, {}
+    for i, p in ipairs(job.mirror.pairs) do
+        if p.reference ~= nil then
+            local u = job.teams.A[i]
+            local d = Ar.Symmetry.reference_diff(Ar.Symmetry.profile(u), p.reference)
+            rows[#rows + 1] = { pair = i, build = p.build, name = job.names[u], ok = d.ok, diffs = d.diffs,
+                accepted = d.accepted, unread = d.unread }
+            if not d.ok then
+                bad[#bad + 1] = ("pair %d (%s, build %s): %s"):format(i, tostring(job.names[u]), tostring(p.build),
+                    Ar.Symmetry.diff_text(d))
+            end
+        end
+    end
+    job.reference = rows
+    return bad
+end
+
+STEPS[5] = function(job) -- the builds' references; hostile teams, one combat
     local t = job.teams
+    if job.mirror then
+        local bad = Setup.check_references(job)
+        if #bad > 0 then
+            RPC.finish_job(job, "failed", { teams = t, reference = job.reference, calls = job.calls },
+                "the twins are not their builds: " .. table.concat(bad, "; "))
+            return
+        end
+    end
     local held = {}
     for _, u in ipairs(all_of(t)) do held[osi(Osi.GetFaction, u) or ""] = true end
     job.factions = {}
@@ -568,8 +607,42 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
     RPC.finish_job(job, "done", { teams = t, factions = job.factions, combat = c, members = after, sitters = sitters,
         enemy = { across = m.across .. "/" .. m.across_of, within = m.within .. "/" .. m.within_of,
             reads = job.enemy_reads }, seed = job.seed, karmic = job.karmic, spawn_order = job.spawn_order,
-        positions = positions, surfaces = job.surfaces, field = job.field,
-        calls = job.calls, status = status })
+        positions = positions, surfaces = job.surfaces, field = job.field, xp = job.xp, reference = job.reference,
+        not_applied = job.not_applied, calls = job.calls, status = status })
+end
+
+-- The host's total XP; error when it doesn't read (a tier's level can't be checked without it).
+function Setup.host_xp(host)
+    local ok, v = pcall(function() return V.entity(host).Experience.TotalExperience end)
+    if not ok or type(v) ~= "number" then error("the host's XP doesn't read: " .. tostring(v), 0) end
+    return v
+end
+
+-- A mirror arena with party_xp: the host's XP inside the tier's window before any twin exists.
+STEPS[-4] = function(job)
+    local px, have = job.mirror.party_xp, Setup.host_xp(job.host)
+    if px.below and have >= px.below then
+        error(("the host has %d XP, the arena's tier stops below %d (it starts at %d): no call takes XP away")
+            :format(have, px.below, px.total), 0)
+    end
+    if not job.xp then
+        job.xp = { before = have, total = px.total, below = px.below, added = 0 }
+        if have < px.total then
+            job.xp.added = px.total - have
+            if not call(job, "AddExplorationExperience", { job.host, job.xp.added }) then
+                error("AddExplorationExperience: " .. tostring(job.calls[#job.calls].error), 0)
+            end
+            job.xp_by = now_ms() + Setup.XP_WAIT_MS
+        end
+    end
+    job.xp.after = have
+    if have >= px.total then return 0 end
+    if now_ms() >= job.xp_by then
+        error(("the host reads %d XP %d ms after AddExplorationExperience of %d (it had %d, the tier needs %d)")
+            :format(have, Setup.XP_WAIT_MS, job.xp.added, job.xp.before, px.total), 0)
+    end
+    job.step = job.step - 1 -- read again
+    return Setup.XP_EVERY_MS
 end
 
 -- A mirror arena: the field's items made inert before the surfaces are cleared (a burning barrel makes a surface).
@@ -659,6 +732,11 @@ STEPS[0] = function(job) -- the kits done and the names landed, then the twins a
             return Ar.Mirror.KIT_EVERY_MS
         end
         if k.status ~= "done" then error(("pair %d's kit %s: %s"):format(i, k.status, tostring(k.error)), 0) end
+        local na = type(k.result) == "table" and k.result.not_applied or nil
+        if na and #na > 0 then
+            job.not_applied = job.not_applied or {}
+            job.not_applied[#job.not_applied + 1] = { pair = i, build = job.mirror.pairs[i].build, parts = na }
+        end
     end
     local off, pairs = {}, {}
     for i, p in ipairs(job.mirror.pairs) do
@@ -693,6 +771,16 @@ local function tick(job)
     if job.status == "running" and wait then job.next_at = now_ms() + wait end
 end
 
+-- mirror.party_xp, when given: {total = the tier's XP total, below = the next level's total (none at the top)}.
+function Setup.check_party_xp(px)
+    if px == nil then return end
+    local function count(v) return type(v) == "number" and v % 1 == 0 and v >= 0 end
+    if type(px) ~= "table" or not count(px.total)
+        or (px.below ~= nil and not (count(px.below) and px.below > px.total)) then
+        error("arena.mirror.party_xp must be {total, below?}: XP totals, below above total", 0)
+    end
+end
+
 -- A mirror arena's section, checked at once (the kits' own lists are checked by arena.mirror_kit): 1..TEAM_MAX
 -- pairs, each a root template, its race, a stats entry, two names (unique across the arena) and a kit whose race part
 -- is for the pair's race (each pair may have its own race: a build's); arena.teams, if given, names pair i's twins at
@@ -702,6 +790,7 @@ function Setup.check_mirror(mi, teams)
     if type(ps) ~= "table" or #ps < 1 or #ps > Setup.TEAM_MAX then
         error("arena.mirror.pairs must list 1 to " .. Setup.TEAM_MAX .. " pairs", 0)
     end
+    Setup.check_party_xp(mi.party_xp)
     local seen = {}
     for i, p in ipairs(ps) do
         if type(p) ~= "table" or type(p.template) ~= "string" or type(p.race) ~= "string" or type(p.stats) ~= "string"
@@ -709,6 +798,9 @@ function Setup.check_mirror(mi, teams)
             error("arena.mirror.pairs[" .. i .. "] needs template, race, stats, names and kit", 0)
         end
         Ar.Mirror.check_kit_race(p.kit, p.race, "pair " .. i .. ": the kit")
+        if p.reference ~= nil and (type(p.reference) ~= "table" or type(p.reference.profile) ~= "table") then
+            error("arena.mirror.pairs[" .. i .. "].reference needs its profile", 0)
+        end
         for _, s in ipairs(Ar.SIDES) do
             local n = p.names[s]
             if type(n) ~= "string" or n == "" then error(("pair %d: names.%s must be a name"):format(i, s), 0) end
@@ -772,7 +864,8 @@ function Setup.start(args)
     if not host then error("no host character", 0) end
     local job = RPC.start_job("arena.setup", { timeout_ms = Setup.TIMEOUT_MS, on_tick = tick, arena = arena,
         teams = teams, names = names, spawns = spawns, host = host:lower(), avatars = avatarList,
-        round_cap = tonumber(args.round_cap or arena.round_cap), level = level, step = mirror and -3 or 1, next_at = 0,
+        round_cap = tonumber(args.round_cap or arena.round_cap), level = level,
+        step = mirror and (mirror.party_xp and -4 or -3) or 1, next_at = 0,
         before = {}, calls = {}, mirror = mirror, spawn_order = spawnOrder })
     job.partial = { teams = teams, calls = job.calls, spawn_order = spawnOrder }
     return { job = job.id, status = job.status }

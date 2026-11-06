@@ -861,9 +861,10 @@ RPC.register("ui.cc_apply", function(args)
         { "deity_tab", tabStage(ctx, tab.deityTab) },
         { "deity", selectStage(get, ctx, "deity", "SelectedDeity", "SelectableDeities", plan.deity, true) },
         { "deity?", verifyStage(get, ctx) },
-        { "background_tab", tabStage(ctx, tab.backgroundTab) },
-        { "background", selectStage(get, ctx, "background", "SelectedBackground", "SelectableBackgrounds", plan.background) },
-        { "background?", verifyStage(get, ctx) },
+        unless("background", { "background_tab", tabStage(ctx, tab.backgroundTab) }),
+        unless("background", { "background", selectStage(get, ctx, "background", "SelectedBackground",
+            "SelectableBackgrounds", plan.background) }),
+        unless("background", { "background?", verifyStage(get, ctx) }),
         { "abilities", abilitiesStage(ctx, plan), 30000 },
         { "ability_bonus", abilityBonusStage(ctx, plan) },
         { "abilities?", function()

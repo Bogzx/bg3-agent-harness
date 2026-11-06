@@ -244,3 +244,61 @@ test("arena.symmetry S3-8: as the fight starts the current and temp HP are compa
     Ext.Enums = savedEnums
     assert(table.concat(r.problems, "; "):find("temp_hp doesn't read", 1, true), table.concat(r.problems, "; "))
 end)
+
+-- A twin's profile against its build's reference (website ops/logs/arena-4v4-builds.md G7).
+local function refProfile(over)
+    local p = {}
+    for _, f in ipairs(Ar.Symmetry.FIELDS) do p[f] = {} end
+    p.level, p.race, p.max_hp = 5, "elf", 38
+    p.passives = { "Darkvision", "DiscipleOfLife" }
+    p.inventory = { "potion", "potion" }
+    p.skills = { Medicine = 7 }
+    for k, v in pairs(over or {}) do p[k] = v end
+    return p
+end
+
+test("reference: same profile ok; name, template, HP and uuids aren't compared", function()
+    local d = Ar.Symmetry.reference_diff(refProfile({ name = "Red Ash", template = "a", hp = 1 }),
+        { profile = refProfile({ name = "Lia", template = "b", hp = 38 }) })
+    eq(d.ok, true, Ar.Symmetry.diff_text(d))
+    eq(#d.diffs + #d.accepted + #d.unread, 0, "nothing listed")
+end)
+
+test("reference: a diff names the entries only one side has, in lists, repeats, maps and scalars", function()
+    local d = Ar.Symmetry.reference_diff(
+        refProfile({ passives = { "Darkvision", "Extra" }, inventory = { "potion" }, skills = { Medicine = 6 },
+            max_hp = 30 }),
+        { profile = refProfile() })
+    eq(d.ok, false, "not ok")
+    local by = {}
+    for _, x in ipairs(d.diffs) do by[x.field] = x end
+    eq(enc(by.passives), enc({ field = "passives", only_reference = { "DiscipleOfLife" }, only_twin = { "Extra" } }),
+        "list")
+    eq(enc(by.inventory), enc({ field = "inventory", only_reference = { "potion" }, only_twin = {} }), "a repeat")
+    eq(enc(by.skills.only_twin), enc({ "Medicine=6" }), "map")
+    eq(enc(by.max_hp.only_reference), enc({ "38" }), "scalar")
+    assert(Ar.Symmetry.diff_text(d):find("passives: only the twin", 1, true), Ar.Symmetry.diff_text(d))
+end)
+
+test("reference: an accepted entry passes and is listed; any other entry in that field still fails", function()
+    local accepted = { { field = "classes", only_twin = { "c/null/5" }, only_reference = { "c/life/5" }, why = "P2" } }
+    local d = Ar.Symmetry.reference_diff(refProfile({ classes = { "c/null/5" } }),
+        { profile = refProfile({ classes = { "c/life/5" } }), accepted = accepted })
+    eq(d.ok, true, Ar.Symmetry.diff_text(d))
+    eq(enc(d.accepted[1].only_twin), enc({ "c/null/5" }), "listed")
+    d = Ar.Symmetry.reference_diff(refProfile({ classes = { "c/null/4" } }),
+        { profile = refProfile({ classes = { "c/life/5" } }), accepted = accepted })
+    eq(d.ok, false, "a level that differs too isn't what was accepted")
+    eq(enc(d.diffs[1].only_twin), enc({ "c/null/4" }), "named")
+end)
+
+test("reference: a field that doesn't read on either side isn't ok; no profile is refused", function()
+    local t = refProfile()
+    t.spells = nil
+    local r = refProfile()
+    r.boosts = nil
+    local d = Ar.Symmetry.reference_diff(t, { profile = r })
+    eq(d.ok, false, "not ok")
+    eq(enc(d.unread), enc({ "spells", "boosts" }), "both named, in FIELDS order")
+    eq(pcall(Ar.Symmetry.reference_diff, t, {}), false, "no profile")
+end)

@@ -353,6 +353,41 @@
                 "evidence": {
                   "type": "string",
                   "minLength": 1
+                },
+                "accepted": {
+                  "type": "array",
+                  "description": "entries of a Symmetry field the twins may differ by from the reference, by name; arena.setup fails on any other entry",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "field",
+                      "only_twin",
+                      "only_reference",
+                      "why"
+                    ],
+                    "properties": {
+                      "field": {
+                        "type": "string"
+                      },
+                      "only_twin": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "only_reference": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "why": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
                 }
               }
             }

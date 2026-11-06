@@ -1,9 +1,9 @@
 -- Offline test: the CC driver (Client/Progression.lua + ProgressionCC.lua) on the respec page. Osi.StartRespec on a
 -- real party member opens "CharacterRespec" (route H: a respecced hireling is an arena build's reference); the driver
--- finds the page through P.CC_PAGES, whose CharacterRespec names (tabs, finish command, complete flag) are TODO until
--- the route-H probe's page dump reads them. Until then every op that needs one fails at the call, nothing changed on
--- the page; filled in, ui.cc_apply drives the respec page with its own names and leaves the race alone (respec keeps
--- it). A fake page and clock, no game. Run: tools/dev/test_cc_respec.sh
+-- finds the page through P.CC_PAGES, by the CharacterRespec names (tabs, finish command, complete flag) read from the
+-- game's xaml and the route-H page dump. A name unknown fails its op at the call, nothing changed on the page; known,
+-- ui.cc_apply drives the respec page with its own names and leaves the race and background alone (respec keeps them).
+-- A fake page and clock, no game. Run: tools/dev/test_cc_respec.sh
 local L = arg[1] or "mod/Mods/BG3AI/ScriptExtender/Lua"
 local fails = 0
 local function check(cond, what)
@@ -115,18 +115,18 @@ Ext = { Require = function(p) return dofile(L .. "/" .. p) end } -- Progression.
 dofile(L .. "/Client/Progression.lua")
 local P = BG3AI.Progression
 local RESPEC = P.CC_PAGES[2]
-local TODO = { tabs = RESPEC.tabs, finish = RESPEC.finish, complete = RESPEC.complete }
+local REAL = { tabs = RESPEC.tabs, finish = RESPEC.finish, complete = RESPEC.complete }
 
 local CC_TABS = { originTab = "originTab", raceTab = "raceTab", subRaceTab = "subRaceTab", classTab = "classTab",
     subClassTab = "subClassTab", deityTab = "deityTab", backgroundTab = "backgroundTab", abilityTab = "abilityTab" }
--- What the probe's dump would give (made-up names: the test only needs them to differ from character creation's)
+-- Made-up names: the test only needs them to differ from character creation's
 local DUMP_TABS = { classTab = "respecClassTab", subClassTab = "respecSubClassTab", deityTab = "respecDeityTab",
-    backgroundTab = "respecBackgroundTab", abilityTab = "respecAbilityTab" }
+    abilityTab = "respecAbilityTab" }
 local function filled(on)
     if on then
         RESPEC.tabs, RESPEC.finish, RESPEC.complete = DUMP_TABS, "FinishRespecDump", "IsRespecCompleteDump"
     else
-        RESPEC.tabs, RESPEC.finish, RESPEC.complete = TODO.tabs, TODO.finish, TODO.complete
+        RESPEC.tabs, RESPEC.finish, RESPEC.complete = nil, nil, nil
     end
 end
 
@@ -142,23 +142,28 @@ local function run(op, args)
     return j or res
 end
 
-local PLAN = { class = "Fighter", background = "Soldier", abilities = "recommended" }
+local PLAN = { class = "Fighter", abilities = "recommended" }
 
--- 1. the TODO names: CharacterRespec has no names yet, so its CC ops fail at the call and touch nothing
-check(TODO.tabs == nil and TODO.finish == nil and TODO.complete == nil, "CharacterRespec's names start TODO (nil)")
+-- 1. the names as read live (Game.pak CharacterRespec.xaml, route-H window 3); an unknown name fails at the call
+check(REAL.finish == "FinishCreating" and REAL.complete == "IsCharacterCompleteExceptName"
+    and REAL.tabs.classTab == "classTab" and REAL.tabs.subClassTab == "subClassTab"
+    and REAL.tabs.deityTab == "deityTab" and REAL.tabs.abilityTab == "abilityTab" and REAL.tabs.backgroundTab == nil,
+    "CharacterRespec's names")
+check(RESPEC.keeps.background == true, "respec keeps the background: the page has no tab for it")
+filled(false)
 open("CharacterRespec", DUMP_TABS, "IsRespecCompleteDump")
 local j, err = run("ui.cc_apply", { plan = PLAN })
 check(j == nil and err:find("CharacterRespec: its classTab name is not known yet", 1, true) ~= nil,
-    "TODO tabs: cc_apply refused at the call (" .. tostring(err) .. ")")
+    "unknown tabs: cc_apply refused at the call (" .. tostring(err) .. ")")
 check(not err:find("TODO", 1, true), "the tab answer is a fact, no note of ours (" .. tostring(err) .. ")")
 check(#page.sets == 0 and #page.commands == 0 and #jobs == 0, "nothing set, no command, no job")
 RESPEC.tabs = DUMP_TABS
 j, err = run("ui.cc_apply", { plan = PLAN })
 check(j == nil and err:find("CharacterRespec: its complete name is not known yet", 1, true) ~= nil,
-    "TODO complete flag: refused (" .. tostring(err) .. ")")
+    "unknown complete flag: refused (" .. tostring(err) .. ")")
 j, err = run("ui.cc_finish", {})
 check(j == nil and err:find("CharacterRespec: its finish name is not known yet", 1, true) ~= nil,
-    "TODO finish command: cc_finish refused (" .. tostring(err) .. ")")
+    "unknown finish command: cc_finish refused (" .. tostring(err) .. ")")
 check(#page.sets == 0 and #page.commands == 0, "still nothing touched")
 check(not err:find("TODO", 1, true), "the answer is a fact, no note of ours (" .. tostring(err) .. ")")
 filled(false)
@@ -169,18 +174,19 @@ open("CharacterRespec", DUMP_TABS, "IsRespecCompleteDump")
 j = run("ui.cc_apply", { plan = PLAN })
 check(j and j.status == "done", "respec: cc_apply done (" .. tostring(j and j.error) .. ")")
 check(j.result.page == "CharacterRespec", "respec: result names the page")
-check(j.result.set.class == "Fighter" and j.result.set.background == "Soldier", "respec: class and background picked")
+check(j.result.set.class == "Fighter", "respec: class picked")
 local cmds = table.concat(page.commands, ",")
 check(cmds:find("FinishRespecDump", 1, true) ~= nil and cmds:find("FinishCreating", 1, true) == nil,
     "respec: its own finish command (" .. cmds .. ")")
 local sets = table.concat(page.sets, ",")
-check(sets:find("respecClassTab", 1, true) and sets:find("respecBackgroundTab", 1, true)
-    and not sets:find("raceTab", 1, true) and not sets:find("SelectedRace", 1, true)
-    and not sets:find("SelectedOrigin", 1, true), "respec: its own tabs, no origin/race step (" .. sets .. ")")
+check(sets:find("respecClassTab", 1, true) and not sets:find("raceTab", 1, true)
+    and not sets:find("SelectedRace", 1, true) and not sets:find("SelectedOrigin", 1, true)
+    and not sets:find("SelectedBackground", 1, true),
+    "respec: its own tabs, no origin/race/background step (" .. sets .. ")")
 check(NAMES[dc:GetProperty("SelectedRace")] == "Drow", "respec: the race kept")
 
 -- 3. a plan that sets what respec keeps, or names the character, is refused at the call
-for _, bad in ipairs({ { race = "Human" }, { subrace = "x" }, { origin = "Custom" } }) do
+for _, bad in ipairs({ { race = "Human" }, { subrace = "x" }, { origin = "Custom" }, { background = "Sage" } }) do
     local key = next(bad)
     open("CharacterRespec", DUMP_TABS, "IsRespecCompleteDump")
     j, err = run("ui.cc_apply", { plan = bad })
@@ -195,6 +201,9 @@ check(j and j.finished == true and j.page == "CharacterRespec" and page.commands
     "respec: cc_finish runs the page's finish command")
 local o = run("ui.cc_options", {})
 check(o and o.page == "CharacterRespec" and o.complete == true, "respec: cc_options names the page, reads its flag")
+local okp, pe = pcall(handlers["ui.level_up_spell_probe"], { name = "Bless" })
+check(not okp and tostring(pe):find("spell Bless: not offered", 1, true) ~= nil,
+    "respec: the spell probe reads its page (" .. tostring(pe) .. ")")
 filled(false)
 
 -- 4. character creation is unchanged: its own tabs, FinishCreating, IsCharacterComplete

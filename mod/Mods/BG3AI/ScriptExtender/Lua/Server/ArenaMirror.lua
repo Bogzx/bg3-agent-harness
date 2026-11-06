@@ -24,14 +24,19 @@
 --     player = {passives}: what every player character has and a copy lacks (DeathSavingThrows, whose own boost is
 --       DownedStatus(DOWNED): Lae'zel's, live check 12 step 10)
 --     ability_bonus = {+2 ability, +1 ability} or nil (SelectAbilityBonus)
+--     grants = {boosts, passives, passives_removed, spells}: what a subclass's rows up to the level and the
+--       improvements (an ASI's Ability boosts, a feat's own parts) give; the game applies only the class rows' to a copy
 --     choices = [{kind = skills|expertise|passives|spells, list, n, exact, ids}]: one per Select* selector;
 --       every id must be in the game's list (Ext.StaticData SkillList / PassiveList / SpellList), #ids == n when
 --       exact, else 1..n (a wizard's prepared spells out of its spellbook selector)
 --     items = [{item, root, count, equip}]: TemplateAddTo(root, twin, count); the item shows in an inventory a tick
 --       later (live check 12 step 7), then Equip(twin, item, 1, 0, 1) when equip (Equip takes 5 arguments)
+--     subclass (uuid), prepared (spell ids): no game call applies these to a copy yet (website ops/logs/
+--       arena-4v4-builds.md P2, P3). The job's result names them as not_applied; a build's reference compare then shows
+--       what a twin lacks. A kit key nobody reads is refused, so a part can't be dropped without a word.
 --   Refused at the call, nothing applied, when a twin is missing or a choice fails its list; the job fails, nothing
 --   applied, when a ready twin is not of `race` or already holds items, or a twin isn't ready in READY_WAIT_MS.
---   -> job result {twins, calls}
+--   -> job result {twins, calls, not_applied = [kit keys]}
 
 BG3AI = BG3AI or {}
 local RPC = BG3AI.RPC
@@ -58,6 +63,10 @@ M.NULL = "00000000-0000-0000-0000-000000000000"
 -- PassiveList.Passives Array<FixedString>, SpellList.Spells HashSet<FixedString>: set = asked per id, never walked)
 M.LISTS = { skills = { "SkillList", "Skills" }, expertise = { "SkillList", "Skills" },
     passives = { "PassiveList", "Passives" }, spells = { "SpellList", "Spells", set = true } }
+
+M.KIT_KEYS = { race = true, player = true, ability_bonus = true, grants = true, choices = true, items = true,
+    subclass = true, prepared = true }
+M.NOT_APPLIED = { "subclass", "prepared" } -- kit keys with no game call yet (P2, P3)
 
 local function osi(fn, ...) return V.osi(fn, ...) end
 local function now_ms() return Ext.Utils.MonotonicTime() end
@@ -203,6 +212,11 @@ local function applyChoices(calls, u, kit)
     for _, p in ipairs((kit.player or {}).passives or {}) do call(calls, "AddPassive", { u, p }) end
     local ab = kit.ability_bonus
     if ab then call(calls, "AddBoosts", { u, ("Ability(%s,2);Ability(%s,1)"):format(ab[1], ab[2]), M.SOURCE, u }) end
+    local g = kit.grants or {}
+    if g.boosts and g.boosts ~= "" then call(calls, "AddBoosts", { u, g.boosts, M.SOURCE, u }) end
+    for _, p in ipairs(g.passives or {}) do call(calls, "AddPassive", { u, p }) end
+    for _, p in ipairs(g.passives_removed or {}) do call(calls, "RemovePassive", { u, p }) end
+    for _, id in ipairs(g.spells or {}) do call(calls, "AddSpell", { u, id, 0, 1 }) end
     for _, c in ipairs(kit.choices or {}) do
         if c.kind == "skills" or c.kind == "expertise" then
             local fmt = c.kind == "skills" and "ProficiencyBonus(Skill,%s)" or "ExpertiseBonus(%s)"
@@ -261,7 +275,7 @@ local function tick(job)
     if not job.ready then return start(job) end
     local it = job.kit.items[job.item]
     if not it then
-        RPC.finish_job(job, "done", { twins = job.twins, calls = job.calls })
+        RPC.finish_job(job, "done", { twins = job.twins, calls = job.calls, not_applied = job.not_applied })
         return
     end
     if not job.added then
@@ -293,9 +307,24 @@ function M.check_kit_race(kit, race, what)
     end
 end
 
+-- The kit's grants, checked at the call (nothing applied on a wrong shape).
+local function checkGrants(g)
+    if g == nil then return end
+    if type(g) ~= "table" or (g.boosts ~= nil and type(g.boosts) ~= "string") then
+        error("the kit's grants must be {boosts = text, passives, passives_removed, spells}", 0)
+    end
+    for _, k in ipairs({ "passives", "passives_removed", "spells" }) do
+        if g[k] ~= nil and type(g[k]) ~= "table" then error("the kit's grants." .. k .. " must list ids", 0) end
+    end
+end
+
 function M.kit(args)
     local twins, kit = two(args.twins, "twins"), args.kit
     if type(kit) ~= "table" then error("arena.mirror_kit needs the kit", 0) end
+    for k in pairs(kit) do
+        if not M.KIT_KEYS[k] then error("the kit has a part nothing applies: " .. tostring(k), 0) end
+    end
+    checkGrants(kit.grants)
     for i, u in ipairs(twins) do
         u = V.uuid(u)
         if not (u and V.entity(u)) then error("no twin " .. tostring(args.twins[i]), 0) end
@@ -310,11 +339,14 @@ function M.kit(args)
             error("item " .. i .. " needs root and count", 0)
         end
     end
-    local calls = {}
+    local calls, notApplied = {}, {}
+    for _, k in ipairs(M.NOT_APPLIED) do
+        if kit[k] ~= nil then notApplied[#notApplied + 1] = k end
+    end
     kit.items = kit.items or {}
     local job = RPC.start_job("arena.mirror_kit", { timeout_ms = M.TIMEOUT_MS, on_tick = tick, twins = twins,
         race = args.race, kit = kit, calls = calls, item = 1, added = false, ready = false,
-        readyBy = now_ms() + M.READY_WAIT_MS })
+        readyBy = now_ms() + M.READY_WAIT_MS, not_applied = notApplied })
     job.partial = { twins = twins, calls = calls }
     return { job = job.id, status = job.status }
 end

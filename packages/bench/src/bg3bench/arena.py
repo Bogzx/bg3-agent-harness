@@ -7,7 +7,7 @@ uuids: arena.setup fails when a name and its uuid disagree), the character level
 default 2), the dice seed, Karmic Dice off (`karmic: false`), the round cap (default 20), the wall-clock cap in minutes (default 30), the
 model-time cap per turn in seconds (`turn_cap_s`), the condition and the name of the bridge's tools-off list
 (TOOLS_OFF_LISTS). The spawns must stand both teams on the same terms (check_geometry: the mod's arena.setup
-refuses them otherwise), unless the arena is a draft. A mirror arena adds `mirror {pairs: [{class, build?, template, race, stats, names {A, B}, kit}]}` (1 to
+refuses them otherwise), unless the arena is a draft. A mirror arena adds `mirror {party_xp?, pairs: [{class, build?, reference?, template, race, stats, names {A, B}, kit}]}` (1 to
 TEAM_MAX pairs, tools/dev/make_arena_save.py mirror writes it): arena.setup makes each pair's twins per match, so its
 team entries are names only, pair i's names at index i of each team (the uuids come from the setup); each pair may
 have its own template and race (a build's: A1, orchestrator D411), and its kit's race part must be for that race, as
@@ -121,7 +121,9 @@ KEYS = {
 # each round. Read by the mod (Server/Arena.lua) and recorded in arena_start / arena_turn.
 TURN_ORDERS, TURN_ORDER = ("alternate", "snake"), "alternate"
 PAIR_KEYS = {"class", "template", "race", "stats", "names", "kit"}  # a mirror pair (class: informational)
-PAIR_OPTIONAL = {"build"}  # the build file's build id (tools/dev/arena_builds.py): informational
+# build: the build file's build id (tools/dev/arena_builds.py), informational; reference: that build's reference, which
+# arena.setup compares each pair with
+PAIR_OPTIONAL = {"build", "reference"}
 SHA1_LEN = 40
 END_REASONS = ("wipe", "forfeit", "round_cap", "wall_cap", "abort", "fault", "client_fault", "over_budget")
 CAP_REASONS = ("round_cap", "wall_cap")  # draws
@@ -240,20 +242,41 @@ def _check_teams(teams: Any) -> list[str]:
     return errs
 
 
-def _check_mirror(mirror: Any, teams: Any) -> list[str]:
-    """A mirror arena's pairs, and its teams as names only, pair i's at index i."""
-    if not isinstance(mirror, dict) or set(mirror) != {"pairs"}:
-        return ["mirror must be {pairs}"]
+def _check_party_xp(px: Any) -> list[str]:
+    """mirror.party_xp: the host's XP window for the arena's tier, as arena.setup checks it."""
+    below = px.get("below") if isinstance(px, dict) else None
+    if (
+        not isinstance(px, dict)
+        or not {"total"} <= set(px) <= {"total", "below"}
+        or not _int(px["total"])
+        or px["total"] < 0
+        or ("below" in px and not (_int(below) and below > px["total"]))
+    ):
+        return ["mirror.party_xp must be {total, below?}: XP totals, below above total"]
+    return []
+
+
+def _check_mirror(mirror: Any, teams: Any, draft: bool = False) -> list[str]:
+    """A mirror arena's pairs, its party_xp, and its teams as names only, pair i's at index i. A playable arena's build
+    pairs have their reference (only a draft's may lack one: BUILDS.md F9)."""
+    if not isinstance(mirror, dict) or not {"pairs"} <= set(mirror) <= {"pairs", "party_xp"}:
+        return ["mirror must be {pairs, party_xp?}"]
     pairs = mirror["pairs"]
     if not isinstance(pairs, list) or not 1 <= len(pairs) <= TEAM_MAX:
         return [f"mirror.pairs must list 1 to {TEAM_MAX} pairs"]
-    errs: list[str] = []
+    errs: list[str] = _check_party_xp(mirror["party_xp"]) if "party_xp" in mirror else []
     for i, p in enumerate(pairs):
         if not isinstance(p, dict) or not PAIR_KEYS <= set(p) <= PAIR_KEYS | PAIR_OPTIONAL:
             errs.append(f"mirror.pairs[{i}] must be {{{', '.join(sorted(PAIR_KEYS))}, build?}}")
             continue
         if "build" in p and not _str(p["build"]):
             errs.append(f"mirror.pairs[{i}].build must name a build")
+        if "reference" in p and not (
+            isinstance(p["reference"], dict) and isinstance(p["reference"].get("profile"), dict)
+        ):
+            errs.append(f"mirror.pairs[{i}].reference must hold its profile")
+        if "build" in p and "reference" not in p and not draft:
+            errs.append(f"mirror.pairs[{i}]: build {p['build']} has no reference (only a draft may lack one)")
         errs += [f"mirror.pairs[{i}].{k} must be a non-empty string" for k in ("class", "template", "race", "stats")
                  if not _str(p[k])]  # fmt: skip
         names = p["names"]
@@ -302,7 +325,7 @@ def validate(a: Any, name: str) -> list[str]:
     errs += (loc_errs := _check_location(a.get("location"), "draft" in a))
     errs += (team_errs := _check_teams(a.get("teams")))
     if "mirror" in a:
-        errs += _check_mirror(a["mirror"], a.get("teams"))
+        errs += _check_mirror(a["mirror"], a.get("teams"), "draft" in a)
     if not (loc_errs or team_errs or "draft" in a):  # a draft's spots are placeholders
         pairs = a.get("mirror", {}).get("pairs") if isinstance(a.get("mirror"), dict) else None
         n = len(pairs) if isinstance(pairs, list) and pairs else len(a["teams"]["A"])
@@ -310,6 +333,8 @@ def validate(a: Any, name: str) -> list[str]:
     level = a.get("level", LEVEL)
     if not _int(level) or not 1 <= level <= LEVEL_MAX:
         errs.append(f"level must be an integer 1..{LEVEL_MAX}")
+    elif level > LEVEL and "mirror" in a and "party_xp" not in (a["mirror"] if isinstance(a["mirror"], dict) else {}):
+        errs.append(f"a mirror arena above level {LEVEL} needs mirror.party_xp: a copy takes the party's level")
     seed = a.get("seed")
     if not _int(seed) or not 0 <= seed <= scenario.SEED_MAX:
         errs.append(f"seed must be an integer 0..{scenario.SEED_MAX}")

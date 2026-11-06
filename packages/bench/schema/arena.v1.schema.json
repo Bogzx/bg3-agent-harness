@@ -117,6 +117,25 @@
         "kit": {
           "type": "object",
           "description": "the kit arena.mirror_kit gives both twins"
+        },
+        "reference": {
+          "type": "object",
+          "required": [
+            "profile"
+          ],
+          "additionalProperties": false,
+          "description": "the build's reference: a respecced hireling's arena.profile and the differences accepted by name; arena.setup fails on any other difference",
+          "properties": {
+            "profile": {
+              "type": "object"
+            },
+            "accepted": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          }
         }
       }
     }
@@ -299,6 +318,24 @@
           "maxItems": 4,
           "items": {
             "$ref": "#/$defs/pair"
+          }
+        },
+        "party_xp": {
+          "type": "object",
+          "required": [
+            "total"
+          ],
+          "additionalProperties": false,
+          "description": "arena.setup's XP step: the host's total XP is brought to total before any twin spawns; at or above below (the next level's total) setup fails",
+          "properties": {
+            "total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "below": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         }
       }

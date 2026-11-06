@@ -5,7 +5,12 @@ grants nor the kit's boosts, live check 12 step 13; orchestrator D308), and the 
     uv run --project bridge python tools/dev/make_arena_save.py validate <spec.json | builds.json> [--rated]
     uv run --project bridge python tools/dev/make_arena_save.py mirror <spec.json>    # {level, teams, mirror}
     uv run --project bridge python tools/dev/make_arena_save.py builds-mirror <builds.json> Ash:Birch ...
+    uv run --project bridge python tools/dev/make_arena_save.py builds-arena <builds.json> <base.json> <name> \\
+        --spawn-a x,y,z --spawn-b x,y,z --out <arena.json> Ash:Birch ...
     uv run --project bridge python tools/dev/make_arena_save.py symmetry <uuidA>:<uuidB> [...]
+    uv run --project bridge python tools/dev/make_arena_save.py reference-read <builds.json> <build id> <uuid> \\
+        --evidence <text>                                       # the running game's profile -> the build file
+    uv run --project bridge python tools/dev/make_arena_save.py reference-diff <builds.json> <build id> <twin uuid>
 
 The spec (schema arena-mirror.v1) names 4 pairs; each pair is two copies of one hireling root template, one per team,
 spawned with our level-1 stat entry for its class (Shared/ArenaStats.lua: BG3AI_Arena_<class>_L1; MakePlayer then gives
@@ -65,7 +70,7 @@ PAIR_DIST_TOL_M = 0.1
 # Cleric (subclass at 1) and Wizard (at 2) need the kit's subclass part (ops/logs/arena-4v4-builds.md G5).
 CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard")
 LEVELS = (1, 2)  # the arena's level: what the twins read after MakePlayer (setup fails on any other)
-TIERS = (2, 5, 12)  # a build file's level (arena-4v4-builds.md; levels above 2 need the tier-XP step, G6)
+TIERS = (2, 5, 12)  # a build file's level (arena-4v4-builds.md; arena.setup's tier-XP step: mirror.party_xp)
 PREPARERS = ("Cleric", "Wizard")  # prepare casting-modifier + level spells (min 1) from what they have
 ALL_ABILITIES = "b9149c8e-52c8-46e5-9cb6-fc39301c05fe"  # the AbilityList every ASI and the +2/+1 pick from
 ENCHANT = {5: 1, 12: 2}  # a tier's items: each weapon and armour as its +N entry (<item>_N) where the game has one
@@ -363,7 +368,7 @@ def kit_plan(
     c = static["classes"][cls]
     rows = selector_rows(cls, kit.get("subclass"), level, static, what)
     choices: list[dict[str, Any]] = []
-    grants: dict[str, list[str]] = {"boosts": [], "passives": [], "spells": []}
+    grants: dict[str, list[str]] = {"boosts": [], "passives": [], "passives_removed": [], "spells": []}
     pool: list[str] = []  # spells a preparer prepares from (no AlwaysPrepared flag)
     improvements = kit.get("improvements") or []
     if not isinstance(improvements, list):
@@ -381,6 +386,7 @@ def kit_plan(
         if r["source"] == "subclass":
             grants["boosts"] += [b for b in (row.get("Boosts") or "").split(";") if b]
             grants["passives"] += [x for x in (row.get("PassivesAdded") or "").split(";") if x]
+            grants["passives_removed"] += [x for x in (row.get("PassivesRemoved") or "").split(";") if x]
         for name, args in selectors(row["Selectors"]):
             prepared_flag = len(args) > 6 and args[6] == "AlwaysPrepared"
             if name == "AddSpells":
@@ -388,6 +394,8 @@ def kit_plan(
                     grants["spells"] += _spells_of(args[0], static)  # the class's own: the game's (stat entry)
                 elif not (len(args) > 4 and args[4] == "AlwaysPrepared"):
                     pool += _spells_of(args[0], static)
+                continue
+            if name == "ReplacePassives":  # the game offers a swap of an earlier pick: a build keeps its pick
                 continue
             if name == "SelectAbilityBonus":
                 bonus = True
@@ -491,6 +499,8 @@ def kit_plan(
             "passives": grants["passives"],
             "spells": grants["spells"],
         }
+        if grants["passives_removed"]:  # a Berserker's RageFrenzyUnlock replaces the class row's RageUnlock
+            out_kit["grants"]["passives_removed"] = grants["passives_removed"]
     if prepared is not None:
         out_kit["prepared"] = list(prepared)
     return {"race": race, "kit": out_kit}
@@ -656,6 +666,16 @@ def _builds() -> Any:
     return arena_builds
 
 
+def _spawn_arg(s: str) -> list[float]:
+    try:
+        v = [float(x) for x in s.split(",")]
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"want x,y,z, got {s!r}") from e
+    if len(v) != 3:
+        raise argparse.ArgumentTypeError(f"want x,y,z, got {s!r}")
+    return v
+
+
 def _schema_of(path: Path) -> Any:
     try:
         doc = json.loads(Path(path).read_text())
@@ -682,13 +702,41 @@ def main(argv: Sequence[str] | None = None) -> int:
     bm.add_argument("names", nargs="+", type=_pair_arg, help="each pair's twins' names, A:B, in the builds' order")
     m = sub.add_parser("mirror", help="print the arena file's level, teams and mirror section for a pairs spec")
     m.add_argument("spec", type=Path)
+    ba = sub.add_parser("builds-arena", help="write an arena file: a base arena's save and caps, a build file's pairs")
+    ba.add_argument("builds", type=Path)
+    ba.add_argument("base", type=Path, help="the arena file whose save, seed and caps it takes")
+    ba.add_argument("name", help="the new arena's name (its file's stem)")
+    ba.add_argument("names", nargs="+", type=_pair_arg, help="each pair's twins' names, A:B, in the builds' order")
+    ba.add_argument("--spawn-a", required=True, type=_spawn_arg, help="x,y,z")
+    ba.add_argument("--spawn-b", required=True, type=_spawn_arg, help="x,y,z")
+    ba.add_argument("--out", required=True, type=Path)
     y = sub.add_parser("symmetry", help="ask the running game whether each pair is a mirror")
     y.add_argument("pairs", nargs="+", type=_pair_arg)
+    rr = sub.add_parser("reference-read", help="read a hireling's profile from the running game into the build file")
+    rr.add_argument("builds", type=Path)
+    rr.add_argument("build")
+    rr.add_argument("uuid")
+    rr.add_argument("--evidence", required=True, help="where the read is logged (live.md section, files)")
+    rd = sub.add_parser(
+        "reference-diff", help="a twin in the running game against its build's reference; exit 1 on a diff"
+    )
+    rd.add_argument("builds", type=Path)
+    rd.add_argument("build")
+    rd.add_argument("uuid")
     args = ap.parse_args(argv)
     try:
         if args.cmd == "builds-mirror":
             arena_builds = _builds()
             print(json.dumps(arena_builds.mirror_section(arena_builds.load_builds(args.builds), args.names), indent=1))
+            return 0
+        if args.cmd == "builds-arena":
+            arena_builds = _builds()
+            base = json.loads(args.base.read_text())
+            a = arena_builds.arena_file(
+                arena_builds.load_builds(args.builds), base, args.name, args.names, args.spawn_a, args.spawn_b
+            )
+            args.out.write_text(json.dumps(a, indent=1) + "\n")
+            print(f"{args.out}: {args.name}, {len(a['mirror']['pairs'])} pairs, level {a['level']}")
             return 0
         if args.cmd == "validate" and _schema_of(args.spec) == "arena-builds.v1":
             arena_builds = _builds()
@@ -710,8 +758,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         from bg3ai.game import GameError
         from bg3ai.tools import core
 
+        def rpc(op: str, a: dict[str, Any]) -> Any:
+            return core.game.rpc(op, a)
+
         try:
-            r = check_symmetry(lambda op, a: core.game.rpc(op, a), args.pairs)
+            if args.cmd in ("reference-read", "reference-diff"):
+                arena_builds = _builds()
+                if args.cmd == "reference-read":
+                    print(arena_builds.reference_read(rpc, args.builds, args.build, args.uuid, args.evidence))
+                    return 0
+                d = arena_builds.reference_diff(rpc, arena_builds.load_builds(args.builds), args.build, args.uuid)
+                print(json.dumps(d, indent=1))
+                return 0 if d.get("ok") else 1
+            r = check_symmetry(rpc, args.pairs)
         except GameError as e:
             print(f"make_arena_save: {e}", file=sys.stderr)
             return 1

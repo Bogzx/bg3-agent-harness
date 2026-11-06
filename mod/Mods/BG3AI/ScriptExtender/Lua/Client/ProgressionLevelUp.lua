@@ -735,9 +735,12 @@ local function nearness(cp)
 end
 
 RPC.register("ui.level_up_spell_probe", function(args)
-    local dc = P.luDC()
+    local dc, w = P.luDC(), visibleWidget("CharacterLevelUp")
+    if not dc then -- character creation's and the respec page's selectors: spell picks are clicks there too
+        local pg, ccdc = P.ccPage()
+        if pg then dc, w = ccdc, visibleWidget(pg.widget) end
+    end
     if not dc then error("level up is not open") end
-    local w = visibleWidget("CharacterLevelUp")
     local s, item, why = P.findSpell(dc, args.name, args.cantrips)
     if why == "placed" then return { placed = true } end
     if not item then error("spell " .. tostring(args.name) .. ": " .. tostring(why)) end
