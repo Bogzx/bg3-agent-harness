@@ -256,11 +256,15 @@ local function applyChoices(calls, u, kit)
     end
 end
 
--- A book row's ability (spell_abilities first by id, then by originator), or nil when the kit says nothing of it.
+-- A book row's ability (spell_abilities by id, by originator, then by the container of either), or nil when the kit
+-- says nothing of it. A variant's originator is itself, not its container (Guard.unprepared_id), and the kit names the
+-- container: Bestow Curse's 9 variants, Ensnaring Strike's 2.
 local function rowAbility(e, s, abilities)
     local id = s.Id
     if tostring(id.SourceType) == "SpellSet" then return tostring(e.Stats.SpellCastingAbility) end
-    return abilities[tostring(id.Prototype)] or abilities[tostring(id.OriginatorPrototype)]
+    local proto, origin = tostring(id.Prototype), tostring(id.OriginatorPrototype)
+    local box = BG3AI.Guard.container_of(origin) or BG3AI.Guard.container_of(proto)
+    return abilities[proto] or abilities[origin] or (box and abilities[box])
 end
 
 -- The book's rows set to their abilities, read back and replicated. -> the kit's spells not in the book yet.
