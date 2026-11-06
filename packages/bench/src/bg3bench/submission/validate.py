@@ -33,7 +33,7 @@ import tarfile
 from bisect import bisect_left
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from itertools import pairwise
+from itertools import accumulate, pairwise
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +62,7 @@ VIDEO_WALL_SLACK_S = 10.0
 MAX_OFFSET_S = 300  # the machine's clock against the server's
 START_SLACK_S = 5  # run_start before issued_at
 MAX_STALE_S = 240  # how far the lines may fall behind the server's clock
+MAX_FACTS_LAG_S = 400  # how far the committed facts may: a snapshot every 300 s, 308.4 s at most on 55 real runs
 WALL_SLACK_S = 300  # wall_s past what the server watched
 MAX_GAP_S = 300  # between beats inside the run
 MAX_UNCOVERED = 0.5  # of wall_s
@@ -590,20 +591,34 @@ def t04_beats(b: Loaded, ticket: Json) -> Outcome:
 
 
 def _t04_streams(b: Loaded, ticket: Json) -> Outcome:
-    """At each regular beat before run_end, every stream's count reaches all its lines older than MAX_STALE_S on the
-    server's clock. A quiet stream has nothing to cover. The last old line counts, not a running maximum: moving one
-    early `t` forward must not excuse the lines after it, and record lines are in t order (facts.FactsWriter._write)."""
+    """What each regular beat before run_end had to commit. Every stream's count reaches all its lines older than
+    MAX_STALE_S on the server's clock: a quiet stream has nothing to cover. The last old line counts, not a running
+    maximum, so moving one early `t` forward doesn't excuse the lines after it (record lines are in t order).
+
+    Those times are the bundle's, so a client that holds a stream back can write them too. Facts are also held to what
+    the server has: the newest committed line, or issued_at before there is one (run_start isn't committed yet either),
+    is at most MAX_FACTS_LAG_S behind. Rolls and events can't be, being quiet by nature: RUN-TICKETS.md, honest limits."""
     bt = _beat_times(b, ticket)
     if bt.offset is None:
         return False, "no beat or end covers a line"
-    floors = {n: _floors(d) for n, d in b.raw.items() if ticket_hash.is_stream(n)}
+    times = {n: list(map(_line_t, ticket_hash.complete_lines(d))) for n, d in b.raw.items() if ticket_hash.is_stream(n)}
+    if untimed := sorted(n for n, ts in times.items() if None in ts):
+        return False, f"a line of {', '.join(untimed)} has no time"
+    floors = {n: _floors([t for t in ts if t is not None]) for n, ts in times.items()}
+    facts_t = _latest_t(b.raw[ticket_hash.FACTS])
     for beat in bt.regular:
-        if beat["l"].get(ticket_hash.FACTS, 0) >= bt.end_line:
+        count = beat["l"].get(ticket_hash.FACTS, 0)
+        if count >= bt.end_line:
             continue
         cutoff = beat["a"] - bt.offset - MAX_STALE_S
         short = sorted(n for n, f in floors.items() if beat["l"].get(n, 0) < bisect_left(f, cutoff))
         if short:
             return False, f"beat {beat['s']}: lines over {MAX_STALE_S} s old are left out of {', '.join(short)}"
+        if beat["a"] - max(facts_t[count] + bt.offset, ticket["issued_at"]) > MAX_FACTS_LAG_S:
+            return (
+                False,
+                f"beat {beat['s']}: the committed facts are over {MAX_FACTS_LAG_S} s behind the server's clock",
+            )
     return True, ""
 
 
@@ -613,16 +628,10 @@ def _line_t(line: bytes) -> float | None:
     return float(t) if t is not None and _num(t) else None
 
 
-def _floors(data: bytes) -> list[float]:
+def _floors(ts: list[float]) -> list[float]:
     """Per line, the smallest `t` from it to the end of the stream. It never falls, so bisect_left(floors, x) is how
-    many lines it takes to reach the last line older than x. A line with no time is never older than anything."""
-    out: list[float] = []
-    low = float("inf")
-    for line in reversed(ticket_hash.complete_lines(data)):
-        t = _line_t(line)
-        low = low if t is None else min(low, t)
-        out.append(low)
-    return out[::-1]
+    many lines it takes to reach the last line older than x."""
+    return list(accumulate(reversed(ts), min))[::-1]
 
 
 def _latest_t(data: bytes) -> list[float]:

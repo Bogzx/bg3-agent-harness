@@ -697,8 +697,9 @@ def test_the_site_reads_a_body_that_is_not_json_or_an_object(tmp_path):
 class Local:
     """A real HTTP server on this machine for the length of a `with`: `answer` is what it says to any request."""
 
-    def __init__(self, answer: int, location: str = ""):
+    def __init__(self, answer: int, location: str = "", trickle: bool = False):
         self.seen: list[dict[str, str]] = []
+        self.stop = stop = threading.Event()
         seen = self.seen
 
         class Handler(BaseHTTPRequestHandler):
@@ -707,8 +708,11 @@ class Local:
                 self.send_response(answer)
                 if location:
                     self.send_header("Location", location)
-                self.send_header("Content-Length", "0")
+                self.send_header("Content-Length", "1000000" if trickle else "0")
                 self.end_headers()
+                while trickle and not stop.wait(0.01):  # a byte at a time: no socket read ever times out
+                    self.wfile.write(b"x")
+                    self.wfile.flush()
 
             do_GET = do_POST = respond
 
@@ -723,6 +727,7 @@ class Local:
         return self
 
     def __exit__(self, *exc):
+        self.stop.set()
         self.server.shutdown()
         self.server.server_close()
 
@@ -737,6 +742,22 @@ def test_the_site_follows_no_redirect_so_the_token_and_the_access_secret_stay_th
         assert client.beat(TOKEN, TICKET_ID, {"seq": 0}) == status
         assert tickets.Site(site.url).issue(TOKEN, {})[0] == status
     assert len(site.seen) == 3 and other.seen == []
+
+
+def test_a_site_that_never_stops_sending_costs_the_end_one_timeout_and_keeps_it_undelivered(tmp_path, monkeypatch):
+    """TIMEOUT_S bounds each socket read, not the request: without the deadline this holds the matrix for good."""
+    monkeypatch.setattr(tickets, "TIMEOUT_S", 0.3)
+    ticket = {"id": TICKET_ID, "nonce": NONCE}
+    results: list[bool] = []
+    with Local(200, trickle=True) as site:
+        doc = {"seq": 0, "lines": {}, "root": "0" * 64, "outcome": "valid", "reason": None}
+        args = (tickets.Site(site.url), TOKEN, tmp_path, ticket, doc, T0)
+        caller = threading.Thread(target=lambda: results.append(tickets._send_end(*args)), daemon=True)
+        caller.start()
+        caller.join(30)
+        assert results == [False]
+        assert all(x.daemon for x in threading.enumerate() if x.name == "ticket-request")
+    assert json.loads((tmp_path / tickets.TICKET_FILE).read_text())["end"]["delivered"] is False
 
 
 # ----------------------------------------------------------------------------------------------------- matrix_cli

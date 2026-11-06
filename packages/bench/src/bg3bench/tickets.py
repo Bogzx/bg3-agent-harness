@@ -131,11 +131,19 @@ def outcome_of(result: matrix.RunResult) -> str:
 
 @dataclass(frozen=True)
 class Site:
-    """The site's ticket routes (standard library). Each call is one try; a site that doesn't answer raises."""
+    """The site's ticket routes (standard library). Each call is one try, over in TIMEOUT_S; a site that doesn't answer
+    raises."""
 
     base: str
     urlopen: Open = open_url
     headers: Mapping[str, str] = field(default_factory=dict[str, str])
+
+    def _send(self, req: urlrequest.Request) -> tuple[int, bytes]:
+        try:
+            with self.urlopen(req, timeout=TIMEOUT_S) as r:
+                return r.status, r.read()
+        except urlerror.HTTPError as e:
+            return e.code, e.read()
 
     def _post(self, token: str, path: str, doc: Mapping[str, Any]) -> tuple[int, Json]:
         req = urlrequest.Request(
@@ -149,11 +157,24 @@ class Site:
                 "Accept": "application/json",
             },
         )
-        try:
-            with self.urlopen(req, timeout=TIMEOUT_S) as r:
-                status, raw = r.status, r.read()
-        except urlerror.HTTPError as e:
-            status, raw = e.code, e.read()
+        out: list[tuple[int, bytes] | Exception] = []
+
+        def send() -> None:
+            try:
+                out.append(self._send(req))
+            except Exception as e:  # noqa: BLE001 - raised below, on the caller's thread
+                out.append(e)
+
+        # urlopen's timeout is per socket read: a site that keeps sending would hold the end, and the matrix, for as long
+        # as it likes
+        thread = threading.Thread(target=send, name="ticket-request", daemon=True)
+        thread.start()
+        thread.join(TIMEOUT_S)
+        if not out:
+            raise TimeoutError(f"no whole answer in {TIMEOUT_S} s")
+        if isinstance(out[0], Exception):
+            raise out[0]
+        status, raw = out[0]
         try:
             body: Any = json.loads(raw) if raw else {}
         except ValueError:

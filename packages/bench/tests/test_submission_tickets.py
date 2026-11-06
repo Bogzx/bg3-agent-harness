@@ -249,6 +249,25 @@ def test_empty_beats_and_one_end_after_the_edits_fail_t04(ticketed):
     assert ticket_hash.FACTS in detail_of(v, "T04") and "S001.events.jsonl" in detail_of(v, "T04")
 
 
+def test_facts_held_back_and_packed_before_run_end_fail_t04(ticketed):
+    """pQ's N1: each moved line looks too new to be owed, so only what the server holds can show it."""
+    bdir, release, ticket = ticketed
+    raw = streams_of(bdir)
+    beats = []
+    for b in (x for x in ticket["beats"] if not x.get("e")):
+        lines = {**b["l"], ticket_hash.FACTS: min(b["l"][ticket_hash.FACTS], 2)}
+        beats.append({**b, "l": lines, "r": ticket_hash.root_at(NONCE, raw, lines)})
+    rows = jsonl(raw[ticket_hash.FACTS].decode())
+    last = next(r["t"] for r in rows if r.get("mark") == "run_end") - 1
+    moved = [json.dumps({**r, "t": max(r["t"], last)}, separators=(",", ":")).encode() for r in rows[2:]]
+    (bdir / ticket_hash.FACTS).write_bytes(b"\n".join([*raw[ticket_hash.FACTS].split(b"\n")[:2], *moved, b""]))
+    rehash(bdir)
+    sign(bdir)
+    v = job(bdir, release, end_after(bdir, {**ticket, "beats": beats, "status": "open"}))
+    assert ok_of(v, "T03") is True and ok_of(v, "T04") is False and not v.accepted
+    assert "committed facts" in detail_of(v, "T04")
+
+
 def test_a_line_removed_fails_t04(ticketed):
     bdir, release, ticket = ticketed
     lines = (bdir / "S001.events.jsonl").read_bytes().split(b"\n")

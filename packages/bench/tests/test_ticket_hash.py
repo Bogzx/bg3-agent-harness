@@ -303,7 +303,11 @@ def test_the_run_start_and_end_gaps_count():
 
 def with_rolls(run: validate.Loaded, xs: list[float]) -> validate.Loaded:
     """The run with a rolls.jsonl of a line at each T0 + x, and the bundle's ticket over its files."""
-    raw = {**run.raw, ticket_hash.ROLLS: "".join(json.dumps({"t": T0 + x}) + "\n" for x in xs).encode()}
+    return with_roll_rows(run, [{"t": T0 + x} for x in xs])
+
+
+def with_roll_rows(run: validate.Loaded, rows: list[dict]) -> validate.Loaded:
+    raw = {**run.raw, ticket_hash.ROLLS: "".join(json.dumps(r) + "\n" for r in rows).encode()}
     env = {"ticket": {"nonce": NONCE, "root": ticket_hash.root_at(NONCE, raw, ticket_hash.counts(raw))}}
     return dataclasses.replace(run, raw=raw, envelope=env)
 
@@ -372,3 +376,33 @@ def test_beats_and_an_end_that_cover_no_line_fail_t04():
     empty = named(run, 0, T0 + 60, only=())
     ok, why = validate.t04_beats(run, {**ticket_of([empty, {**empty, "s": 1, "e": 1}]), "nonce": NONCE})
     assert ok is False and "no beat or end covers a line" in why
+
+
+@pytest.mark.parametrize("row", [{"v": 1}, {"t": "5"}, {"t": None}, {"t": True}])
+def test_a_stream_line_with_no_number_t_fails_t04(row):
+    """Only a line with a time is held to the rule, and only the client chooses to give one."""
+    run = with_roll_rows(run_of(every_10s(600)), [{"t": T0 + 10}, row])
+    ok, why = validate.t04_beats(run, rooted(run, [named(run, 0, T0 + 60, only=FACTS_ONLY)]))
+    assert ok is False and "rolls.jsonl has no time" in why
+
+
+@pytest.mark.parametrize("off", [0, 50, 300])
+@pytest.mark.parametrize("delay,ok", [(420, True), (421, False)])
+def test_committed_facts_may_lag_400_s_on_the_servers_clock(off, delay, ok):
+    """Silent from T0 + 20 to T0 + 600: nothing is held back, so only the lag can fail it. 308.4 s is the most a real
+    run has shown (a snapshot every 300 s)."""
+    run = with_rolls(run_of([10.0, 20.0, 600.0, 1200.0]), [])
+    t = rooted(run, [named(run, 0, T0 + 20 + off, off), named(run, 1, T0 + delay + off, off)])
+    assert validate.t04_beats(run, t)[0] is ok
+
+
+def test_facts_moved_with_their_run_start_are_timed_from_the_ticket():
+    """run_start isn't committed either: with no facts line at the server, the clock runs from issued_at."""
+    run = run_of([590.0])
+    moved = run.raw[ticket_hash.FACTS].replace(str(T0).encode() + b"}", str(T0 + 585).encode() + b"}", 1)
+    run = with_rolls(dataclasses.replace(run, raw={ticket_hash.FACTS: moved}), [10, 100, 200, 300, 400])
+    only_rolls = (ticket_hash.ROLLS,)
+    beats = [named(run, i, T0 + x, only=only_rolls) for i, x in enumerate(range(60, 361, 60))]
+    assert validate.t04_beats(run, rooted(run, beats)) == (True, "")
+    ok, why = validate.t04_beats(run, rooted(run, [*beats, named(run, len(beats), T0 + 391, only=only_rolls)]))
+    assert ok is False and "committed facts" in why
