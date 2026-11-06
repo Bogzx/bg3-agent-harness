@@ -557,6 +557,18 @@ do
     _, found = BG3AI.Progression.findPick(obj("ls.DC", {}), first, false)
     BG3AI.UI.path = path0
     check(found == q.spellSelectors[1]._p.Additions[1], "the probe finds a pick by its made-up name")
+    -- taken off, the slot stays in Additions with Spell nil and the plan's next spell can land in it (live 22:40)
+    local slot = found
+    slot._p.Spell = nil
+    BG3AI.UI.path = function(_, k) if k == "ClassProgressionDetails.SpellSelectors" then return q.spellSelectors end end
+    _, found = BG3AI.Progression.findPick(obj("ls.DC", {}), first, false)
+    BG3AI.UI.path = path0
+    check(found == nil, "a pick that came off reads as off though its slot stays")
+    slot._p.Spell = obj("ls.VM", {})
+    q.spellSelectors[1]._p.Additions[2]._p.Spell = nil
+    for _, it in ipairs(q.spellSelectors[1]._p.Available) do it._p.Selected = it._p.Name == "Magic Missile" end
+    r = applySkills(q, { class = "Fighter", spells = { "Shield", "Magic Missile" } })
+    check(needsOf(r) == "+Shield", "the next pass leaves a refilled slot on and adds the rest (" .. needsOf(r) .. ")")
     q.spellSelectors = { held({ "Shield", "Sleep" }, { "Shield", "Sleep", "Magic Missile" }) }
     r = applySkills(q, { class = "Fighter", spells = { "Shield", "Sleep" } })
     check(needsOf(r) == "", "spells: unnamed picks that are all the plan's stay (" .. needsOf(r) .. ")")

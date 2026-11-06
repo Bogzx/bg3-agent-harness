@@ -561,13 +561,16 @@ function P.findSpell(dc, name, cantrips)
     return nil, nil, offered and "already known" or "not offered"
 end
 
--- The selector holding `name` as a pick: sel entry, its Additions item; nil when no selector does.
+-- The selector holding `name` as a pick: sel entry, its Additions item; nil when no selector does. A pick taken off
+-- leaves its slot in Additions with Spell nil (live L5 launch 2 again), so an empty slot holds nothing, and it loses
+-- its made-up name here, or the next spell put in that slot would read as the hireling's own pick.
 function P.findPick(dc, name, cantrips)
     for _, s in ipairs(spellSelectors(dc)) do
         if cantrips == nil or (UI.prop(s.sel, "IsCantrips") == true) == cantrips then
             P.nameSpells(s.sel)
             local item = pick(UI.prop(s.sel, "Additions"), name)
-            if item then return s, item end
+            if item and UI.prop(item, "Spell") ~= nil then return s, item end
+            if item then P.vmNames[tostring(item)] = nil end
         end
     end
     return nil
