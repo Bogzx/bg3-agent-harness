@@ -242,6 +242,24 @@ def test_the_same_pins_play_on_and_unread_pins_after_the_first_count_as_drift(tm
     assert stop.startswith("drift: ") and "pins: not read (arena.json)" in stop
 
 
+def test_a_queue_the_operator_closed_is_refused_with_nothing_charged_or_played(tmp_path, pilot):
+    budgets(tmp_path)
+    player = Player(tmp_path, "kill")
+    with pytest.raises(KeyboardInterrupt):
+        queue(pilot, tmp_path, player).run()  # the runner dies mid-match: a start with no end
+    log = tmp_path / "matrix" / pilot["name"] / "queue.jsonl"
+    rec = {"type": aq.OPERATOR_STOP, "job": M1, "attempt": 1, "t": 2.0, "by": "op", "why": "spend written by hand"}
+    with log.open("a") as f:
+        f.write(json.dumps(rec) + "\n")
+    before = spent(tmp_path)
+    q = queue(pilot, tmp_path, player)
+    with pytest.raises(ValueError, match="closed by the operator: spend written by hand"):
+        q.run()
+    assert spent(tmp_path) == before and len(player.calls) == 1
+    assert [r["type"] for r in lines(tmp_path)][-2:] == ["start", aq.OPERATOR_STOP]
+    assert q.state()[M1]["attempts"][-1]["result"] is None  # no end record was made up
+
+
 def test_a_model_file_in_a_sibling_checkout_is_the_ledger_the_match_reads_and_charges(tmp_path, pilot):
     tree = tmp_path / "tree"
     budgets(tree)
