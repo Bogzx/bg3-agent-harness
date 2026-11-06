@@ -332,7 +332,245 @@
     "OBJ_Potion_Healing",
     "OBJ_Potion_Healing"
    ],
-   "reference": null
+   "reference": {
+    "profile": {
+     "race": "0eb594cb-8820-4be6-a58d-8be7a1a98fba",
+     "level": 2,
+     "classes": [
+      "e8b1eab0-ef11-40a2-8a0b-cee8d062bf2a/00000000-0000-0000-0000-000000000000/2"
+     ],
+     "abilities": [
+      8,
+      17,
+      15,
+      12,
+      13,
+      10
+     ],
+     "max_hp": 17,
+     "ac": 14,
+     "equipment": {
+      "MeleeMainHand": "WPN_HUM_Shortsword_A_0_467ddb4f-6791-41fa-99f7-ee8620d63bbe",
+      "RangedMainHand": "WPN_HUM_Shortbow_A_0_c5403c1d-f372-43e1-927a-9189e9e3545d",
+      "Boots": "ARM_Boots_Leather_969bab00-b269-46a5-a7e9-dd4887814719",
+      "Breast": "ARM_Leather_Rogue_4c4396db-fa4a-4541-9b2a-23e43211dde7"
+     },
+     "inventory": [
+      "CONS_Potion_Healing_A_d47006e9-8a51-453d-b200-9e0d42e9bbab",
+      "TOOL_GEN_ThievesTools_A_Open_A_e32a200c-5b63-414d-ae57-00e7b38f125b"
+     ],
+     "spells": [
+      "Projectile_HamstringShot",
+      "Projectile_Jump",
+      "Projectile_MainHandAttack",
+      "Projectile_SneakAttack",
+      "Shout_Dash",
+      "Shout_Dash_CunningAction",
+      "Shout_Disengage",
+      "Shout_Disengage_CunningAction",
+      "Shout_Hide",
+      "Shout_Hide_BonusAction",
+      "Target_Dip",
+      "Target_Help",
+      "Target_MainHandAttack",
+      "Target_OpeningAttack",
+      "Target_PiercingThrust",
+      "Target_Shove",
+      "Target_SneakAttack",
+      "Throw_ImprovisedWeapon",
+      "Throw_Throw"
+     ],
+     "prepared": [
+      "Projectile_HamstringShot",
+      "Projectile_Jump",
+      "Projectile_MainHandAttack",
+      "Projectile_SneakAttack",
+      "Shout_Dash",
+      "Shout_Dash_CunningAction",
+      "Shout_Disengage",
+      "Shout_Disengage_CunningAction",
+      "Shout_Hide",
+      "Shout_Hide_BonusAction",
+      "Target_Dip",
+      "Target_Help",
+      "Target_MainHandAttack",
+      "Target_OpeningAttack",
+      "Target_PiercingThrust",
+      "Target_Shove",
+      "Target_SneakAttack",
+      "Throw_ImprovisedWeapon",
+      "Throw_Throw"
+     ],
+     "passives": [
+      "AttackOfOpportunity",
+      "Background_Urchin",
+      "CombatStartAttack",
+      "DarknessRules",
+      "DeathSavingThrows",
+      "HumanMilitia",
+      "HumanVersatility",
+      "NonLethal",
+      "Perform",
+      "ShortResting",
+      "SneakAttack_Unlock",
+      "WeaponThrow"
+     ],
+     "statuses": [
+      "INSURFACE"
+     ],
+     "resources": {
+      "ReactionActionPoint": {
+       "0": 1.0
+      },
+      "SneakAttack_Charge": {
+       "0": 1.0
+      },
+      "BonusActionPoint": {
+       "0": 1.0
+      },
+      "Movement": {
+       "0": 9.0
+      },
+      "ActionPoint": {
+       "0": 1.0
+      }
+     },
+     "proficiencies": [
+      "Glaives",
+      "Halberds",
+      "HandCrossbows",
+      "LightArmor",
+      "Longswords",
+      "Pikes",
+      "Rapiers",
+      "Shields",
+      "Shortswords",
+      "SimpleWeapons",
+      "Spears"
+     ],
+     "skills": {
+      "Investigation": 3,
+      "Perception": 5,
+      "SleightOfHand": 5,
+      "History": 1,
+      "Nature": 1,
+      "Performance": 0,
+      "Stealth": 7,
+      "Deception": 2,
+      "Intimidation": 0,
+      "Acrobatics": 5,
+      "Religion": 1,
+      "Survival": 1,
+      "Athletics": 1,
+      "Medicine": 1,
+      "Persuasion": 0,
+      "AnimalHandling": 1,
+      "Arcana": 1,
+      "Insight": 1
+     },
+     "boosts": [
+      "Ability|Ability|Charisma,10|",
+      "Ability|Ability|Constitution,14|",
+      "Ability|Ability|Constitution,1|",
+      "Ability|Ability|Dexterity,15|",
+      "Ability|Ability|Dexterity,2|",
+      "Ability|Ability|Intelligence,12|",
+      "Ability|Ability|Strength,8|",
+      "Ability|Ability|Wisdom,13|",
+      "ActionResource|||",
+      "ActionResource|||",
+      "BlockRegainHP|BlockRegainHP|Undead;Construct|",
+      "CarryCapacityMultiplier|||",
+      "DownedStatus|||",
+      "ExpertiseBonus|ExpertiseBonus|Perception|",
+      "ExpertiseBonus|ExpertiseBonus|Stealth|",
+      "ProficiencyBonus|ProficiencyBonus|Skill,Acrobatics|",
+      "ProficiencyBonus|ProficiencyBonus|Skill,Athletics|",
+      "ProficiencyBonus|ProficiencyBonus|Skill,Deception|",
+      "ProficiencyBonus|ProficiencyBonus|Skill,Investigation|",
+      "ProficiencyBonus|ProficiencyBonus|Skill,Perception|",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "UnlockInterrupt|||",
+      "UnlockInterrupt|||",
+      "UnlockInterrupt|||",
+      "UnlockSpell|UnlockSpell|Projectile_HamstringShot|",
+      "UnlockSpell|UnlockSpell|Target_OpeningAttack|",
+      "UnlockSpell|UnlockSpell|Target_PiercingThrust|",
+      "UnlockSpell|||",
+      "UnlockSpell|||"
+     ],
+     "spellcast": [
+      "Projectile_HamstringShot|Intelligence|AlwaysPrepared|11|3",
+      "Projectile_Jump|Intelligence|AlwaysPrepared|11|3",
+      "Projectile_MainHandAttack|None|AlwaysPrepared|-|-",
+      "Projectile_SneakAttack|Intelligence|AlwaysPrepared|11|3",
+      "Shout_Dash_CunningAction|Intelligence|AlwaysPrepared|11|3",
+      "Shout_Dash|Intelligence|AlwaysPrepared|11|3",
+      "Shout_Disengage_CunningAction|Intelligence|AlwaysPrepared|11|3",
+      "Shout_Disengage|Intelligence|AlwaysPrepared|11|3",
+      "Shout_Hide_BonusAction|Intelligence|AlwaysPrepared|11|3",
+      "Shout_Hide|Intelligence|AlwaysPrepared|11|3",
+      "Target_Dip|Intelligence|AlwaysPrepared|11|3",
+      "Target_Help|Intelligence|AlwaysPrepared|11|3",
+      "Target_MainHandAttack|None|AlwaysPrepared|-|-",
+      "Target_OpeningAttack|Intelligence|AlwaysPrepared|11|3",
+      "Target_PiercingThrust|Intelligence|AlwaysPrepared|11|3",
+      "Target_Shove|Intelligence|AlwaysPrepared|11|3",
+      "Target_SneakAttack|Intelligence|AlwaysPrepared|11|3",
+      "Throw_ImprovisedWeapon|Intelligence|AlwaysPrepared|11|3",
+      "Throw_Throw|Intelligence|AlwaysPrepared|11|3"
+     ],
+     "derived": {
+      "spell_casting_ability": "Intelligence",
+      "initiative_bonus": 3,
+      "weapon_action_dc": 4,
+      "melee_main_hand": "none",
+      "movement": 9.0,
+      "ranged_main_hand": "none",
+      "proficiency_bonus": 2,
+      "spell_save_dc_boost": 0
+     },
+     "resource_max": [
+      "ActionPoint|0|1.0|Default",
+      "BonusActionPoint|0|1.0|Default",
+      "Movement|0|9.0|Default",
+      "ReactionActionPoint|0|1.0|Default",
+      "SneakAttack_Charge|0|1.0|Default"
+     ],
+     "passive_state": [
+      "AttackOfOpportunity|false|true",
+      "Background_Urchin|false|true",
+      "CombatStartAttack|false|true",
+      "DarknessRules|false|true",
+      "DeathSavingThrows|false|true",
+      "HumanMilitia|false|true",
+      "HumanVersatility|false|true",
+      "NonLethal|false|true",
+      "Perform|false|true",
+      "ShortResting|false|true",
+      "SneakAttack_Unlock|false|true",
+      "WeaponThrow|false|true"
+     ]
+    },
+    "game_build": "25605617",
+    "hireling": "9e188239-c0ae-40d2-9298-930095e170b5",
+    "evidence": "live.md L2 launch on 66f8b95f, runtime/probes/4v4-references/"
+   }
   },
   {
    "id": "barbarian",
@@ -381,7 +619,240 @@
     "OBJ_Potion_Healing",
     "OBJ_Potion_Healing"
    ],
-   "reference": null
+   "reference": {
+    "profile": {
+     "race": "78f5e3e8-a9f8-4249-8007-84dc922640b2",
+     "level": 2,
+     "classes": [
+      "d8cadb42-0ff9-4049-afaf-e5d78d06a399/00000000-0000-0000-0000-000000000000/2"
+     ],
+     "abilities": [
+      17,
+      13,
+      15,
+      10,
+      12,
+      8
+     ],
+     "max_hp": 25,
+     "ac": 13,
+     "equipment": {
+      "MeleeMainHand": "WPN_HUM_Greataxe_A_0_d5712e24-ce9e-42ce-8fad-6e049b62c28c",
+      "Boots": "ARM_Shoes_Barbarian_2577a332-8ad2-4e54-b52b-f4f7cc5823a1",
+      "Breast": "ARM_Barbarian_f6599c3f-cfcd-4721-9cc2-1df5d8ff0154"
+     },
+     "inventory": [
+      "CONS_Potion_Healing_A_d47006e9-8a51-453d-b200-9e0d42e9bbab",
+      "WPN_HUM_Handaxe_A_0_46b64a36-8446-45bd-98e8-ee81e3136baa"
+     ],
+     "spells": [
+      "Projectile_Jump",
+      "Shout_Dash",
+      "Shout_Disengage",
+      "Shout_FullSwing",
+      "Shout_Hide",
+      "Shout_Rage",
+      "Target_Dip",
+      "Target_Help",
+      "Target_MainHandAttack",
+      "Target_RecklessAttack",
+      "Target_Shove",
+      "Target_Slash_New",
+      "Throw_ImprovisedWeapon",
+      "Throw_Throw",
+      "Zone_Cleave"
+     ],
+     "prepared": [
+      "Projectile_Jump",
+      "Shout_Dash",
+      "Shout_Disengage",
+      "Shout_FullSwing",
+      "Shout_Hide",
+      "Shout_Rage",
+      "Target_Dip",
+      "Target_Help",
+      "Target_MainHandAttack",
+      "Target_RecklessAttack",
+      "Target_Shove",
+      "Target_Slash_New",
+      "Throw_ImprovisedWeapon",
+      "Throw_Throw",
+      "Zone_Cleave"
+     ],
+     "passives": [
+      "AttackOfOpportunity",
+      "Background_Outlander",
+      "CombatStartAttack",
+      "DangerSense",
+      "DarknessRules",
+      "Darkvision",
+      "DeathSavingThrows",
+      "Dwarf_DwarvenCombatTraining",
+      "Dwarf_DwarvenResilience",
+      "NonLethal",
+      "Perform",
+      "RageUnlock",
+      "Rage_Armour_Message",
+      "Rage_NoHeavyArmour_VFX",
+      "RecklessAttack",
+      "ShortResting",
+      "UnarmouredDefence_Barbarian",
+      "WeaponThrow"
+     ],
+     "statuses": [
+      "INSURFACE"
+     ],
+     "resources": {
+      "Rage": {
+       "0": 2.0
+      },
+      "ReactionActionPoint": {
+       "0": 1.0
+      },
+      "Movement": {
+       "0": 7.5
+      },
+      "BonusActionPoint": {
+       "0": 1.0
+      },
+      "ActionPoint": {
+       "0": 1.0
+      }
+     },
+     "proficiencies": [
+      "Battleaxes",
+      "Handaxes",
+      "LightArmor",
+      "LightHammers",
+      "MartialWeapons",
+      "MediumArmor",
+      "Shields",
+      "SimpleWeapons",
+      "Warhammers"
+     ],
+     "skills": {
+      "Investigation": 0,
+      "Perception": 3,
+      "SleightOfHand": 1,
+      "History": 0,
+      "Nature": 0,
+      "Performance": -1,
+      "Stealth": 1,
+      "Deception": -1,
+      "Intimidation": 1,
+      "Acrobatics": 1,
+      "Religion": 0,
+      "Survival": 3,
+      "Athletics": 5,
+      "Medicine": 1,
+      "Persuasion": -1,
+      "AnimalHandling": 1,
+      "Arcana": 0,
+      "Insight": 1
+     },
+     "boosts": [
+      "ACOverrideFormula|||",
+      "Ability|Ability|Charisma,8|",
+      "Ability|Ability|Constitution,14|",
+      "Ability|Ability|Constitution,1|",
+      "Ability|Ability|Dexterity,13|",
+      "Ability|Ability|Intelligence,10|",
+      "Ability|Ability|Strength,15|",
+      "Ability|Ability|Strength,2|",
+      "Ability|Ability|Wisdom,12|",
+      "ActionResource|||",
+      "ActionResource|||",
+      "ActiveCharacterLight|||",
+      "Advantage|||",
+      "BlockRegainHP|BlockRegainHP|Undead;Construct|",
+      "DarkvisionRangeMin|||",
+      "DownedStatus|||",
+      "IncreaseMaxHP|||",
+      "ProficiencyBonus|ProficiencyBonus|Skill,Intimidation|",
+      "ProficiencyBonus|ProficiencyBonus|Skill,Perception|",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "ProficiencyBonus|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Proficiency|||",
+      "Resistance|||",
+      "Tag|||",
+      "UnlockInterrupt|||",
+      "UnlockInterrupt|||",
+      "UnlockSpellVariant|||",
+      "UnlockSpell|UnlockSpell|Shout_FullSwing|",
+      "UnlockSpell|UnlockSpell|Target_Slash_New|",
+      "UnlockSpell|UnlockSpell|Zone_Cleave|",
+      "UnlockSpell|||",
+      "UnlockSpell|||"
+     ],
+     "spellcast": [
+      "Projectile_Jump|Intelligence|AlwaysPrepared|10|2",
+      "Shout_Dash|Intelligence|AlwaysPrepared|10|2",
+      "Shout_Disengage|Intelligence|AlwaysPrepared|10|2",
+      "Shout_FullSwing|Charisma|AlwaysPrepared|9|1",
+      "Shout_Hide|Intelligence|AlwaysPrepared|10|2",
+      "Shout_Rage|Charisma|AlwaysPrepared|9|1",
+      "Target_Dip|Intelligence|AlwaysPrepared|10|2",
+      "Target_Help|Intelligence|AlwaysPrepared|10|2",
+      "Target_MainHandAttack|None|AlwaysPrepared|-|-",
+      "Target_RecklessAttack|Charisma|AlwaysPrepared|9|1",
+      "Target_Shove|Intelligence|AlwaysPrepared|10|2",
+      "Target_Slash_New|Charisma|AlwaysPrepared|9|1",
+      "Throw_ImprovisedWeapon|Intelligence|AlwaysPrepared|10|2",
+      "Throw_Throw|Intelligence|AlwaysPrepared|10|2",
+      "Zone_Cleave|Charisma|AlwaysPrepared|9|1"
+     ],
+     "derived": {
+      "spell_casting_ability": "Intelligence",
+      "initiative_bonus": 1,
+      "weapon_action_dc": 3,
+      "melee_main_hand": "none",
+      "movement": 7.5,
+      "ranged_main_hand": "none",
+      "proficiency_bonus": 2,
+      "spell_save_dc_boost": 0
+     },
+     "resource_max": [
+      "ActionPoint|0|1.0|Default",
+      "BonusActionPoint|0|1.0|Default",
+      "Movement|0|7.5|Default",
+      "Rage|0|2.0|Rest",
+      "ReactionActionPoint|0|1.0|Default"
+     ],
+     "passive_state": [
+      "AttackOfOpportunity|false|true",
+      "Background_Outlander|false|true",
+      "CombatStartAttack|false|true",
+      "DangerSense|false|true",
+      "DarknessRules|false|true",
+      "Darkvision|false|true",
+      "DeathSavingThrows|false|true",
+      "Dwarf_DwarvenCombatTraining|false|true",
+      "Dwarf_DwarvenResilience|false|true",
+      "NonLethal|false|true",
+      "Perform|false|true",
+      "RageUnlock|false|true",
+      "Rage_Armour_Message|false|true",
+      "Rage_NoHeavyArmour_VFX|false|true",
+      "RecklessAttack|false|true",
+      "ShortResting|false|true",
+      "UnarmouredDefence_Barbarian|false|true",
+      "WeaponThrow|false|true"
+     ]
+    },
+    "game_build": "25605617",
+    "hireling": "106511fd-b572-4468-bf9a-6b3da3e8646a",
+    "evidence": "live.md L2 launch on 66f8b95f, runtime/probes/4v4-references/"
+   }
   },
   {
    "id": "ranger",
