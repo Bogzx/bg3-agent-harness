@@ -18,7 +18,8 @@ What it writes into the static file (merged, never dropping a key it doesn't mak
 - backgrounds, feats (name, uuid, selectors, passives, boosts, repeatable), lists (uuid -> {kind, name, ids}) for
   every list a written row or feat selects from, xp (total XP per level), items (each EQP_CC item and its _1/_2
   entries, the healing potions: type, root, rarity), hirelings (new classes only: origin, race, background; their
-  template stays null until read, the root templates are in binary .lsf files).
+  template stays null until read, the root templates are in binary .lsf files), passive_skills (each passive whose
+  Boosts give a skill: a kit can't pick that skill too).
 
 An existing value the generator makes again must come out the same (the L1-2 rows read by hand before, races,
 backgrounds, hirelings it would add): a difference stops it before writing, naming the key (--dry-run prints the
@@ -58,7 +59,7 @@ def read_paks(data_dir: Path) -> Files:
     want = re.compile(
         r"Public/[^/]+/(Progressions/Progressions\.lsx|ClassDescriptions/ClassDescriptions\.lsx|Races/Races\.lsx"
         r"|Backgrounds/Backgrounds\.lsx|Origins/Origins\.lsx|Feats/Feats\.lsx|Lists/(Spell|Passive|Skill)Lists\.lsx"
-        r"|Stats/Generated/Equipment\.txt|Stats/Generated/Data/(Weapon|Armor|Object|XPData)\.txt)"
+        r"|Stats/Generated/Equipment\.txt|Stats/Generated/Data/(Weapon|Armor|Object|XPData|Passive)\.txt)"
     )
     out: Files = {}
     for name in PAKS:
@@ -122,6 +123,15 @@ def equipment(files: Files) -> dict[str, list[str]]:
                 cur = out[m.group(1)] = []
             elif cur is not None and (m := re.match(r'add equipment entry "([^"]+)"', line)):
                 cur.append(m.group(1))
+    return out
+
+
+def passive_skills(files: Files) -> dict[str, list[str]]:
+    """Passive -> the skills its Boosts give."""
+    out = {}
+    for name, e in sorted(stat_entries(files, "Stats/Generated/Data/Passive.txt").items()):
+        if skills := re.findall(r"ProficiencyBonus\(Skill,\s*(\w+)\)", e.get("Boosts", "")):
+            out[name] = skills
     return out
 
 
@@ -241,6 +251,7 @@ def generate(files: Files, classes: tuple[str, ...] = CLASSES) -> dict[str, Any]
         item(p)
     out["items"] = dict(sorted(items.items()))
     out["xp"] = xp_totals(files)
+    out["passive_skills"] = passive_skills(files)
 
     hire = {o["Name"].removeprefix("Hireling_"): o for o in origins.values() if o["Name"].startswith("Hireling_")}
     out["hirelings"] = {}
@@ -364,7 +375,7 @@ def merge(old: dict[str, Any], gen: dict[str, Any]) -> tuple[dict[str, Any], lis
                 "todo": "the root template (S_GLO_Hirelings_<Class> TemplateName, a binary .lsf) is not read yet: "
                 "arena.mirror_spawn needs it; read it live (Ext.Template) or with an .lsf reader",
             }
-    for key in ("subclasses", "items", "xp", "feats", "lists"):
+    for key in ("subclasses", "items", "xp", "feats", "lists", "passive_skills"):
         out[key] = gen[key]
     out["source"] = SOURCE
     return out, diffs
