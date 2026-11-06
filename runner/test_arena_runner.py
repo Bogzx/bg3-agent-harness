@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -31,6 +32,7 @@ from bg3harness.runner import env as renv
 REPO = Path(__file__).resolve().parents[1]
 PI = str(REPO / "profiles" / "deepseek-v4.1-flash-pi.toml")
 KEY_ENV = "OPENROUTER_API_KEY"  # the profile's api_key_env
+ENCODER_ENV = "BG3AI_BENCH_RECORD_ENCODER"
 
 
 class LaunchError(Exception):
@@ -62,10 +64,14 @@ class ArenaOnTheRealRunner(unittest.TestCase):
         self.runners: list[lpt.Runner] = []
         self.arena = str(level_arena("crash-companions-v1", self.tmp / "arenas"))
 
-    def play(self, a: str, b: str, key: str | None = "test-key", *more: str) -> tuple[int, str]:
+    def play(
+        self, a: str, b: str, key: str | None = "test-key", *more: str, encoder: str | None = "libx264"
+    ) -> tuple[int, str]:
         """play.py arena on crash-companions-v1 until the Runner's ensure_game (the launch), which raises; `key`: the pi
-        profile's API key in the env (a stand-in: nothing is called)."""
+        profile's API key in the env (a stand-in: nothing is called); `encoder`: the recording's, never this machine's
+        record-encoder file (CI has none)."""
         runners = self.runners
+        env = {"BG3AI_CONFIG_DIR": str(self.tmp / "config"), **({KEY_ENV: key} if key else {})}
 
         def launch(r, first: bool = False):
             runners.append(r)
@@ -75,16 +81,24 @@ class ArenaOnTheRealRunner(unittest.TestCase):
         with (
             mock.patch.object(lpt.Runner, "ensure_game", launch),
             mock.patch.object(lpt.Runner, "refresh_mod_snapshot", lambda r: None),  # it copies into the game's mod dir
-            mock.patch.dict("os.environ", {KEY_ENV: key} if key else {}),
+            mock.patch.dict("os.environ", env | ({ENCODER_ENV: encoder} if encoder else {})),
             mock.patch.object(live.client_setup, "read_dotenv", lambda _p: {}),  # the key only from the env
             contextlib.redirect_stderr(err),
         ):
+            if not encoder:
+                os.environ.pop(ENCODER_ENV, None)  # a shell's own value; patch.dict puts it back
             try:
                 code = arena_cli.main(["--arena", self.arena, "--a", a, "--b", b, "--out", "t1",
                                        "--allow-unverified", *more])  # fmt: skip
             except LaunchError:
                 code = -1
         return code, err.getvalue()
+
+    def test_a_start_with_no_encoder_set_is_refused_before_the_launch(self):
+        code, err = self.play("scripted", "scripted", encoder=None)
+        self.assertEqual(code, 2)
+        self.assertIn("no bench recording encoder set", err)
+        self.assertEqual(self.runners, [])
 
     def test_scripted_sides_reach_the_launch_on_a_runner_with_no_client_of_its_own(self):
         code, err = self.play("scripted", "scripted")
