@@ -1,0 +1,842 @@
+{
+ "schema": "arena.v1",
+ "save": {
+  "name": "Tav-34221263934__SCN-crash_site_grove",
+  "sha1": "d7b0749e1dc6febb477f302d2a30b25770329213"
+ },
+ "seed": 2026,
+ "karmic": false,
+ "round_cap": 40,
+ "wall_cap_min": 120.0,
+ "turn_cap_s": 60,
+ "condition": "rules",
+ "tools_off": "arena-v1",
+ "name": "builds-l12-4v4-v1",
+ "title": "Level 12: Fighter (Battle Master), Bard (Lore), Wizard (Evocation), Rogue (Thief); each its hireling's race and background",
+ "about": "The build file l12_4v4_v1 (tools/dev/make_arena_save.py builds-arena), each pair's twins made per match, on crash-mirror-v1's save.",
+ "draft": "no reference profiles yet (plan S3: one respecced hireling per build at this level) (2026-11-06)",
+ "location": {
+  "level": "WLD_Main_A",
+  "spawns": {
+   "A": [
+    212.875,
+    10.98,
+    288.0
+   ],
+   "B": [
+    212.875,
+    10.98,
+    296.0
+   ]
+  },
+  "line_gap": 1.25
+ },
+ "level": 12,
+ "teams": {
+  "A": [
+   {
+    "name": "Red Ash"
+   },
+   {
+    "name": "Red Birch"
+   },
+   {
+    "name": "Red Cedar"
+   },
+   {
+    "name": "Red Dune"
+   }
+  ],
+  "B": [
+   {
+    "name": "Blue Ash"
+   },
+   {
+    "name": "Blue Birch"
+   },
+   {
+    "name": "Blue Cedar"
+   },
+   {
+    "name": "Blue Dune"
+   }
+  ]
+ },
+ "mirror": {
+  "party_xp": {
+   "total": 100000
+  },
+  "pairs": [
+   {
+    "class": "Fighter",
+    "build": "fighter",
+    "template": "d9401d40-453b-4512-84ee-d1c6ab29afea",
+    "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
+    "stats": "BG3AI_Arena_Fighter_L1",
+    "names": {
+     "A": "Red Ash",
+     "B": "Blue Ash"
+    },
+    "kit": {
+     "race": {
+      "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
+      "boosts": "ActionResource(Movement,9,0);ActionResource(Movement,1.5,0);ProficiencyBonus(Skill,Stealth)",
+      "passives": [
+       "HumanMilitia",
+       "Darkvision",
+       "FeyAncestry"
+      ]
+     },
+     "player": {
+      "passives": [
+       "DeathSavingThrows",
+       "Background_Soldier"
+      ]
+     },
+     "ability_bonus": [
+      "Strength",
+      "Constitution"
+     ],
+     "choices": [
+      {
+       "kind": "skills",
+       "list": "6a4f8598-3a17-42d1-beac-d7ced582bafa",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "Perception",
+        "Survival"
+       ]
+      },
+      {
+       "kind": "passives",
+       "list": "da3203d8-750a-4de1-b8eb-1eccfccddf46",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "FightingStyle_Defense"
+       ]
+      },
+      {
+       "kind": "passives",
+       "list": "e51a2ef5-3663-43f9-8e74-5e28520323f1",
+       "n": 3,
+       "exact": true,
+       "ids": [
+        "PrecisionAttack",
+        "Riposte",
+        "GoadingAttack"
+       ]
+      },
+      {
+       "kind": "passives",
+       "list": "e51a2ef5-3663-43f9-8e74-5e28520323f1",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "FeintingAttack",
+        "EvasiveFootwork"
+       ]
+      },
+      {
+       "kind": "passives",
+       "list": "e51a2ef5-3663-43f9-8e74-5e28520323f1",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "DistractingStrike",
+        "Rally"
+       ]
+      }
+     ],
+     "items": [
+      {
+       "item": "WPN_Longsword_2",
+       "root": "e3b2adb6-7493-466e-9c65-4281fb74e83f",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "WPN_Shortbow_2",
+       "root": "d9a98dce-1027-4324-939c-3c9cfe776731",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "ARM_ScaleMail_Body_2",
+       "root": "21f0dd84-6f02-4be9-8654-4cebd00dcbaf",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "ARM_Boots_Leather",
+       "root": "969bab00-b269-46a5-a7e9-dd4887814719",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "OBJ_Potion_Healing",
+       "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
+       "count": 2,
+       "equip": false
+      },
+      {
+       "item": "OBJ_Potion_Healing_Greater",
+       "root": "e3b95c96-dc26-40fe-bfc0-baa05e1abd20",
+       "count": 1,
+       "equip": false
+      },
+      {
+       "item": "OBJ_Potion_Healing_Superior",
+       "root": "df4f3495-abaf-4732-b82f-55bcccd561db",
+       "count": 1,
+       "equip": false
+      }
+     ],
+     "subclass": "e668c6f1-5149-4b10-ab7e-3637ed444066",
+     "grants": {
+      "boosts": "ActionResource(SuperiorityDie,4,0);Ability(Strength,2);ActionResource(SuperiorityDie,1,0);Ability(Strength,1);Ability(Constitution,1)",
+      "passives": [
+       "Tough",
+       "ImprovedCombatSuperiority",
+       "Sentinel_Attack",
+       "Sentinel_ZeroSpeed",
+       "Sentinel_OpportunityAdvantage"
+      ],
+      "spells": []
+     }
+    }
+   },
+   {
+    "class": "Bard",
+    "build": "bard",
+    "template": "85b629ca-bcb9-4729-8400-615dc97e7a76",
+    "race": "a8828cb9-589d-489e-8373-6495eb31ffc1",
+    "stats": "BG3AI_Arena_Bard_L1",
+    "names": {
+     "A": "Red Birch",
+     "B": "Blue Birch"
+    },
+    "kit": {
+     "race": {
+      "race": "a8828cb9-589d-489e-8373-6495eb31ffc1",
+      "boosts": "ActionResource(Movement,7.5,0)",
+      "passives": [
+       "Halfling_Lucky",
+       "Halfling_Brave",
+       "Halfling_LightfootStealth"
+      ]
+     },
+     "player": {
+      "passives": [
+       "DeathSavingThrows",
+       "Background_Entertainer"
+      ]
+     },
+     "ability_bonus": [
+      "Charisma",
+      "Constitution"
+     ],
+     "choices": [
+      {
+       "kind": "skills",
+       "list": "ed664663-93b9-4070-a54b-3c7b19c0e7b4",
+       "n": 3,
+       "exact": true,
+       "ids": [
+        "Persuasion",
+        "Medicine",
+        "Insight"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "61f79a30-2cac-4a7a-b5fe-50c89d307dd6",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "Target_ViciousMockery",
+        "Shout_BladeWard"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "dcb45167-86bd-4297-9b9d-c295be51af5b",
+       "n": 4,
+       "exact": true,
+       "ids": [
+        "Target_HealingWord",
+        "Target_CureWounds",
+        "Target_FaerieFire",
+        "Target_Bane"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "dcb45167-86bd-4297-9b9d-c295be51af5b",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Target_Heroism"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "7ea8f476-97a1-4256-8f10-afa76a845cce",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Target_Blindness"
+       ]
+      },
+      {
+       "kind": "expertise",
+       "list": "f974ebd6-3725-4b90-bb5c-2b647d41615d",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "Persuasion",
+        "Performance"
+       ]
+      },
+      {
+       "kind": "skills",
+       "list": "ed664663-93b9-4070-a54b-3c7b19c0e7b4",
+       "n": 3,
+       "exact": true,
+       "ids": [
+        "Arcana",
+        "Perception",
+        "Deception"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "61f79a30-2cac-4a7a-b5fe-50c89d307dd6",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Target_TrueStrike"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "7ea8f476-97a1-4256-8f10-afa76a845cce",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Target_Shatter"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "c213ca01-3767-457b-a5c8-fd4c1dd656e2",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Target_BestowCurse"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "c213ca01-3767-457b-a5c8-fd4c1dd656e2",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Target_Silence"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "175ceed7-5a53-4f48-823c-41c4f72d18ae",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "Shout_HealingWord_Mass",
+        "Shout_SpiritGuardians"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "75e04c40-be8f-40a5-9acc-0b5d59d5f3a6",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Target_FreedomOfMovement"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "75e04c40-be8f-40a5-9acc-0b5d59d5f3a6",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Target_Invisibility_Greater"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "bd71fffb-e4d2-4233-9a31-13d43fba36e3",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Target_CureWounds_Mass"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "61f79a30-2cac-4a7a-b5fe-50c89d307dd6",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Target_Friends"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "bd71fffb-e4d2-4233-9a31-13d43fba36e3",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Target_GreaterRestoration"
+       ]
+      },
+      {
+       "kind": "expertise",
+       "list": "f974ebd6-3725-4b90-bb5c-2b647d41615d",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "Medicine",
+        "Insight"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "858d4322-9e9f-4aa4-aada-9c68835dc6fe",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "Target_DeathWard",
+        "Shout_AuraOfVitality"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "586a8796-34f4-41f5-a3ef-95738561d55d",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Target_EnhanceAbility"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "586a8796-34f4-41f5-a3ef-95738561d55d",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Target_LesserRestoration"
+       ]
+      }
+     ],
+     "items": [
+      {
+       "item": "WPN_Rapier_2",
+       "root": "5c572e8e-8693-48cf-b494-2df0341f7ced",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "WPN_HandCrossbow_2",
+       "root": "ab150a98-0a8e-4ee2-9dca-580d77f99be3",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "OBJ_Potion_Healing",
+       "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
+       "count": 2,
+       "equip": false
+      },
+      {
+       "item": "ARM_Bard",
+       "root": "da345d08-2186-4e4a-857c-3fd6a104cec6",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "ARM_Boots_Leather",
+       "root": "969bab00-b269-46a5-a7e9-dd4887814719",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "OBJ_Potion_Healing_Greater",
+       "root": "e3b95c96-dc26-40fe-bfc0-baa05e1abd20",
+       "count": 1,
+       "equip": false
+      },
+      {
+       "item": "OBJ_Potion_Healing_Superior",
+       "root": "df4f3495-abaf-4732-b82f-55bcccd561db",
+       "count": 1,
+       "equip": false
+      }
+     ],
+     "subclass": "d21368ac-c776-465c-9dcf-6123dd52734f",
+     "grants": {
+      "boosts": "Ability(Charisma,2);Ability(Charisma,1);Ability(Constitution,1);Ability(Constitution,2)",
+      "passives": [
+       "CuttingWords"
+      ],
+      "spells": []
+     }
+    }
+   },
+   {
+    "class": "Wizard",
+    "build": "wizard",
+    "template": "3d24f5eb-7220-4e00-bc02-3e6ac819ac26",
+    "race": "2cf6c770-24ab-4608-9617-d1e46c11ab55",
+    "stats": "BG3AI_Arena_Wizard_L1",
+    "names": {
+     "A": "Red Cedar",
+     "B": "Blue Cedar"
+    },
+    "kit": {
+     "race": {
+      "race": "2cf6c770-24ab-4608-9617-d1e46c11ab55",
+      "boosts": "ActionResource(Movement,7.5,0)",
+      "passives": [
+       "Gnome_Cunning",
+       "Darkvision",
+       "RockGnome_ArtificersLore"
+      ]
+     },
+     "player": {
+      "passives": [
+       "DeathSavingThrows",
+       "Background_Sage"
+      ]
+     },
+     "ability_bonus": [
+      "Intelligence",
+      "Constitution"
+     ],
+     "choices": [
+      {
+       "kind": "skills",
+       "list": "9f3a9f8d-f645-40b5-b36f-fb079b7b805e",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "Investigation",
+        "Insight"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "3cae2e56-9871-4cef-bba6-96845ea765fa",
+       "n": 3,
+       "exact": true,
+       "ids": [
+        "Projectile_FireBolt",
+        "Projectile_RayOfFrost",
+        "Target_ShockingGrasp"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "11f331b0-e8b7-473b-9d1f-19e8e4178d7d",
+       "n": 6,
+       "exact": false,
+       "ids": [
+        "Projectile_MagicMissile",
+        "Shout_Shield_Wizard",
+        "Target_MageArmor",
+        "Projectile_ChromaticOrb",
+        "Zone_BurningHands"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "80c6b070-c3a6-4864-84ca-e78626784eb4",
+       "n": 2,
+       "exact": false,
+       "ids": [
+        "Projectile_ScorchingRay",
+        "Target_MistyStep"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "3cae2e56-9871-4cef-bba6-96845ea765fa",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Target_ChillTouch"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "22755771-ca11-49f4-b772-13d8b8fecd93",
+       "n": 2,
+       "exact": false,
+       "ids": [
+        "Projectile_Fireball",
+        "Target_Counterspell"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "22755771-ca11-49f4-b772-13d8b8fecd93",
+       "n": 2,
+       "exact": false,
+       "ids": [
+        "Zone_LightningBolt",
+        "Target_Haste"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "820b1220-0385-426d-ae15-458dc8a6f5c0",
+       "n": 2,
+       "exact": false,
+       "ids": [
+        "Target_PhantasmalKiller"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "820b1220-0385-426d-ae15-458dc8a6f5c0",
+       "n": 2,
+       "exact": false,
+       "ids": [
+        "Teleportation_DimensionDoor"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "f781a25e-d288-43b4-bf5d-3d8d98846687",
+       "n": 2,
+       "exact": false,
+       "ids": [
+        "Zone_ConeOfCold",
+        "Target_HoldMonster"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "3cae2e56-9871-4cef-bba6-96845ea765fa",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Projectile_AcidSplash"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "bc917f22-7f71-4a25-9a77-7d2f91a96a65",
+       "n": 2,
+       "exact": false,
+       "ids": [
+        "Projectile_ChainLightning",
+        "Projectile_Disintegrate"
+       ]
+      }
+     ],
+     "items": [
+      {
+       "item": "WPN_Quarterstaff_2",
+       "root": "e1e112b2-5465-4e37-acdc-372666ec1521",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "ARM_Robe_Body_2",
+       "root": "467cca20-42bb-45cd-8eac-6ed49bbc2707",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "ARM_Shoes",
+       "root": "97f37571-35e8-4cc8-8b0d-ff92d20ae0bb",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "OBJ_Potion_Healing",
+       "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
+       "count": 2,
+       "equip": false
+      },
+      {
+       "item": "OBJ_Potion_Healing_Greater",
+       "root": "e3b95c96-dc26-40fe-bfc0-baa05e1abd20",
+       "count": 1,
+       "equip": false
+      },
+      {
+       "item": "OBJ_Potion_Healing_Superior",
+       "root": "df4f3495-abaf-4732-b82f-55bcccd561db",
+       "count": 1,
+       "equip": false
+      }
+     ],
+     "subclass": "c059dca1-c17d-4dce-8260-83ede5070eac",
+     "grants": {
+      "boosts": "Savant(Evocation);Ability(Intelligence,2);Ability(Intelligence,1);Ability(Constitution,1)",
+      "passives": [
+       "SculptSpells",
+       "PotentCantrip",
+       "EmpoweredEvocation",
+       "WarCaster_Bonuses",
+       "WarCaster_OpportunitySpell"
+      ],
+      "spells": []
+     }
+    }
+   },
+   {
+    "class": "Rogue",
+    "build": "rogue",
+    "template": "6df14611-1da5-4f2a-9300-ff74778d49b4",
+    "race": "0eb594cb-8820-4be6-a58d-8be7a1a98fba",
+    "stats": "BG3AI_Arena_Rogue_L1",
+    "names": {
+     "A": "Red Dune",
+     "B": "Blue Dune"
+    },
+    "kit": {
+     "race": {
+      "race": "0eb594cb-8820-4be6-a58d-8be7a1a98fba",
+      "boosts": "ActionResource(Movement,9,0)",
+      "passives": [
+       "HumanMilitia",
+       "HumanVersatility"
+      ]
+     },
+     "player": {
+      "passives": [
+       "DeathSavingThrows",
+       "Background_Urchin"
+      ]
+     },
+     "ability_bonus": [
+      "Dexterity",
+      "Constitution"
+     ],
+     "choices": [
+      {
+       "kind": "skills",
+       "list": "f974ebd6-3725-4b90-bb5c-2b647d41615d",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Athletics"
+       ]
+      },
+      {
+       "kind": "skills",
+       "list": "a1c2b712-2ed6-4e5b-820f-c5db654fe006",
+       "n": 4,
+       "exact": true,
+       "ids": [
+        "Acrobatics",
+        "Perception",
+        "Deception",
+        "Investigation"
+       ]
+      },
+      {
+       "kind": "expertise",
+       "list": "f974ebd6-3725-4b90-bb5c-2b647d41615d",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "Stealth",
+        "Perception"
+       ]
+      },
+      {
+       "kind": "expertise",
+       "list": "f974ebd6-3725-4b90-bb5c-2b647d41615d",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "Acrobatics",
+        "Athletics"
+       ]
+      }
+     ],
+     "items": [
+      {
+       "item": "WPN_Shortsword_2",
+       "root": "0839fb15-24ab-4c3a-b168-413a47ed710a",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "WPN_Shortbow_2",
+       "root": "d9a98dce-1027-4324-939c-3c9cfe776731",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "ARM_Leather_Body_Rogue",
+       "root": "4c4396db-fa4a-4541-9b2a-23e43211dde7",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "ARM_Boots_Leather",
+       "root": "969bab00-b269-46a5-a7e9-dd4887814719",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "OBJ_Kit_ThievesTools",
+       "root": "e32a200c-5b63-414d-ae57-00e7b38f125b",
+       "count": 1,
+       "equip": false
+      },
+      {
+       "item": "OBJ_Potion_Healing",
+       "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
+       "count": 2,
+       "equip": false
+      },
+      {
+       "item": "OBJ_Potion_Healing_Greater",
+       "root": "e3b95c96-dc26-40fe-bfc0-baa05e1abd20",
+       "count": 1,
+       "equip": false
+      },
+      {
+       "item": "OBJ_Potion_Healing_Superior",
+       "root": "df4f3495-abaf-4732-b82f-55bcccd561db",
+       "count": 1,
+       "equip": false
+      }
+     ],
+     "subclass": "32c7b8df-a6ec-4848-a9db-c0dce781beb9",
+     "grants": {
+      "boosts": "Ability(Dexterity,2);Ability(Dexterity,1);Ability(Constitution,1)",
+      "passives": [
+       "FastHands",
+       "SecondStoryWork",
+       "Mobile_PassiveBonuses",
+       "Mobile_CounterAttackOfOpportunity",
+       "Mobile_DashAcrossDifficultTerrain",
+       "Tough"
+      ],
+      "spells": [
+       "Shout_SupremeSneak"
+      ]
+     }
+    }
+   }
+  ]
+ }
+}
