@@ -323,6 +323,16 @@ class SetupCheckTest(unittest.TestCase):
         )
         self.assertEqual((code, rec["xp"], rec["positions"]), (0, {"added": 6072}, {"Ash": [1, 2, 3]}))
 
+    def test_a_failed_setup_keeps_what_it_read_of_the_twins(self):
+        res = {"teams": {"A": ["a1"], "B": []}, "not_applied": [{"pair": 1}], "positions": {"a1": [1, 2, 3]}}
+        state = {"uuid": "a1", "level": 5, "available": 5, "can_level_up": False}
+        code, rec = ar.setup_check(FakeGame([Job("failed", res, "the twins are not their builds")], [state]), {})
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            (rec["level_state"], rec["not_applied"], rec["positions"]), ([state], res["not_applied"], res["positions"])
+        )
+        self.assertIn("not their builds", rec["error"])
+
     def test_a_twin_with_a_level_up_pending_after_the_party_join_fails_it(self):
         # S1 read AvailableLevel and CanLevelUp before any join, and Sym.FIELDS doesn't compare them
         teams = {"teams": {"A": ["a1"], "B": ["b1"]}}

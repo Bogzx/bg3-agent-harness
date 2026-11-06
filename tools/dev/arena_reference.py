@@ -210,11 +210,12 @@ def setup_check(game: Any, arena: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     res = r.result if isinstance(r.result, dict) else {}
     keep = ("reference", "xp", "not_applied", "teams", "members", "positions", "surfaces", "spawn_order")
     rec = {"status": r.status, "error": r.error} | {k: res[k] for k in keep if k in res}
-    if r.status != "done":
-        return 1, rec
     twins = [u for side in res.get("teams", {}).values() for u in side]
     if twins:
         rec["level_state"] = level_state(game, twins)
+    if r.status != "done":
+        return 1, rec
+    if twins:
         pending = [x["uuid"] for x in rec["level_state"] if x["can_level_up"] or x["available"] != x["level"]]
         if pending:
             rec["error"] = f"a level-up pending after the party join: {', '.join(pending)}"

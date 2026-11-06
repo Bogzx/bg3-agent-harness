@@ -505,12 +505,23 @@ function Setup.check_references(job)
     return bad
 end
 
+-- Where each member stands (none when it doesn't read).
+local function positions_of(t)
+    local positions = {}
+    for _, u in ipairs(all_of(t)) do
+        local ok, x, y, z = pcall(Osi.GetPosition, u)
+        if ok and type(x) == "number" then positions[u] = { x, y, z } end
+    end
+    return positions
+end
+
 STEPS[5] = function(job) -- the builds' references; hostile teams, one combat
     local t = job.teams
     if job.mirror then
         local bad = Setup.check_references(job)
         if #bad > 0 then
-            RPC.finish_job(job, "failed", { teams = t, reference = job.reference, calls = job.calls },
+            RPC.finish_job(job, "failed", { teams = t, reference = job.reference, calls = job.calls,
+                not_applied = job.not_applied, positions = positions_of(t) },
                 "the twins are not their builds: " .. table.concat(bad, "; "))
             return
         end
@@ -581,7 +592,8 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
     -- every member at the arena's level, or no match (live 2026-11-02: joining reset Karlach 3 -> 1, Wyll 2 -> 1,
     -- Minthara 6 -> 1 while Shadowheart, a member already, stayed 2)
     if #off > 0 then
-        RPC.finish_job(job, "failed", { teams = t, members = after, calls = job.calls },
+        RPC.finish_job(job, "failed", { teams = t, members = after, calls = job.calls,
+            not_applied = job.not_applied, positions = positions_of(t) },
             ("levels after setup differ from the arena's level %d: %s"):format(job.level, table.concat(off, ", ")))
         return
     end
@@ -590,17 +602,14 @@ STEPS[7] = function(job) -- the fight as it must be, then the match
         for i = 1, #job.mirror.pairs do pairs[i] = { t.A[i], t.B[i] } end
         local sym = Ar.Symmetry.check(pairs, { start = true }) -- current and temp HP too (audit S3-8)
         if not sym.ok then
-            RPC.finish_job(job, "failed", { teams = t, members = after, calls = job.calls },
+            RPC.finish_job(job, "failed", { teams = t, members = after, calls = job.calls,
+                not_applied = job.not_applied, positions = positions_of(t) },
                 "the twins are not mirrors as the fight starts: " .. table.concat(sym.problems, "; "))
             return
         end
     end
-    local sitters, positions = {}, {}
+    local sitters, positions = {}, positions_of(t) -- where each member stands as the fight starts
     for _, u in ipairs(job.sitters) do sitters[#sitters + 1] = { uuid = u, name = V.name(u) } end
-    for _, u in ipairs(all_of(t)) do -- where each member stands as the fight starts (none when it doesn't read)
-        local ok, x, y, z = pcall(Osi.GetPosition, u)
-        if ok and type(x) == "number" then positions[u] = { x, y, z } end
-    end
     local status = Ar.begin(t, { round_cap = job.round_cap, sitters = job.can_join, positions = positions,
         seed = job.arena.seed, turn_order = job.arena.turn_order, surfaces = job.mirror and { spawns = job.spawns,
             n = #job.mirror.pairs, setup_keys = job.surface_keys or {} } or nil,

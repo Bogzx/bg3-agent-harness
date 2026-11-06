@@ -264,3 +264,33 @@ def test_main_writes_only_when_every_difference_is_accepted(tmp_path, monkeypatc
     assert "nothing written" in capsys.readouterr().err and "xp" not in json.loads(out.read_text())
     assert gen.main([str(data), "--out", str(out), "--accept", "classes.Fighter.equipment"]) == 0
     assert json.loads(out.read_text())["xp"]["12"] > 0
+
+
+def test_upcasts_come_from_root_and_power_a_containers_variant_under_the_container_and_a_later_entry_extends():
+    def f(name: str, text: str, module: str = "Shared") -> dict[str, bytes]:
+        return {f"Public/{module}/Stats/Generated/Data/Spell_{name}.txt": text.encode()}
+
+    files = f(
+        "Target",
+        'new entry "Bane"\ndata "Level" "1"\n'
+        'new entry "Bane_2"\nusing "Bane"\ndata "RootSpellID" "Bane"\ndata "PowerLevel" "2"\n'
+        'new entry "Bane_3"\nusing "Bane_2"\ndata "PowerLevel" "3"\n'
+        'new entry "Bane_AI"\nusing "Bane"\n',
+    ) | f(
+        "Shout",
+        'new entry "Recovery"\ndata "ContainerSpells" "Recovery_1"\n'
+        'new entry "Recovery_1"\ndata "SpellContainerID" "Recovery"\n'
+        'new entry "Recovery_2"\nusing "Recovery_1"\ndata "RootSpellID" "Recovery_1"\ndata "PowerLevel" "2"\n'
+        'new entry "Curse"\ndata "ContainerSpells" "Curse_A"\n'
+        'new entry "Curse_A"\ndata "SpellContainerID" "Curse"\n'
+        'new entry "Curse_4"\ndata "RootSpellID" "Curse"\ndata "PowerLevel" "4"\n'
+        'new entry "Curse_A_4"\ndata "SpellContainerID" "Curse_4"\ndata "RootSpellID" "Curse_A"\n'
+        'data "PowerLevel" "4"\n',
+    )
+    files |= f("Target", 'new entry "Bane_3"\nusing "Bane_3"\ndata "Cooldown" "x"\n', "GustavX")
+    assert gen.upcasts(files) == {
+        "Bane": {"2": ["Bane_2"], "3": ["Bane_3"]},
+        "Recovery": {"2": ["Recovery_2"]},
+        "Curse": {"4": ["Curse_4"]},
+        "Curse_A": {"4": ["Curse_A_4"]},
+    }

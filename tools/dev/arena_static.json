@@ -6707,5 +6707,3053 @@
   "RockGnome_ArtificersLore": [
    "History"
   ]
+ },
+ "upcasts": {
+  "Projectile_AcidArrow": {
+   "3": [
+    "Projectile_AcidArrow_3"
+   ],
+   "4": [
+    "Projectile_AcidArrow_4"
+   ],
+   "5": [
+    "Projectile_AcidArrow_5"
+   ],
+   "6": [
+    "Projectile_AcidArrow_6"
+   ]
+  },
+  "Projectile_ChromaticOrb": {
+   "2": [
+    "Projectile_ChromaticOrb_Acid_2",
+    "Projectile_ChromaticOrb_Cold_2",
+    "Projectile_ChromaticOrb_Fire_2",
+    "Projectile_ChromaticOrb_Lightning_2",
+    "Projectile_ChromaticOrb_Poison_2",
+    "Projectile_ChromaticOrb_Thunder_2"
+   ],
+   "3": [
+    "Projectile_ChromaticOrb_Acid_3",
+    "Projectile_ChromaticOrb_Cold_3",
+    "Projectile_ChromaticOrb_Fire_3",
+    "Projectile_ChromaticOrb_Lightning_3",
+    "Projectile_ChromaticOrb_Poison_3",
+    "Projectile_ChromaticOrb_Thunder_3"
+   ],
+   "4": [
+    "Projectile_ChromaticOrb_Acid_4",
+    "Projectile_ChromaticOrb_Cold_4",
+    "Projectile_ChromaticOrb_Fire_4",
+    "Projectile_ChromaticOrb_Lightning_4",
+    "Projectile_ChromaticOrb_Poison_4",
+    "Projectile_ChromaticOrb_Thunder_4"
+   ],
+   "5": [
+    "Projectile_ChromaticOrb_Acid_5",
+    "Projectile_ChromaticOrb_Cold_5",
+    "Projectile_ChromaticOrb_Fire_5",
+    "Projectile_ChromaticOrb_Lightning_5",
+    "Projectile_ChromaticOrb_Poison_5",
+    "Projectile_ChromaticOrb_Thunder_5"
+   ],
+   "6": [
+    "Projectile_ChromaticOrb_Acid_6",
+    "Projectile_ChromaticOrb_Cold_6",
+    "Projectile_ChromaticOrb_Fire_6",
+    "Projectile_ChromaticOrb_Lightning_6",
+    "Projectile_ChromaticOrb_Poison_6",
+    "Projectile_ChromaticOrb_Thunder_6"
+   ]
+  },
+  "Projectile_EnsnaringStrike_Container": {
+   "2": [
+    "Projectile_EnsnaringStrike_2",
+    "Target_EnsnaringStrike_2"
+   ],
+   "3": [
+    "Projectile_EnsnaringStrike_3",
+    "Target_EnsnaringStrike_3"
+   ],
+   "4": [
+    "Projectile_EnsnaringStrike_4",
+    "Target_EnsnaringStrike_4"
+   ],
+   "5": [
+    "Projectile_EnsnaringStrike_5",
+    "Target_EnsnaringStrike_5"
+   ],
+   "6": [
+    "Projectile_EnsnaringStrike_6",
+    "Target_EnsnaringStrike_6"
+   ]
+  },
+  "Projectile_Fireball": {
+   "4": [
+    "Projectile_Fireball_4"
+   ],
+   "5": [
+    "Projectile_Fireball_5"
+   ],
+   "6": [
+    "Projectile_Fireball_6"
+   ],
+   "7": [
+    "Projectile_Fireball_7"
+   ],
+   "8": [
+    "Projectile_Fireball_8"
+   ],
+   "9": [
+    "Projectile_Fireball_9"
+   ]
+  },
+  "Projectile_GuidingBolt": {
+   "5": [
+    "Projectile_GuidingBolt_5"
+   ],
+   "6": [
+    "Projectile_GuidingBolt_6"
+   ],
+   "2": [
+    "Projectile_GuildingBolt_2"
+   ],
+   "3": [
+    "Projectile_GuildingBolt_3"
+   ],
+   "4": [
+    "Projectile_GuildingBolt_4"
+   ]
+  },
+  "Projectile_HailOfThorns": {
+   "2": [
+    "Projectile_HailOfThorns_2"
+   ],
+   "3": [
+    "Projectile_HailOfThorns_3"
+   ],
+   "4": [
+    "Projectile_HailOfThorns_4"
+   ],
+   "5": [
+    "Projectile_HailOfThorns_5"
+   ],
+   "6": [
+    "Projectile_HailOfThorns_6"
+   ]
+  },
+  "Projectile_IceKnife": {
+   "2": [
+    "Projectile_IceKnife_2"
+   ],
+   "3": [
+    "Projectile_IceKnife_3"
+   ],
+   "4": [
+    "Projectile_IceKnife_4"
+   ],
+   "5": [
+    "Projectile_IceKnife_5"
+   ],
+   "6": [
+    "Projectile_IceKnife_6"
+   ]
+  },
+  "Projectile_LightningArrow": {
+   "4": [
+    "Projectile_LightningArrow_4"
+   ],
+   "5": [
+    "Projectile_LightningArrow_5"
+   ],
+   "6": [
+    "Projectile_LightningArrow_6"
+   ]
+  },
+  "Projectile_MagicMissile": {
+   "2": [
+    "Projectile_MagicMissile_2"
+   ],
+   "3": [
+    "Projectile_MagicMissile_3"
+   ],
+   "4": [
+    "Projectile_MagicMissile_4"
+   ],
+   "5": [
+    "Projectile_MagicMissile_5"
+   ],
+   "6": [
+    "Projectile_MagicMissile_6"
+   ]
+  },
+  "Projectile_RayOfEnfeeblement": {
+   "3": [
+    "Projectile_RayOfEnfeeblement_3"
+   ],
+   "4": [
+    "Projectile_RayOfEnfeeblement_4"
+   ],
+   "5": [
+    "Projectile_RayOfEnfeeblement_5"
+   ],
+   "6": [
+    "Projectile_RayOfEnfeeblement_6"
+   ]
+  },
+  "Projectile_RayOfSickness": {
+   "2": [
+    "Projectile_RayOfSickness_2"
+   ],
+   "3": [
+    "Projectile_RayOfSickness_3"
+   ],
+   "4": [
+    "Projectile_RayOfSickness_4"
+   ],
+   "5": [
+    "Projectile_RayOfSickness_5"
+   ],
+   "6": [
+    "Projectile_RayOfSickness_6"
+   ]
+  },
+  "Projectile_ScorchingRay": {
+   "3": [
+    "Projectile_ScorchingRay_3"
+   ],
+   "4": [
+    "Projectile_ScorchingRay_4"
+   ],
+   "5": [
+    "Projectile_ScorchingRay_5"
+   ],
+   "6": [
+    "Projectile_ScorchingRay_6"
+   ],
+   "7": [
+    "Projectile_ScorchingRay_7"
+   ],
+   "8": [
+    "Projectile_ScorchingRay_8"
+   ],
+   "9": [
+    "Projectile_ScorchingRay_9"
+   ]
+  },
+  "Projectile_Smite_Banishing_Container": {
+   "6": [
+    "Projectile_Smite_Banishing_6",
+    "Target_Smite_Banishing_6"
+   ]
+  },
+  "Target_Smite_Branding_Container": {
+   "3": [
+    "Projectile_Smite_Branding_3",
+    "Target_Smite_Branding_3"
+   ],
+   "4": [
+    "Projectile_Smite_Branding_4",
+    "Target_Smite_Branding_4"
+   ],
+   "5": [
+    "Projectile_Smite_Branding_5",
+    "Target_Smite_Branding_5"
+   ],
+   "6": [
+    "Projectile_Smite_Branding_6",
+    "Target_Smite_Branding_6"
+   ]
+  },
+  "Projectile_WitchBolt": {
+   "2": [
+    "Projectile_WitchBolt_2"
+   ],
+   "3": [
+    "Projectile_WitchBolt_3"
+   ],
+   "4": [
+    "Projectile_WitchBolt_4"
+   ],
+   "5": [
+    "Projectile_WitchBolt_5"
+   ],
+   "6": [
+    "Projectile_WitchBolt_6"
+   ]
+  },
+  "Shout_Aid": {
+   "3": [
+    "Shout_Aid_3"
+   ],
+   "4": [
+    "Shout_Aid_4"
+   ],
+   "5": [
+    "Shout_Aid_5"
+   ],
+   "6": [
+    "Shout_Aid_6"
+   ]
+  },
+  "Shout_ArcaneRecovery": {
+   "2": [
+    "Shout_ArcaneRecovery_2"
+   ],
+   "3": [
+    "Shout_ArcaneRecovery_3"
+   ],
+   "4": [
+    "Shout_ArcaneRecovery_4"
+   ],
+   "5": [
+    "Shout_ArcaneRecovery_5"
+   ]
+  },
+  "Shout_ArmorOfAgathys": {
+   "2": [
+    "Shout_ArmorOfAgathys_2"
+   ],
+   "3": [
+    "Shout_ArmorOfAgathys_3"
+   ],
+   "4": [
+    "Shout_ArmorOfAgathys_4"
+   ],
+   "5": [
+    "Shout_ArmorOfAgathys_5"
+   ],
+   "6": [
+    "Shout_ArmorOfAgathys_6"
+   ]
+  },
+  "Shout_ArmsOfHadar": {
+   "2": [
+    "Shout_ArmsOfHadar_2"
+   ],
+   "3": [
+    "Shout_ArmsOfHadar_3"
+   ],
+   "4": [
+    "Shout_ArmsOfHadar_4"
+   ],
+   "5": [
+    "Shout_ArmsOfHadar_5"
+   ],
+   "6": [
+    "Shout_ArmsOfHadar_6"
+   ]
+  },
+  "Shout_AuraOfVitality": {
+   "4": [
+    "Shout_AuraOfVitality_4"
+   ],
+   "5": [
+    "Shout_AuraOfVitality_5"
+   ],
+   "6": [
+    "Shout_AuraOfVitality_6"
+   ]
+  },
+  "Shout_BeaconOfHope": {
+   "4": [
+    "Shout_BeaconOfHope_4"
+   ],
+   "5": [
+    "Shout_BeaconOfHope_5"
+   ],
+   "6": [
+    "Shout_BeaconOfHope_6"
+   ]
+  },
+  "Shout_Blink": {
+   "4": [
+    "Shout_Blink_4"
+   ],
+   "5": [
+    "Shout_Blink_5"
+   ],
+   "6": [
+    "Shout_Blink_6"
+   ]
+  },
+  "Shout_Blur": {
+   "3": [
+    "Shout_Blur_3"
+   ],
+   "4": [
+    "Shout_Blur_4"
+   ],
+   "5": [
+    "Shout_Blur_5"
+   ],
+   "6": [
+    "Shout_Blur_6"
+   ]
+  },
+  "Shout_CreateSorceryPoints": {
+   "2": [
+    "Shout_CreateSorceryPoints_2"
+   ],
+   "3": [
+    "Shout_CreateSorceryPoints_3"
+   ],
+   "4": [
+    "Shout_CreateSorceryPoints_4"
+   ],
+   "5": [
+    "Shout_CreateSorceryPoints_5"
+   ]
+  },
+  "Shout_CreateSpellSlot": {
+   "2": [
+    "Shout_CreateSpellSlot_2"
+   ],
+   "3": [
+    "Shout_CreateSpellSlot_3"
+   ],
+   "4": [
+    "Shout_CreateSpellSlot_4"
+   ],
+   "5": [
+    "Shout_CreateSpellSlot_5"
+   ]
+  },
+  "Shout_CrusadersMantle": {
+   "4": [
+    "Shout_CrusadersMantle_4"
+   ],
+   "5": [
+    "Shout_CrusadersMantle_5"
+   ],
+   "6": [
+    "Shout_CrusadersMantle_6"
+   ]
+  },
+  "Shout_DestructiveWave": {
+   "6": [
+    "Shout_DestructiveWave_Necrotic_6",
+    "Shout_DestructiveWave_Radiant_6"
+   ]
+  },
+  "Shout_DetectThoughts": {
+   "3": [
+    "Shout_DetectThoughts_3"
+   ],
+   "4": [
+    "Shout_DetectThoughts_4"
+   ],
+   "5": [
+    "Shout_DetectThoughts_5"
+   ],
+   "6": [
+    "Shout_DetectThoughts_6"
+   ]
+  },
+  "Shout_DispelEvilAndGood": {
+   "6": [
+    "Shout_DispelEvilAndGood_6"
+   ]
+  },
+  "Shout_DivineFavor": {
+   "2": [
+    "Shout_DivineFavor_2"
+   ],
+   "3": [
+    "Shout_DivineFavor_3"
+   ],
+   "4": [
+    "Shout_DivineFavor_4"
+   ],
+   "5": [
+    "Shout_DivineFavor_5"
+   ],
+   "6": [
+    "Shout_DivineFavor_6"
+   ]
+  },
+  "Shout_ExpeditiousRetreat": {
+   "2": [
+    "Shout_ExpeditiousRetreat_2"
+   ],
+   "3": [
+    "Shout_ExpeditiousRetreat_3"
+   ],
+   "4": [
+    "Shout_ExpeditiousRetreat_4"
+   ],
+   "5": [
+    "Shout_ExpeditiousRetreat_5"
+   ],
+   "6": [
+    "Shout_ExpeditiousRetreat_6"
+   ]
+  },
+  "Shout_FalseLife": {
+   "2": [
+    "Shout_FalseLife_2"
+   ],
+   "3": [
+    "Shout_FalseLife_3"
+   ],
+   "4": [
+    "Shout_FalseLife_4"
+   ],
+   "5": [
+    "Shout_FalseLife_5"
+   ],
+   "6": [
+    "Shout_FalseLife_6"
+   ]
+  },
+  "Shout_FeatherFall": {
+   "2": [
+    "Shout_FeatherFall_2"
+   ],
+   "3": [
+    "Shout_FeatherFall_3"
+   ],
+   "4": [
+    "Shout_FeatherFall_4"
+   ],
+   "5": [
+    "Shout_FeatherFall_5"
+   ],
+   "6": [
+    "Shout_FeatherFall_6"
+   ]
+  },
+  "Shout_FireShield": {
+   "5": [
+    "Shout_FireShield_5"
+   ],
+   "6": [
+    "Shout_FireShield_6"
+   ]
+  },
+  "Shout_FireShield_Chill": {
+   "5": [
+    "Shout_FireShield_Chill_5"
+   ],
+   "6": [
+    "Shout_FireShield_Chill_6"
+   ]
+  },
+  "Shout_FireShield_Warm": {
+   "5": [
+    "Shout_FireShield_Warm_5"
+   ],
+   "6": [
+    "Shout_FireShield_Warm_6"
+   ]
+  },
+  "Shout_FlameBlade": {
+   "3": [
+    "Shout_FlameBlade_3"
+   ],
+   "4": [
+    "Shout_FlameBlade_4"
+   ],
+   "5": [
+    "Shout_FlameBlade_5"
+   ],
+   "6": [
+    "Shout_FlameBlade_6"
+   ]
+  },
+  "Shout_HealingWord_Mass": {
+   "4": [
+    "Shout_HealingWord_Mass_4"
+   ],
+   "5": [
+    "Shout_HealingWord_Mass_5"
+   ],
+   "6": [
+    "Shout_HealingWord_Mass_6"
+   ]
+  },
+  "Shout_HellishRebuke": {
+   "2": [
+    "Shout_HellishRebuke_2"
+   ],
+   "3": [
+    "Shout_HellishRebuke_3"
+   ],
+   "4": [
+    "Shout_HellishRebuke_4"
+   ],
+   "5": [
+    "Shout_HellishRebuke_5"
+   ],
+   "6": [
+    "Shout_HellishRebuke_6"
+   ]
+  },
+  "Shout_MAG_SpellSlotRestoration": {
+   "2": [
+    "Shout_MAG_SpellSlotRestoration_2"
+   ],
+   "3": [
+    "Shout_MAG_SpellSlotRestoration_3"
+   ],
+   "4": [
+    "Shout_MAG_SpellSlotRestoration_4"
+   ],
+   "5": [
+    "Shout_MAG_SpellSlotRestoration_5"
+   ],
+   "6": [
+    "Shout_MAG_SpellSlotRestoration_6"
+   ]
+  },
+  "Shout_MAG_SpellSlotRestoration_PearlOfPower": {
+   "2": [
+    "Shout_MAG_SpellSlotRestoration_PearlOfPower_2"
+   ],
+   "3": [
+    "Shout_MAG_SpellSlotRestoration_PearlOfPower_3"
+   ]
+  },
+  "Shout_MirrorImage": {
+   "3": [
+    "Shout_MirrorImage_3"
+   ],
+   "4": [
+    "Shout_MirrorImage_4"
+   ],
+   "5": [
+    "Shout_MirrorImage_5"
+   ],
+   "6": [
+    "Shout_MirrorImage_6"
+   ]
+  },
+  "Shout_NaturalRecovery": {
+   "2": [
+    "Shout_NaturalRecovery_2"
+   ],
+   "3": [
+    "Shout_NaturalRecovery_3"
+   ],
+   "4": [
+    "Shout_NaturalRecovery_4"
+   ],
+   "5": [
+    "Shout_NaturalRecovery_5"
+   ]
+  },
+  "Shout_PassWithoutTrace": {
+   "3": [
+    "Shout_PassWithoutTrace_3"
+   ],
+   "4": [
+    "Shout_PassWithoutTrace_4"
+   ],
+   "5": [
+    "Shout_PassWithoutTrace_5"
+   ],
+   "6": [
+    "Shout_PassWithoutTrace_6"
+   ]
+  },
+  "Shout_PrayerOfHealing": {
+   "3": [
+    "Shout_PrayerOfHealing_3"
+   ],
+   "4": [
+    "Shout_PrayerOfHealing_4"
+   ],
+   "5": [
+    "Shout_PrayerOfHealing_5"
+   ],
+   "6": [
+    "Shout_PrayerOfHealing_6"
+   ]
+  },
+  "Shout_SeeInvisibility": {
+   "3": [
+    "Shout_SeeInvisibility_3"
+   ],
+   "4": [
+    "Shout_SeeInvisibility_4"
+   ],
+   "5": [
+    "Shout_SeeInvisibility_5"
+   ],
+   "6": [
+    "Shout_SeeInvisibility_6"
+   ]
+  },
+  "Shout_ShadowBlade_Class": {
+   "3": [
+    "Shout_ShadowBlade_Class_3"
+   ],
+   "4": [
+    "Shout_ShadowBlade_Class_4"
+   ],
+   "5": [
+    "Shout_ShadowBlade_Class_5"
+   ],
+   "6": [
+    "Shout_ShadowBlade_Class_6"
+   ]
+  },
+  "Shout_Shield_Sorcerer": {
+   "2": [
+    "Shout_Shield_Sorcerer_2"
+   ],
+   "3": [
+    "Shout_Shield_Sorcerer_3"
+   ],
+   "4": [
+    "Shout_Shield_Sorcerer_4"
+   ],
+   "5": [
+    "Shout_Shield_Sorcerer_5"
+   ],
+   "6": [
+    "Shout_Shield_Sorcerer_6"
+   ]
+  },
+  "Shout_Shield_Warlock": {
+   "2": [
+    "Shout_Shield_Warlock_2"
+   ],
+   "3": [
+    "Shout_Shield_Warlock_3"
+   ],
+   "4": [
+    "Shout_Shield_Warlock_4"
+   ],
+   "5": [
+    "Shout_Shield_Warlock_5"
+   ],
+   "6": [
+    "Shout_Shield_Warlock_6"
+   ]
+  },
+  "Shout_Shield_Wizard": {
+   "2": [
+    "Shout_Shield_Wizard_2"
+   ],
+   "3": [
+    "Shout_Shield_Wizard_3"
+   ],
+   "4": [
+    "Shout_Shield_Wizard_4"
+   ],
+   "5": [
+    "Shout_Shield_Wizard_5"
+   ],
+   "6": [
+    "Shout_Shield_Wizard_6"
+   ]
+  },
+  "Shout_SpeakWithAnimals": {
+   "2": [
+    "Shout_SpeakWithAnimals_2"
+   ],
+   "3": [
+    "Shout_SpeakWithAnimals_3"
+   ],
+   "4": [
+    "Shout_SpeakWithAnimals_4"
+   ],
+   "5": [
+    "Shout_SpeakWithAnimals_5"
+   ],
+   "6": [
+    "Shout_SpeakWithAnimals_6"
+   ]
+  },
+  "Shout_SpiritGuardians": {
+   "4": [
+    "Shout_SpiritGuardians_Necrotic_4",
+    "Shout_SpiritGuardians_Radiant_4"
+   ],
+   "5": [
+    "Shout_SpiritGuardians_Necrotic_5",
+    "Shout_SpiritGuardians_Radiant_5"
+   ],
+   "6": [
+    "Shout_SpiritGuardians_Necrotic_6",
+    "Shout_SpiritGuardians_Radiant_6"
+   ]
+  },
+  "Shout_WildShape_Combat_Heal": {
+   "2": [
+    "Shout_WildShape_Combat_Heal_2"
+   ],
+   "3": [
+    "Shout_WildShape_Combat_Heal_3"
+   ],
+   "4": [
+    "Shout_WildShape_Combat_Heal_4"
+   ],
+   "5": [
+    "Shout_WildShape_Combat_Heal_5"
+   ],
+   "6": [
+    "Shout_WildShape_Combat_Heal_6"
+   ]
+  },
+  "Target_AnimalFriendship": {
+   "2": [
+    "Target_AnimalFriendship_2"
+   ],
+   "3": [
+    "Target_AnimalFriendship_3"
+   ],
+   "4": [
+    "Target_AnimalFriendship_4"
+   ],
+   "5": [
+    "Target_AnimalFriendship_5"
+   ],
+   "6": [
+    "Target_AnimalFriendship_6"
+   ]
+  },
+  "Target_AnimateDead": {
+   "5": [
+    "Target_AnimateDead_FlyingGhoul",
+    "Target_AnimateDead_Ghoul"
+   ],
+   "6": [
+    "Target_AnimateDead_FlyingGhoul_6",
+    "Target_AnimateDead_Ghoul_6"
+   ],
+   "4": [
+    "Target_AnimateDead_Skeleton_4",
+    "Target_AnimateDead_Zombie_4"
+   ]
+  },
+  "Target_ArcaneLock": {
+   "3": [
+    "Target_ArcaneLock_3"
+   ],
+   "4": [
+    "Target_ArcaneLock_4"
+   ],
+   "5": [
+    "Target_ArcaneLock_5"
+   ],
+   "6": [
+    "Target_ArcaneLock_6"
+   ]
+  },
+  "Target_Bane": {
+   "2": [
+    "Target_Bane_2"
+   ],
+   "3": [
+    "Target_Bane_3"
+   ],
+   "4": [
+    "Target_Bane_4"
+   ],
+   "5": [
+    "Target_Bane_5"
+   ],
+   "6": [
+    "Target_Bane_6"
+   ]
+  },
+  "Target_Bane_ThiefOfFiveFates": {
+   "2": [
+    "Target_Bane_ThiefOfFiveFates_2"
+   ],
+   "3": [
+    "Target_Bane_ThiefOfFiveFates_3"
+   ],
+   "4": [
+    "Target_Bane_ThiefOfFiveFates_4"
+   ],
+   "5": [
+    "Target_Bane_ThiefOfFiveFates_5"
+   ],
+   "6": [
+    "Target_Bane_ThiefOfFiveFates_6"
+   ]
+  },
+  "Target_Banishment": {
+   "5": [
+    "Target_Banishment_5"
+   ],
+   "6": [
+    "Target_Banishment_6"
+   ]
+  },
+  "Target_Barkskin": {
+   "3": [
+    "Target_Barkskin_3"
+   ],
+   "4": [
+    "Target_Barkskin_4"
+   ],
+   "5": [
+    "Target_Barkskin_5"
+   ],
+   "6": [
+    "Target_Barkskin_6"
+   ]
+  },
+  "Target_BestowCurse": {
+   "4": [
+    "Target_BestowCurse_4"
+   ],
+   "5": [
+    "Target_BestowCurse_5"
+   ],
+   "6": [
+    "Target_BestowCurse_6"
+   ]
+  },
+  "Target_BestowCurse_Ability_Charisma": {
+   "4": [
+    "Target_BestowCurse_Ability_Charisma_4"
+   ],
+   "5": [
+    "Target_BestowCurse_Ability_Charisma_5"
+   ],
+   "6": [
+    "Target_BestowCurse_Ability_Charisma_6"
+   ]
+  },
+  "Target_BestowCurse_Ability_Constitution": {
+   "4": [
+    "Target_BestowCurse_Ability_Constitution_4"
+   ],
+   "5": [
+    "Target_BestowCurse_Ability_Constitution_5"
+   ],
+   "6": [
+    "Target_BestowCurse_Ability_Constitution_6"
+   ]
+  },
+  "Target_BestowCurse_Ability_Dexterity": {
+   "4": [
+    "Target_BestowCurse_Ability_Dexterity_4"
+   ],
+   "5": [
+    "Target_BestowCurse_Ability_Dexterity_5"
+   ],
+   "6": [
+    "Target_BestowCurse_Ability_Dexterity_6"
+   ]
+  },
+  "Target_BestowCurse_Ability_Intelligence": {
+   "4": [
+    "Target_BestowCurse_Ability_Intelligence_4"
+   ],
+   "5": [
+    "Target_BestowCurse_Ability_Intelligence_5"
+   ],
+   "6": [
+    "Target_BestowCurse_Ability_Intelligence_6"
+   ]
+  },
+  "Target_BestowCurse_Ability_Strength": {
+   "4": [
+    "Target_BestowCurse_Ability_Strength_4"
+   ],
+   "5": [
+    "Target_BestowCurse_Ability_Strength_5"
+   ],
+   "6": [
+    "Target_BestowCurse_Ability_Strength_6"
+   ]
+  },
+  "Target_BestowCurse_Ability_Wisdom": {
+   "4": [
+    "Target_BestowCurse_Ability_Wisdom_4"
+   ],
+   "5": [
+    "Target_BestowCurse_Ability_Wisdom_5"
+   ],
+   "6": [
+    "Target_BestowCurse_Ability_Wisdom_6"
+   ]
+  },
+  "Target_BestowCurse_Attack": {
+   "4": [
+    "Target_BestowCurse_Attack_4"
+   ],
+   "5": [
+    "Target_BestowCurse_Attack_5"
+   ],
+   "6": [
+    "Target_BestowCurse_Attack_6"
+   ]
+  },
+  "Target_BestowCurse_ExtraDamage": {
+   "4": [
+    "Target_BestowCurse_ExtraDamage_4"
+   ],
+   "5": [
+    "Target_BestowCurse_ExtraDamage_5"
+   ],
+   "6": [
+    "Target_BestowCurse_ExtraDamage_6"
+   ]
+  },
+  "Target_BestowCurse_SkipTurn": {
+   "4": [
+    "Target_BestowCurse_SkipTurn_4"
+   ],
+   "5": [
+    "Target_BestowCurse_SkipTurn_5"
+   ],
+   "6": [
+    "Target_BestowCurse_SkipTurn_6"
+   ]
+  },
+  "Target_BlackTentacles": {
+   "5": [
+    "Target_BlackTentacles_5"
+   ],
+   "6": [
+    "Target_BlackTentacles_6"
+   ]
+  },
+  "Target_Bless": {
+   "2": [
+    "Target_Bless_2"
+   ],
+   "3": [
+    "Target_Bless_3"
+   ],
+   "4": [
+    "Target_Bless_4"
+   ],
+   "5": [
+    "Target_Bless_5"
+   ],
+   "6": [
+    "Target_Bless_6"
+   ]
+  },
+  "Target_Blight": {
+   "5": [
+    "Target_Blight_5"
+   ],
+   "6": [
+    "Target_Blight_6"
+   ]
+  },
+  "Target_Blindness": {
+   "3": [
+    "Target_Blindness_3"
+   ],
+   "4": [
+    "Target_Blindness_4"
+   ],
+   "5": [
+    "Target_Blindness_5"
+   ],
+   "6": [
+    "Target_Blindness_6"
+   ]
+  },
+  "Target_CallLightning": {
+   "4": [
+    "Target_CallLightning_4"
+   ],
+   "5": [
+    "Target_CallLightning_5"
+   ],
+   "6": [
+    "Target_CallLightning_6"
+   ]
+  },
+  "Target_CallLightning_LightningBolt": {
+   "4": [
+    "Target_CallLightning_LightningBolt_4"
+   ],
+   "5": [
+    "Target_CallLightning_LightningBolt_5"
+   ],
+   "6": [
+    "Target_CallLightning_LightningBolt_6"
+   ]
+  },
+  "Target_CalmEmotions": {
+   "3": [
+    "Target_CalmEmotions_3"
+   ],
+   "4": [
+    "Target_CalmEmotions_4"
+   ],
+   "5": [
+    "Target_CalmEmotions_5"
+   ],
+   "6": [
+    "Target_CalmEmotions_6"
+   ]
+  },
+  "Target_CharmPerson": {
+   "2": [
+    "Target_CharmPerson_2"
+   ],
+   "3": [
+    "Target_CharmPerson_3"
+   ],
+   "4": [
+    "Target_CharmPerson_4"
+   ],
+   "5": [
+    "Target_CharmPerson_5"
+   ],
+   "6": [
+    "Target_CharmPerson_6"
+   ]
+  },
+  "Target_CloudOfDaggers": {
+   "3": [
+    "Target_CloudOfDaggers_3"
+   ],
+   "4": [
+    "Target_CloudOfDaggers_4"
+   ],
+   "5": [
+    "Target_CloudOfDaggers_5"
+   ],
+   "6": [
+    "Target_CloudOfDaggers_6"
+   ]
+  },
+  "Target_Cloudkill": {
+   "6": [
+    "Target_Cloudkill_6"
+   ]
+  },
+  "Target_Command_Approach": {
+   "2": [
+    "Target_Command_Approach_2"
+   ],
+   "3": [
+    "Target_Command_Approach_3"
+   ],
+   "4": [
+    "Target_Command_Approach_4"
+   ],
+   "5": [
+    "Target_Command_Approach_5"
+   ],
+   "6": [
+    "Target_Command_Approach_6"
+   ]
+  },
+  "Target_Command_Container": {
+   "2": [
+    "Target_Command_Container_2"
+   ],
+   "3": [
+    "Target_Command_Container_3"
+   ],
+   "4": [
+    "Target_Command_Container_4"
+   ],
+   "5": [
+    "Target_Command_Container_5"
+   ],
+   "6": [
+    "Target_Command_Container_6"
+   ]
+  },
+  "Target_Command_Drop": {
+   "2": [
+    "Target_Command_Drop_2"
+   ],
+   "3": [
+    "Target_Command_Drop_3"
+   ],
+   "4": [
+    "Target_Command_Drop_4"
+   ],
+   "5": [
+    "Target_Command_Drop_5"
+   ],
+   "6": [
+    "Target_Command_Drop_6"
+   ]
+  },
+  "Target_Command_Flee": {
+   "2": [
+    "Target_Command_Flee_2"
+   ],
+   "3": [
+    "Target_Command_Flee_3"
+   ],
+   "4": [
+    "Target_Command_Flee_4"
+   ],
+   "5": [
+    "Target_Command_Flee_5"
+   ],
+   "6": [
+    "Target_Command_Flee_6"
+   ]
+  },
+  "Target_Command_Grovel": {
+   "2": [
+    "Target_Command_Grovel_2"
+   ],
+   "3": [
+    "Target_Command_Grovel_3"
+   ],
+   "4": [
+    "Target_Command_Grovel_4"
+   ],
+   "5": [
+    "Target_Command_Grovel_5"
+   ],
+   "6": [
+    "Target_Command_Grovel_6"
+   ]
+  },
+  "Target_Command_Halt": {
+   "2": [
+    "Target_Command_Halt_2"
+   ],
+   "3": [
+    "Target_Command_Halt_3"
+   ],
+   "4": [
+    "Target_Command_Halt_4"
+   ],
+   "5": [
+    "Target_Command_Halt_5"
+   ],
+   "6": [
+    "Target_Command_Halt_6"
+   ]
+  },
+  "Target_CompelledDuel": {
+   "2": [
+    "Target_CompelledDuel_2"
+   ],
+   "3": [
+    "Target_CompelledDuel_3"
+   ],
+   "4": [
+    "Target_CompelledDuel_4"
+   ],
+   "5": [
+    "Target_CompelledDuel_5"
+   ],
+   "6": [
+    "Target_CompelledDuel_6"
+   ]
+  },
+  "Target_Confusion": {
+   "5": [
+    "Target_Confusion_5"
+   ],
+   "6": [
+    "Target_Confusion_6"
+   ]
+  },
+  "Target_ConjureElemental_Container": {
+   "6": [
+    "Target_ConjureElemental_Container_6",
+    "Target_ConjureElemental_Myrmidon_Air",
+    "Target_ConjureElemental_Myrmidon_Earth",
+    "Target_ConjureElemental_Myrmidon_Fire",
+    "Target_ConjureElemental_Myrmidon_Water"
+   ]
+  },
+  "Target_ConjureElementals_Minor_Container": {
+   "5": [
+    "Target_ConjureElementals_Minor_Azer_5",
+    "Target_ConjureElementals_Minor_Container_5",
+    "Target_ConjureElementals_Minor_IceMephit_5",
+    "Target_ConjureElementals_Minor_MudMephit_5"
+   ],
+   "6": [
+    "Target_ConjureElementals_Minor_Azer_6",
+    "Target_ConjureElementals_Minor_Container_6",
+    "Target_ConjureElementals_Minor_IceMephit_6",
+    "Target_ConjureElementals_Minor_MudMephit_6"
+   ]
+  },
+  "Target_ConjureWoodlandBeings": {
+   "5": [
+    "Target_ConjureWoodlandBeings_5"
+   ],
+   "6": [
+    "Target_ConjureWoodlandBeings_6"
+   ]
+  },
+  "Target_Contagion": {
+   "6": [
+    "Target_Contagion_BlindingSickness_6",
+    "Target_Contagion_FilthFever_6",
+    "Target_Contagion_FleshRot_6",
+    "Target_Contagion_Mindfire_6",
+    "Target_Contagion_Seizure_6",
+    "Target_Contagion_SlimyDoom_6"
+   ]
+  },
+  "Target_Counterspell": {
+   "4": [
+    "Target_Counterspell_4"
+   ],
+   "5": [
+    "Target_Counterspell_5"
+   ],
+   "6": [
+    "Target_Counterspell_6"
+   ]
+  },
+  "Target_CreateDestroyWater": {
+   "2": [
+    "Target_CreateWater_2",
+    "Target_DestroyWater_2"
+   ],
+   "3": [
+    "Target_CreateWater_3",
+    "Target_DestroyWater_3"
+   ],
+   "4": [
+    "Target_CreateWater_4",
+    "Target_DestroyWater_4"
+   ],
+   "5": [
+    "Target_CreateWater_5",
+    "Target_DestroyWater_5"
+   ],
+   "6": [
+    "Target_CreateWater_6",
+    "Target_DestroyWater_6"
+   ]
+  },
+  "Target_CrownOfMadness": {
+   "3": [
+    "Target_CrownOfMadness_3"
+   ],
+   "4": [
+    "Target_CrownOfMadness_4"
+   ],
+   "5": [
+    "Target_CrownOfMadness_5"
+   ],
+   "6": [
+    "Target_CrownOfMadness_6"
+   ]
+  },
+  "Target_CureWounds": {
+   "2": [
+    "Target_CureWounds_2"
+   ],
+   "3": [
+    "Target_CureWounds_3"
+   ],
+   "4": [
+    "Target_CureWounds_4"
+   ],
+   "5": [
+    "Target_CureWounds_5"
+   ],
+   "6": [
+    "Target_CureWounds_6"
+   ]
+  },
+  "Target_CureWounds_Mass": {
+   "6": [
+    "Target_CureWounds_Mass_6"
+   ]
+  },
+  "Target_Darkness": {
+   "3": [
+    "Target_Darkness_3"
+   ],
+   "4": [
+    "Target_Darkness_4"
+   ],
+   "5": [
+    "Target_Darkness_5"
+   ],
+   "6": [
+    "Target_Darkness_6"
+   ]
+  },
+  "Target_Darkvision": {
+   "3": [
+    "Target_Darkvision_3"
+   ],
+   "4": [
+    "Target_Darkvision_4"
+   ],
+   "5": [
+    "Target_Darkvision_5"
+   ],
+   "6": [
+    "Target_Darkvision_6"
+   ]
+  },
+  "Target_Daylight": {
+   "4": [
+    "Target_Daylight_4"
+   ],
+   "5": [
+    "Target_Daylight_5"
+   ],
+   "6": [
+    "Target_Daylight_6"
+   ]
+  },
+  "Target_Daylight_Container": {
+   "4": [
+    "Target_Daylight_Container_4"
+   ],
+   "5": [
+    "Target_Daylight_Container_5"
+   ],
+   "6": [
+    "Target_Daylight_Container_6"
+   ]
+  },
+  "Target_Daylight_Enchantment": {
+   "4": [
+    "Target_Daylight_Enchantment_4"
+   ],
+   "5": [
+    "Target_Daylight_Enchantment_5"
+   ],
+   "6": [
+    "Target_Daylight_Enchantment_6"
+   ]
+  },
+  "Target_DeathWard": {
+   "5": [
+    "Target_DeathWard_5"
+   ],
+   "6": [
+    "Target_DeathWard_6"
+   ]
+  },
+  "Target_DispelMagic": {
+   "4": [
+    "Target_DispelMagic_4"
+   ],
+   "5": [
+    "Target_DispelMagic_5"
+   ],
+   "6": [
+    "Target_DispelMagic_6"
+   ]
+  },
+  "Target_DissonantWhispers": {
+   "2": [
+    "Target_DissonantWhispers_2"
+   ],
+   "3": [
+    "Target_DissonantWhispers_3"
+   ],
+   "4": [
+    "Target_DissonantWhispers_4"
+   ],
+   "5": [
+    "Target_DissonantWhispers_5"
+   ],
+   "6": [
+    "Target_DissonantWhispers_6"
+   ]
+  },
+  "Target_DominateBeast": {
+   "5": [
+    "Target_DominateBeast_5"
+   ],
+   "6": [
+    "Target_DominateBeast_6"
+   ]
+  },
+  "Target_DominatePerson": {
+   "6": [
+    "Target_DominatePerson_6"
+   ]
+  },
+  "Target_ElementalWeapon": {
+   "4": [
+    "Target_ElementalWeapon_4"
+   ],
+   "5": [
+    "Target_ElementalWeapon_5"
+   ],
+   "6": [
+    "Target_ElementalWeapon_6"
+   ]
+  },
+  "Target_ElementalWeapon_Acid": {
+   "4": [
+    "Target_ElementalWeapon_Acid_4"
+   ],
+   "5": [
+    "Target_ElementalWeapon_Acid_5"
+   ],
+   "6": [
+    "Target_ElementalWeapon_Acid_6"
+   ]
+  },
+  "Target_ElementalWeapon_Cold": {
+   "4": [
+    "Target_ElementalWeapon_Cold_4"
+   ],
+   "5": [
+    "Target_ElementalWeapon_Cold_5"
+   ],
+   "6": [
+    "Target_ElementalWeapon_Cold_6"
+   ]
+  },
+  "Target_ElementalWeapon_Fire": {
+   "4": [
+    "Target_ElementalWeapon_Fire_4"
+   ],
+   "5": [
+    "Target_ElementalWeapon_Fire_5"
+   ],
+   "6": [
+    "Target_ElementalWeapon_Fire_6"
+   ]
+  },
+  "Target_ElementalWeapon_Lightning": {
+   "4": [
+    "Target_ElementalWeapon_Lightning_4"
+   ],
+   "5": [
+    "Target_ElementalWeapon_Lightning_5"
+   ],
+   "6": [
+    "Target_ElementalWeapon_Lightning_6"
+   ]
+  },
+  "Target_ElementalWeapon_Thunder": {
+   "4": [
+    "Target_ElementalWeapon_Thunder_4"
+   ],
+   "5": [
+    "Target_ElementalWeapon_Thunder_5"
+   ],
+   "6": [
+    "Target_ElementalWeapon_Thunder_6"
+   ]
+  },
+  "Target_EnhanceAbility": {
+   "3": [
+    "Target_EnhanceAbility_3"
+   ],
+   "4": [
+    "Target_EnhanceAbility_4"
+   ],
+   "5": [
+    "Target_EnhanceAbility_5"
+   ],
+   "6": [
+    "Target_EnhanceAbility_6"
+   ]
+  },
+  "Target_EnhanceAbility_BearsEndurance": {
+   "3": [
+    "Target_EnhanceAbility_BearsEndurance_3"
+   ],
+   "4": [
+    "Target_EnhanceAbility_BearsEndurance_4"
+   ],
+   "5": [
+    "Target_EnhanceAbility_BearsEndurance_5"
+   ],
+   "6": [
+    "Target_EnhanceAbility_BearsEndurance_6"
+   ]
+  },
+  "Target_EnhanceAbility_BullsStrength": {
+   "3": [
+    "Target_EnhanceAbility_BullsStrength_3"
+   ],
+   "4": [
+    "Target_EnhanceAbility_BullsStrength_4"
+   ],
+   "5": [
+    "Target_EnhanceAbility_BullsStrength_5"
+   ],
+   "6": [
+    "Target_EnhanceAbility_BullsStrength_6"
+   ]
+  },
+  "Target_EnhanceAbility_CatsGrace": {
+   "3": [
+    "Target_EnhanceAbility_CatsGrace_3"
+   ],
+   "4": [
+    "Target_EnhanceAbility_CatsGrace_4"
+   ],
+   "5": [
+    "Target_EnhanceAbility_CatsGrace_5"
+   ],
+   "6": [
+    "Target_EnhanceAbility_CatsGrace_6"
+   ]
+  },
+  "Target_EnhanceAbility_EaglesSplendor": {
+   "3": [
+    "Target_EnhanceAbility_EaglesSplendor_3"
+   ],
+   "4": [
+    "Target_EnhanceAbility_EaglesSplendor_4"
+   ],
+   "5": [
+    "Target_EnhanceAbility_EaglesSplendor_5"
+   ],
+   "6": [
+    "Target_EnhanceAbility_EaglesSplendor_6"
+   ]
+  },
+  "Target_EnhanceAbility_FoxsCunning": {
+   "3": [
+    "Target_EnhanceAbility_FoxsCunning_3"
+   ],
+   "4": [
+    "Target_EnhanceAbility_FoxsCunning_4"
+   ],
+   "5": [
+    "Target_EnhanceAbility_FoxsCunning_5"
+   ],
+   "6": [
+    "Target_EnhanceAbility_FoxsCunning_6"
+   ]
+  },
+  "Target_EnhanceAbility_OwlsWisdom": {
+   "3": [
+    "Target_EnhanceAbility_OwlsWisdom_3"
+   ],
+   "4": [
+    "Target_EnhanceAbility_OwlsWisdom_4"
+   ],
+   "5": [
+    "Target_EnhanceAbility_OwlsWisdom_5"
+   ],
+   "6": [
+    "Target_EnhanceAbility_OwlsWisdom_6"
+   ]
+  },
+  "Target_EnlargeReduce": {
+   "3": [
+    "Target_Enlarge_3",
+    "Target_Reduce_3"
+   ],
+   "4": [
+    "Target_Enlarge_4",
+    "Target_Reduce_4"
+   ],
+   "5": [
+    "Target_Enlarge_5",
+    "Target_Reduce_5"
+   ],
+   "6": [
+    "Target_Enlarge_6",
+    "Target_Reduce_6"
+   ]
+  },
+  "Target_Entangle": {
+   "2": [
+    "Target_Entangle_2"
+   ],
+   "3": [
+    "Target_Entangle_3"
+   ],
+   "4": [
+    "Target_Entangle_4"
+   ],
+   "5": [
+    "Target_Entangle_5"
+   ],
+   "6": [
+    "Target_Entangle_6"
+   ]
+  },
+  "Target_Enthrall": {
+   "3": [
+    "Target_Enthrall_3"
+   ],
+   "4": [
+    "Target_Enthrall_4"
+   ],
+   "5": [
+    "Target_Enthrall_5"
+   ],
+   "6": [
+    "Target_Enthrall_6"
+   ]
+  },
+  "Target_FaerieFire": {
+   "2": [
+    "Target_FaerieFire_2"
+   ],
+   "3": [
+    "Target_FaerieFire_3"
+   ],
+   "4": [
+    "Target_FaerieFire_4"
+   ],
+   "5": [
+    "Target_FaerieFire_5"
+   ],
+   "6": [
+    "Target_FaerieFire_6"
+   ]
+  },
+  "Target_FeignDeath": {
+   "4": [
+    "Target_FeignDeath_4"
+   ],
+   "5": [
+    "Target_FeignDeath_5"
+   ],
+   "6": [
+    "Target_FeignDeath_6"
+   ]
+  },
+  "Target_FindFamiliar": {
+   "2": [
+    "Target_FindFamiliar_2"
+   ],
+   "3": [
+    "Target_FindFamiliar_3"
+   ],
+   "4": [
+    "Target_FindFamiliar_4"
+   ],
+   "5": [
+    "Target_FindFamiliar_5"
+   ],
+   "6": [
+    "Target_FindFamiliar_6"
+   ]
+  },
+  "Target_FindFamiliar_Cat": {
+   "2": [
+    "Target_FindFamiliar_Cat_2"
+   ],
+   "3": [
+    "Target_FindFamiliar_Cat_3"
+   ],
+   "4": [
+    "Target_FindFamiliar_Cat_4"
+   ],
+   "5": [
+    "Target_FindFamiliar_Cat_5"
+   ],
+   "6": [
+    "Target_FindFamiliar_Cat_6"
+   ]
+  },
+  "Target_FindFamiliar_Crab": {
+   "2": [
+    "Target_FindFamiliar_Crab_2"
+   ],
+   "3": [
+    "Target_FindFamiliar_Crab_3"
+   ],
+   "4": [
+    "Target_FindFamiliar_Crab_4"
+   ],
+   "5": [
+    "Target_FindFamiliar_Crab_5"
+   ],
+   "6": [
+    "Target_FindFamiliar_Crab_6"
+   ]
+  },
+  "Target_FindFamiliar_Frog": {
+   "2": [
+    "Target_FindFamiliar_Frog_2"
+   ],
+   "3": [
+    "Target_FindFamiliar_Frog_3"
+   ],
+   "4": [
+    "Target_FindFamiliar_Frog_4"
+   ],
+   "5": [
+    "Target_FindFamiliar_Frog_5"
+   ],
+   "6": [
+    "Target_FindFamiliar_Frog_6"
+   ]
+  },
+  "Target_FindFamiliar_Rat": {
+   "2": [
+    "Target_FindFamiliar_Rat_2"
+   ],
+   "3": [
+    "Target_FindFamiliar_Rat_3"
+   ],
+   "4": [
+    "Target_FindFamiliar_Rat_4"
+   ],
+   "5": [
+    "Target_FindFamiliar_Rat_5"
+   ],
+   "6": [
+    "Target_FindFamiliar_Rat_6"
+   ]
+  },
+  "Target_FindFamiliar_Raven": {
+   "2": [
+    "Target_FindFamiliar_Raven_2"
+   ],
+   "3": [
+    "Target_FindFamiliar_Raven_3"
+   ],
+   "4": [
+    "Target_FindFamiliar_Raven_4"
+   ],
+   "5": [
+    "Target_FindFamiliar_Raven_5"
+   ],
+   "6": [
+    "Target_FindFamiliar_Raven_6"
+   ]
+  },
+  "Target_FindFamiliar_Spider": {
+   "2": [
+    "Target_FindFamiliar_Spider_2"
+   ],
+   "3": [
+    "Target_FindFamiliar_Spider_3"
+   ],
+   "4": [
+    "Target_FindFamiliar_Spider_4"
+   ],
+   "5": [
+    "Target_FindFamiliar_Spider_5"
+   ],
+   "6": [
+    "Target_FindFamiliar_Spider_6"
+   ]
+  },
+  "Target_FlameStrike": {
+   "6": [
+    "Target_FlameStrike_6"
+   ]
+  },
+  "Target_FlamingSphere": {
+   "3": [
+    "Target_FlamingSphere_3"
+   ],
+   "4": [
+    "Target_FlamingSphere_4"
+   ],
+   "5": [
+    "Target_FlamingSphere_5"
+   ],
+   "6": [
+    "Target_FlamingSphere_6"
+   ]
+  },
+  "Target_Fly": {
+   "4": [
+    "Target_Fly_4"
+   ],
+   "5": [
+    "Target_Fly_5"
+   ],
+   "6": [
+    "Target_Fly_6"
+   ]
+  },
+  "Target_FogCloud": {
+   "2": [
+    "Target_FogCloud_2"
+   ],
+   "3": [
+    "Target_FogCloud_3"
+   ],
+   "4": [
+    "Target_FogCloud_4"
+   ],
+   "5": [
+    "Target_FogCloud_5"
+   ],
+   "6": [
+    "Target_FogCloud_6"
+   ]
+  },
+  "Target_FreedomOfMovement": {
+   "5": [
+    "Target_FreedomOfMovement_5"
+   ],
+   "6": [
+    "Target_FreedomOfMovement_6"
+   ]
+  },
+  "Target_GaseousForm": {
+   "4": [
+    "Target_GaseousForm_4"
+   ],
+   "5": [
+    "Target_GaseousForm_5"
+   ],
+   "6": [
+    "Target_GaseousForm_6"
+   ]
+  },
+  "Target_GlyphOfWarding": {
+   "4": [
+    "Target_GlyphOfWarding_Acid_4",
+    "Target_GlyphOfWarding_Cold_4",
+    "Target_GlyphOfWarding_Detonation_4",
+    "Target_GlyphOfWarding_Fire_4",
+    "Target_GlyphOfWarding_Lightning_4",
+    "Target_GlyphOfWarding_Sleep_4",
+    "Target_GlyphOfWarding_Thunder_4"
+   ],
+   "5": [
+    "Target_GlyphOfWarding_Acid_5",
+    "Target_GlyphOfWarding_Cold_5",
+    "Target_GlyphOfWarding_Detonation_5",
+    "Target_GlyphOfWarding_Fire_5",
+    "Target_GlyphOfWarding_Lightning_5",
+    "Target_GlyphOfWarding_Sleep_5",
+    "Target_GlyphOfWarding_Thunder_5"
+   ],
+   "6": [
+    "Target_GlyphOfWarding_Acid_6",
+    "Target_GlyphOfWarding_Cold_6",
+    "Target_GlyphOfWarding_Detonation_6",
+    "Target_GlyphOfWarding_Fire_6",
+    "Target_GlyphOfWarding_Lightning_6",
+    "Target_GlyphOfWarding_Sleep_6",
+    "Target_GlyphOfWarding_Thunder_6"
+   ]
+  },
+  "Target_Goodberry": {
+   "2": [
+    "Target_Goodberry_2"
+   ],
+   "3": [
+    "Target_Goodberry_3"
+   ],
+   "4": [
+    "Target_Goodberry_4"
+   ],
+   "5": [
+    "Target_Goodberry_5"
+   ],
+   "6": [
+    "Target_Goodberry_6"
+   ]
+  },
+  "Target_GraspingVine": {
+   "5": [
+    "Target_GraspingVine_5"
+   ],
+   "6": [
+    "Target_GraspingVine_6"
+   ]
+  },
+  "Target_Grease": {
+   "2": [
+    "Target_Grease_2"
+   ],
+   "3": [
+    "Target_Grease_3"
+   ],
+   "4": [
+    "Target_Grease_4"
+   ],
+   "5": [
+    "Target_Grease_5"
+   ],
+   "6": [
+    "Target_Grease_6"
+   ]
+  },
+  "Target_GreaterRestoration": {
+   "6": [
+    "Target_GreaterRestoration_6"
+   ]
+  },
+  "Target_GuardianOfFaith": {
+   "5": [
+    "Target_GuardianOfFaith_5"
+   ],
+   "6": [
+    "Target_GuardianOfFaith_6"
+   ]
+  },
+  "Target_Haste": {
+   "4": [
+    "Target_Haste_4"
+   ],
+   "5": [
+    "Target_Haste_5"
+   ],
+   "6": [
+    "Target_Haste_6"
+   ]
+  },
+  "Target_HealingWord": {
+   "2": [
+    "Target_HealingWord_2"
+   ],
+   "3": [
+    "Target_HealingWord_3"
+   ],
+   "4": [
+    "Target_HealingWord_4"
+   ],
+   "5": [
+    "Target_HealingWord_5"
+   ],
+   "6": [
+    "Target_HealingWord_6"
+   ]
+  },
+  "Target_HeatMetal": {
+   "3": [
+    "Target_HeatMetal_3"
+   ],
+   "4": [
+    "Target_HeatMetal_4"
+   ],
+   "5": [
+    "Target_HeatMetal_5"
+   ],
+   "6": [
+    "Target_HeatMetal_6"
+   ]
+  },
+  "Target_HeatMetal_Reapply": {
+   "3": [
+    "Target_HeatMetal_Reapply_3"
+   ],
+   "4": [
+    "Target_HeatMetal_Reapply_4"
+   ],
+   "5": [
+    "Target_HeatMetal_Reapply_5"
+   ],
+   "6": [
+    "Target_HeatMetal_Reapply_6"
+   ]
+  },
+  "Target_Heroism": {
+   "2": [
+    "Target_Heroism_2"
+   ],
+   "3": [
+    "Target_Heroism_3"
+   ],
+   "4": [
+    "Target_Heroism_4"
+   ],
+   "5": [
+    "Target_Heroism_5"
+   ],
+   "6": [
+    "Target_Heroism_6"
+   ]
+  },
+  "Target_Hex": {
+   "2": [
+    "Target_Hex_2"
+   ],
+   "3": [
+    "Target_Hex_3"
+   ],
+   "4": [
+    "Target_Hex_4"
+   ],
+   "5": [
+    "Target_Hex_5"
+   ],
+   "6": [
+    "Target_Hex_6"
+   ]
+  },
+  "Target_Hex_Charisma": {
+   "2": [
+    "Target_Hex_Charisma_2"
+   ],
+   "3": [
+    "Target_Hex_Charisma_3"
+   ],
+   "4": [
+    "Target_Hex_Charisma_4"
+   ],
+   "5": [
+    "Target_Hex_Charisma_5"
+   ],
+   "6": [
+    "Target_Hex_Charisma_6"
+   ]
+  },
+  "Target_Hex_Constitution": {
+   "2": [
+    "Target_Hex_Constitution_2"
+   ],
+   "3": [
+    "Target_Hex_Constitution_3"
+   ],
+   "4": [
+    "Target_Hex_Constitution_4"
+   ],
+   "5": [
+    "Target_Hex_Constitution_5"
+   ],
+   "6": [
+    "Target_Hex_Constitution_6"
+   ]
+  },
+  "Target_Hex_Dexterity": {
+   "2": [
+    "Target_Hex_Dexterity_2"
+   ],
+   "3": [
+    "Target_Hex_Dexterity_3"
+   ],
+   "4": [
+    "Target_Hex_Dexterity_4"
+   ],
+   "5": [
+    "Target_Hex_Dexterity_5"
+   ],
+   "6": [
+    "Target_Hex_Dexterity_6"
+   ]
+  },
+  "Target_Hex_Intelligence": {
+   "2": [
+    "Target_Hex_Intelligence_2"
+   ],
+   "3": [
+    "Target_Hex_Intelligence_3"
+   ],
+   "4": [
+    "Target_Hex_Intelligence_4"
+   ],
+   "5": [
+    "Target_Hex_Intelligence_5"
+   ],
+   "6": [
+    "Target_Hex_Intelligence_6"
+   ]
+  },
+  "Target_Hex_Strength": {
+   "2": [
+    "Target_Hex_Strength_2"
+   ],
+   "3": [
+    "Target_Hex_Strength_3"
+   ],
+   "4": [
+    "Target_Hex_Strength_4"
+   ],
+   "5": [
+    "Target_Hex_Strength_5"
+   ],
+   "6": [
+    "Target_Hex_Strength_6"
+   ]
+  },
+  "Target_Hex_Wisdom": {
+   "2": [
+    "Target_Hex_Wisdom_2"
+   ],
+   "3": [
+    "Target_Hex_Wisdom_3"
+   ],
+   "4": [
+    "Target_Hex_Wisdom_4"
+   ],
+   "5": [
+    "Target_Hex_Wisdom_5"
+   ],
+   "6": [
+    "Target_Hex_Wisdom_6"
+   ]
+  },
+  "Target_HideousLaughter": {
+   "2": [
+    "Target_HideousLaughter_2"
+   ],
+   "3": [
+    "Target_HideousLaughter_3"
+   ],
+   "4": [
+    "Target_HideousLaughter_4"
+   ],
+   "5": [
+    "Target_HideousLaughter_5"
+   ],
+   "6": [
+    "Target_HideousLaughter_6"
+   ]
+  },
+  "Target_HoldMonster": {
+   "6": [
+    "Target_HoldMonster_6"
+   ]
+  },
+  "Target_HoldPerson": {
+   "3": [
+    "Target_HoldPerson_3"
+   ],
+   "4": [
+    "Target_HoldPerson_4"
+   ],
+   "5": [
+    "Target_HoldPerson_5"
+   ],
+   "6": [
+    "Target_HoldPerson_6"
+   ]
+  },
+  "Target_HungerOfHadar": {
+   "4": [
+    "Target_HungerOfHadar_4"
+   ],
+   "5": [
+    "Target_HungerOfHadar_5"
+   ],
+   "6": [
+    "Target_HungerOfHadar_6"
+   ]
+  },
+  "Target_HuntersMark": {
+   "2": [
+    "Target_HuntersMark_2"
+   ],
+   "3": [
+    "Target_HuntersMark_3"
+   ],
+   "4": [
+    "Target_HuntersMark_4"
+   ],
+   "5": [
+    "Target_HuntersMark_5"
+   ],
+   "6": [
+    "Target_HuntersMark_6"
+   ]
+  },
+  "Target_HypnoticPattern": {
+   "4": [
+    "Target_HypnoticPattern_4"
+   ],
+   "5": [
+    "Target_HypnoticPattern_5"
+   ],
+   "6": [
+    "Target_HypnoticPattern_6"
+   ]
+  },
+  "Target_IceStorm": {
+   "5": [
+    "Target_IceStorm_5"
+   ],
+   "6": [
+    "Target_IceStorm_6"
+   ]
+  },
+  "Target_InflictWounds": {
+   "2": [
+    "Target_InflictWounds_2"
+   ],
+   "3": [
+    "Target_InflictWounds_3"
+   ],
+   "4": [
+    "Target_InflictWounds_4"
+   ],
+   "5": [
+    "Target_InflictWounds_5"
+   ],
+   "6": [
+    "Target_InflictWounds_6"
+   ]
+  },
+  "Target_InsectPlague": {
+   "6": [
+    "Target_InsectPlague_6"
+   ]
+  },
+  "Target_Invisibility": {
+   "3": [
+    "Target_Invisibility_3"
+   ],
+   "4": [
+    "Target_Invisibility_4"
+   ],
+   "5": [
+    "Target_Invisibility_5"
+   ],
+   "6": [
+    "Target_Invisibility_6"
+   ]
+  },
+  "Target_Invisibility_Greater": {
+   "5": [
+    "Target_Invisibility_Greater_5"
+   ],
+   "6": [
+    "Target_Invisibility_Greater_6"
+   ]
+  },
+  "Target_Jump": {
+   "2": [
+    "Target_Jump_2"
+   ],
+   "3": [
+    "Target_Jump_3"
+   ],
+   "4": [
+    "Target_Jump_4"
+   ],
+   "5": [
+    "Target_Jump_5"
+   ],
+   "6": [
+    "Target_Jump_6"
+   ]
+  },
+  "Target_Knock": {
+   "3": [
+    "Target_Knock_3"
+   ],
+   "4": [
+    "Target_Knock_4"
+   ],
+   "5": [
+    "Target_Knock_5"
+   ],
+   "6": [
+    "Target_Knock_6"
+   ]
+  },
+  "Target_LesserRestoration": {
+   "3": [
+    "Target_LesserRestoration_3"
+   ],
+   "4": [
+    "Target_LesserRestoration_4"
+   ],
+   "5": [
+    "Target_LesserRestoration_5"
+   ],
+   "6": [
+    "Target_LesserRestoration_6"
+   ]
+  },
+  "Target_Longstrider": {
+   "2": [
+    "Target_Longstrider_2"
+   ],
+   "3": [
+    "Target_Longstrider_3"
+   ],
+   "4": [
+    "Target_Longstrider_4"
+   ],
+   "5": [
+    "Target_Longstrider_5"
+   ],
+   "6": [
+    "Target_Longstrider_6"
+   ]
+  },
+  "Target_MageArmor": {
+   "2": [
+    "Target_MageArmor_2"
+   ],
+   "3": [
+    "Target_MageArmor_3"
+   ],
+   "4": [
+    "Target_MageArmor_4"
+   ],
+   "5": [
+    "Target_MageArmor_5"
+   ],
+   "6": [
+    "Target_MageArmor_6"
+   ]
+  },
+  "Target_MagicCircle": {
+   "4": [
+    "Target_MagicCircle_Elemental_4",
+    "Target_MagicCircle_Fiend_4",
+    "Target_MagicCircle_Undead_4"
+   ],
+   "5": [
+    "Target_MagicCircle_Elemental_5",
+    "Target_MagicCircle_Fiend_5",
+    "Target_MagicCircle_Undead_5"
+   ],
+   "6": [
+    "Target_MagicCircle_Elemental_6",
+    "Target_MagicCircle_Fiend_6",
+    "Target_MagicCircle_Undead_6"
+   ]
+  },
+  "Target_MagicWeapon": {
+   "3": [
+    "Target_MagicWeapon_3"
+   ],
+   "4": [
+    "Target_MagicWeapon_4"
+   ],
+   "5": [
+    "Target_MagicWeapon_5"
+   ],
+   "6": [
+    "Target_MagicWeapon_6"
+   ]
+  },
+  "Target_MistyStep": {
+   "3": [
+    "Target_MistyStep_3"
+   ],
+   "4": [
+    "Target_MistyStep_4"
+   ],
+   "5": [
+    "Target_MistyStep_5"
+   ],
+   "6": [
+    "Target_MistyStep_6"
+   ]
+  },
+  "Target_Moonbeam": {
+   "3": [
+    "Target_Moonbeam_3"
+   ],
+   "4": [
+    "Target_Moonbeam_4"
+   ],
+   "5": [
+    "Target_Moonbeam_5"
+   ],
+   "6": [
+    "Target_Moonbeam_6"
+   ]
+  },
+  "Target_Moonbeam_Move": {
+   "3": [
+    "Target_Moonbeam_Move_3"
+   ],
+   "4": [
+    "Target_Moonbeam_Move_4"
+   ],
+   "5": [
+    "Target_Moonbeam_Move_5"
+   ],
+   "6": [
+    "Target_Moonbeam_Move_6"
+   ]
+  },
+  "Target_PhantasmalForce": {
+   "3": [
+    "Target_PhantasmalForce_3"
+   ],
+   "4": [
+    "Target_PhantasmalForce_4"
+   ],
+   "5": [
+    "Target_PhantasmalForce_5"
+   ],
+   "6": [
+    "Target_PhantasmalForce_6"
+   ]
+  },
+  "Target_PhantasmalKiller": {
+   "5": [
+    "Target_PhantasmalKiller_5"
+   ],
+   "6": [
+    "Target_PhantasmalKiller_6"
+   ]
+  },
+  "Target_PlanarBinding": {
+   "6": [
+    "Target_PlanarBinding_6"
+   ]
+  },
+  "Target_PlantGrowth": {
+   "4": [
+    "Target_PlantGrowth_4"
+   ],
+   "5": [
+    "Target_PlantGrowth_5"
+   ],
+   "6": [
+    "Target_PlantGrowth_6"
+   ]
+  },
+  "Target_Polymorph": {
+   "5": [
+    "Target_Polymorph_5"
+   ],
+   "6": [
+    "Target_Polymorph_6"
+   ]
+  },
+  "Target_ProtectionFromEnergy": {
+   "4": [
+    "Target_ProtectionFromEnergy_Acid_4",
+    "Target_ProtectionFromEnergy_Cold_4",
+    "Target_ProtectionFromEnergy_Fire_4",
+    "Target_ProtectionFromEnergy_Lightning_4",
+    "Target_ProtectionFromEnergy_Thunder_4"
+   ],
+   "5": [
+    "Target_ProtectionFromEnergy_Acid_5",
+    "Target_ProtectionFromEnergy_Cold_5",
+    "Target_ProtectionFromEnergy_Fire_5",
+    "Target_ProtectionFromEnergy_Lightning_5",
+    "Target_ProtectionFromEnergy_Thunder_5"
+   ],
+   "6": [
+    "Target_ProtectionFromEnergy_Acid_6",
+    "Target_ProtectionFromEnergy_Cold_6",
+    "Target_ProtectionFromEnergy_Fire_6",
+    "Target_ProtectionFromEnergy_Lightning_6",
+    "Target_ProtectionFromEnergy_Thunder_6"
+   ]
+  },
+  "Target_ProtectionFromEvilAndGood": {
+   "2": [
+    "Target_ProtectionFromEvilAndGood_2"
+   ],
+   "3": [
+    "Target_ProtectionFromEvilAndGood_3"
+   ],
+   "4": [
+    "Target_ProtectionFromEvilAndGood_4"
+   ],
+   "5": [
+    "Target_ProtectionFromEvilAndGood_5"
+   ],
+   "6": [
+    "Target_ProtectionFromEvilAndGood_6"
+   ]
+  },
+  "Target_ProtectionFromPoison": {
+   "3": [
+    "Target_ProtectionFromPoison_3"
+   ],
+   "4": [
+    "Target_ProtectionFromPoison_4"
+   ],
+   "5": [
+    "Target_ProtectionFromPoison_5"
+   ],
+   "6": [
+    "Target_ProtectionFromPoison_6"
+   ]
+  },
+  "Target_RemoveCurse": {
+   "4": [
+    "Target_RemoveCurse_4"
+   ],
+   "5": [
+    "Target_RemoveCurse_5"
+   ],
+   "6": [
+    "Target_RemoveCurse_6"
+   ]
+  },
+  "Target_ResilientSphere": {
+   "5": [
+    "Target_ResilientSphere_5"
+   ],
+   "6": [
+    "Target_ResilientSphere_6"
+   ]
+  },
+  "Target_Sanctuary": {
+   "2": [
+    "Target_Sanctuary_2"
+   ],
+   "3": [
+    "Target_Sanctuary_3"
+   ],
+   "4": [
+    "Target_Sanctuary_4"
+   ],
+   "5": [
+    "Target_Sanctuary_5"
+   ],
+   "6": [
+    "Target_Sanctuary_6"
+   ]
+  },
+  "Target_Seeming": {
+   "6": [
+    "Target_Seeming_6"
+   ]
+  },
+  "Target_Shatter": {
+   "3": [
+    "Target_Shatter_3"
+   ],
+   "4": [
+    "Target_Shatter_4"
+   ],
+   "5": [
+    "Target_Shatter_5"
+   ],
+   "6": [
+    "Target_Shatter_6"
+   ],
+   "7": [
+    "Target_Shatter_7"
+   ],
+   "8": [
+    "Target_Shatter_8"
+   ],
+   "9": [
+    "Target_Shatter_9"
+   ]
+  },
+  "Target_ShieldOfFaith": {
+   "2": [
+    "Target_ShieldOfFaith_2"
+   ],
+   "3": [
+    "Target_ShieldOfFaith_3"
+   ],
+   "4": [
+    "Target_ShieldOfFaith_4"
+   ],
+   "5": [
+    "Target_ShieldOfFaith_5"
+   ],
+   "6": [
+    "Target_ShieldOfFaith_6"
+   ]
+  },
+  "Target_Silence": {
+   "3": [
+    "Target_Silence_3"
+   ],
+   "4": [
+    "Target_Silence_4"
+   ],
+   "5": [
+    "Target_Silence_5"
+   ],
+   "6": [
+    "Target_Silence_6"
+   ]
+  },
+  "Target_Sleep": {
+   "2": [
+    "Target_Sleep_2"
+   ],
+   "3": [
+    "Target_Sleep_3"
+   ],
+   "4": [
+    "Target_Sleep_4"
+   ],
+   "5": [
+    "Target_Sleep_5"
+   ],
+   "6": [
+    "Target_Sleep_6"
+   ]
+  },
+  "Target_SleetStorm": {
+   "4": [
+    "Target_SleetStorm_4"
+   ],
+   "5": [
+    "Target_SleetStorm_5"
+   ],
+   "6": [
+    "Target_SleetStorm_6"
+   ]
+  },
+  "Target_Slow": {
+   "4": [
+    "Target_Slow_4"
+   ],
+   "5": [
+    "Target_Slow_5"
+   ],
+   "6": [
+    "Target_Slow_6"
+   ]
+  },
+  "Target_Smite_Blinding": {
+   "4": [
+    "Target_Smite_Blinding_4"
+   ],
+   "5": [
+    "Target_Smite_Blinding_5"
+   ],
+   "6": [
+    "Target_Smite_Blinding_6"
+   ]
+  },
+  "Target_Smite_Divine": {
+   "2": [
+    "Target_Smite_Divine_2"
+   ],
+   "3": [
+    "Target_Smite_Divine_3"
+   ],
+   "4": [
+    "Target_Smite_Divine_4"
+   ],
+   "5": [
+    "Target_Smite_Divine_5"
+   ],
+   "6": [
+    "Target_Smite_Divine_6"
+   ]
+  },
+  "Target_Smite_Divine_Unlock": {
+   "1": [
+    "Target_Smite_Divine_Critical_Unlock"
+   ],
+   "2": [
+    "Target_Smite_Divine_Critical_Unlock_2",
+    "Target_Smite_Divine_Unlock_2"
+   ],
+   "3": [
+    "Target_Smite_Divine_Critical_Unlock_3",
+    "Target_Smite_Divine_Unlock_3"
+   ],
+   "4": [
+    "Target_Smite_Divine_Critical_Unlock_4",
+    "Target_Smite_Divine_Unlock_4"
+   ],
+   "5": [
+    "Target_Smite_Divine_Critical_Unlock_5",
+    "Target_Smite_Divine_Unlock_5"
+   ],
+   "6": [
+    "Target_Smite_Divine_Critical_Unlock_6",
+    "Target_Smite_Divine_Unlock_6"
+   ]
+  },
+  "Target_Smite_Searing": {
+   "2": [
+    "Target_Smite_Searing_2"
+   ],
+   "3": [
+    "Target_Smite_Searing_3"
+   ],
+   "4": [
+    "Target_Smite_Searing_4"
+   ],
+   "5": [
+    "Target_Smite_Searing_5"
+   ],
+   "6": [
+    "Target_Smite_Searing_6"
+   ]
+  },
+  "Target_Smite_Thunderous": {
+   "2": [
+    "Target_Smite_Thunderous_2"
+   ],
+   "3": [
+    "Target_Smite_Thunderous_3"
+   ],
+   "4": [
+    "Target_Smite_Thunderous_4"
+   ],
+   "5": [
+    "Target_Smite_Thunderous_5"
+   ],
+   "6": [
+    "Target_Smite_Thunderous_6"
+   ]
+  },
+  "Target_Smite_Wrathful": {
+   "2": [
+    "Target_Smite_Wrathful_2"
+   ],
+   "3": [
+    "Target_Smite_Wrathful_3"
+   ],
+   "4": [
+    "Target_Smite_Wrathful_4"
+   ],
+   "5": [
+    "Target_Smite_Wrathful_5"
+   ],
+   "6": [
+    "Target_Smite_Wrathful_6"
+   ]
+  },
+  "Target_SpeakWithDead": {
+   "4": [
+    "Target_SpeakWithDead_4"
+   ],
+   "5": [
+    "Target_SpeakWithDead_5"
+   ],
+   "6": [
+    "Target_SpeakWithDead_6"
+   ]
+  },
+  "Target_SpikeGrowth": {
+   "3": [
+    "Target_SpikeGrowth_3"
+   ],
+   "4": [
+    "Target_SpikeGrowth_4"
+   ],
+   "5": [
+    "Target_SpikeGrowth_5"
+   ],
+   "6": [
+    "Target_SpikeGrowth_6"
+   ]
+  },
+  "Target_SpiritualWeapon": {
+   "3": [
+    "Target_SpiritualWeapon_Greataxe_3",
+    "Target_SpiritualWeapon_Greatsword_3",
+    "Target_SpiritualWeapon_Halberd_3",
+    "Target_SpiritualWeapon_Maul_3",
+    "Target_SpiritualWeapon_Spear_3",
+    "Target_SpiritualWeapon_Trident_3"
+   ],
+   "4": [
+    "Target_SpiritualWeapon_Greataxe_4",
+    "Target_SpiritualWeapon_Greatsword_4",
+    "Target_SpiritualWeapon_Halberd_4",
+    "Target_SpiritualWeapon_Maul_4",
+    "Target_SpiritualWeapon_Spear_4",
+    "Target_SpiritualWeapon_Trident_4"
+   ],
+   "5": [
+    "Target_SpiritualWeapon_Greataxe_5",
+    "Target_SpiritualWeapon_Greatsword_5",
+    "Target_SpiritualWeapon_Halberd_5",
+    "Target_SpiritualWeapon_Maul_5",
+    "Target_SpiritualWeapon_Spear_5",
+    "Target_SpiritualWeapon_Trident_5"
+   ],
+   "6": [
+    "Target_SpiritualWeapon_Greataxe_6",
+    "Target_SpiritualWeapon_Greatsword_6",
+    "Target_SpiritualWeapon_Halberd_6",
+    "Target_SpiritualWeapon_Maul_6",
+    "Target_SpiritualWeapon_Spear_6",
+    "Target_SpiritualWeapon_Trident_6"
+   ]
+  },
+  "Target_StaggeringSmite": {
+   "5": [
+    "Target_StaggeringSmite_5"
+   ],
+   "6": [
+    "Target_StaggeringSmite_6"
+   ]
+  },
+  "Target_StinkingCloud": {
+   "4": [
+    "Target_StinkingCloud_4"
+   ],
+   "5": [
+    "Target_StinkingCloud_5"
+   ],
+   "6": [
+    "Target_StinkingCloud_6"
+   ]
+  },
+  "Target_Stoneskin": {
+   "5": [
+    "Target_Stoneskin_5"
+   ],
+   "6": [
+    "Target_Stoneskin_6"
+   ]
+  },
+  "Target_VampiricTouch": {
+   "4": [
+    "Target_VampiricTouch_4"
+   ],
+   "5": [
+    "Target_VampiricTouch_5"
+   ],
+   "6": [
+    "Target_VampiricTouch_6"
+   ]
+  },
+  "Target_WardingBond": {
+   "3": [
+    "Target_WardingBond_3"
+   ],
+   "4": [
+    "Target_WardingBond_4"
+   ],
+   "5": [
+    "Target_WardingBond_5"
+   ],
+   "6": [
+    "Target_WardingBond_6"
+   ]
+  },
+  "Target_Web": {
+   "3": [
+    "Target_Web_3"
+   ],
+   "4": [
+    "Target_Web_4"
+   ],
+   "5": [
+    "Target_Web_5"
+   ],
+   "6": [
+    "Target_Web_6"
+   ]
+  },
+  "Teleportation_DimensionDoor": {
+   "5": [
+    "Teleportation_DimensionDoor_5"
+   ],
+   "6": [
+    "Teleportation_DimensionDoor_6"
+   ]
+  },
+  "Teleportation_Revivify": {
+   "4": [
+    "Teleportation_Revivify_4"
+   ],
+   "5": [
+    "Teleportation_Revivify_5"
+   ],
+   "6": [
+    "Teleportation_Revivify_6"
+   ]
+  },
+  "Throw_Telekinesis": {
+   "6": [
+    "Throw_Telekinesis_6"
+   ]
+  },
+  "Wall_WallOfFire": {
+   "5": [
+    "Wall_WallOfFire_5"
+   ],
+   "6": [
+    "Wall_WallOfFire_6"
+   ]
+  },
+  "Wall_WallOfStone": {
+   "6": [
+    "Wall_WallOfStone_6"
+   ]
+  },
+  "Zone_BurningHands": {
+   "2": [
+    "Zone_BurningHands_2"
+   ],
+   "3": [
+    "Zone_BurningHands_3"
+   ],
+   "4": [
+    "Zone_BurningHands_4"
+   ],
+   "5": [
+    "Zone_BurningHands_5"
+   ],
+   "6": [
+    "Zone_BurningHands_6"
+   ]
+  },
+  "Zone_ColorSpray": {
+   "2": [
+    "Zone_ColorSpray_2"
+   ],
+   "3": [
+    "Zone_ColorSpray_3"
+   ],
+   "4": [
+    "Zone_ColorSpray_4"
+   ],
+   "5": [
+    "Zone_ColorSpray_5"
+   ],
+   "6": [
+    "Zone_ColorSpray_6"
+   ]
+  },
+  "Zone_ConeOfCold": {
+   "6": [
+    "Zone_ConeOfCold_6"
+   ]
+  },
+  "Zone_Fear": {
+   "4": [
+    "Zone_Fear_4"
+   ],
+   "5": [
+    "Zone_Fear_5"
+   ],
+   "6": [
+    "Zone_Fear_6"
+   ]
+  },
+  "Zone_GustOfWind": {
+   "3": [
+    "Zone_GustOfWind_3"
+   ],
+   "4": [
+    "Zone_GustOfWind_4"
+   ],
+   "5": [
+    "Zone_GustOfWind_5"
+   ],
+   "6": [
+    "Zone_GustOfWind_6"
+   ]
+  },
+  "Zone_LightningBolt": {
+   "4": [
+    "Zone_LightningBolt_4"
+   ],
+   "5": [
+    "Zone_LightningBolt_5"
+   ],
+   "6": [
+    "Zone_LightningBolt_6"
+   ]
+  },
+  "Zone_Thunderwave": {
+   "2": [
+    "Zone_Thunderwave_2"
+   ],
+   "3": [
+    "Zone_Thunderwave_3"
+   ],
+   "4": [
+    "Zone_Thunderwave_4"
+   ],
+   "5": [
+    "Zone_Thunderwave_5"
+   ],
+   "6": [
+    "Zone_Thunderwave_6"
+   ],
+   "7": [
+    "Zone_Thunderwave_7"
+   ],
+   "8": [
+    "Zone_Thunderwave_8"
+   ],
+   "9": [
+    "Zone_Thunderwave_9"
+   ]
+  }
  }
 }

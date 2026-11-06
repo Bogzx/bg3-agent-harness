@@ -558,6 +558,33 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
         self.assertEqual(asked[0][0], "arena.reference_diff")
         self.assertEqual(asked[0][1]["uuid"], "u1")
 
+    def test_a_kits_upcasts_are_the_rows_its_reference_holds_with_their_abilities(self):
+        ups = {x for v in STATIC["upcasts"].values() for ids in v.values() for x in ids}
+        doc = tier(5)
+        for b, want in zip(doc["builds"], (0, 12, 14, 0), strict=True):
+            with self.subTest(b["id"]):
+                k = plan(doc, b["id"])
+                got = set(k.get("grants", {}).get("spells", [])) & ups
+                self.assertEqual(len(got), want)
+                held = ups & set(b["reference"]["profile"]["spells"])
+                # the Wizard's learned, unprepared spells stay out with their upcasts: its twin holds neither
+                learned = [x for ids in b["script"]["cc"].get("spells", []) for x in ids]
+                learned += [x for u in b["script"]["level_ups"] for ids in u.get("spells", []) for x in ids]
+                unprepared = [x for x in learned if "prepared" in b["script"] and x not in b["script"]["prepared"]]
+                out = {x for sid in unprepared for v in STATIC["upcasts"].get(sid, {}).values() for x in v}
+                self.assertEqual(got, held - out)
+                casting = STATIC["classes"][b["class"]]["casting"]
+                self.assertEqual({k["spell_abilities"][x] for x in got} - {casting}, set())
+        self.assertIn("Shout_ArcaneRecovery_3", plan(doc, "wizard")["grants"]["spells"])
+
+    def test_upcasts_stop_at_the_highest_slot_the_rows_open(self):
+        d = ab.load_builds(REPO / "packages/bench/builds/l5_4v4_team2_v1.json")
+        spells = plan(d, "ranger")["grants"]["spells"]  # a half caster's level 5: 2nd-level slots
+        self.assertTrue(spells and all(x.endswith("_2") for x in spells), spells)
+        self.assertEqual(plan(tier(5), "bard")["grants"]["spells"].count("Target_Bane_3"), 1)
+        self.assertNotIn("Target_Bane_4", plan(tier(5), "bard")["grants"]["spells"])
+        self.assertIn("Target_Bane_6", plan(tier(12), "bard")["grants"]["spells"])
+
     def test_the_second_team_is_valid_and_a_subclass_rows_removed_passive_is_in_the_kits_grants(self):
         d = ab.load_builds(REPO / "packages/bench/builds/l5_4v4_team2_v1.json")
         self.assertIn("draft", d)
