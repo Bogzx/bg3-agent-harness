@@ -575,6 +575,20 @@ check(okp and pr.switched == true and TABS.levelupTab._p.IsSelected == true, "sp
 okp, pr = pcall(handlers["ui.level_up_spell_probe"], { name = "Toll the Dead", cantrips = true })
 check(okp and pr.switched == nil and pr.name == "Toll the Dead" and pr.open == 1, "spell_probe: then probes the cantrip")
 
+-- 27b. a subclass level with spells to click (live L5, Wizard 2): the subclass and deity tabs were shown last, and the
+--      spell sub-tabs are under the overview only, so the run and the probe both go back to it
+openPage({ class = "Wizard", subclasses = { "Evocation School" }, cantrips = { list = "cleric0", open = 1 } })
+TAB_LOG = {}
+run({ uuid = "gale", plan = { subclass = "Evocation", cantrips = { "Toll the Dead" } } })
+check(TAB_LOG[#TAB_LOG - 1] == "deityTab" and TAB_LOG[#TAB_LOG] == "levelupTab" and TABS.levelupTab._p.IsSelected,
+    "subclass level: back on the overview for the clicks (" .. table.concat(TAB_LOG, " ") .. ")")
+for _, t in ipairs({ "subClassTab", "deityTab" }) do
+    TABS[t]:SetProperty("IsSelected", true)
+    okp, pr = pcall(handlers["ui.level_up_spell_probe"], { name = "Toll the Dead", cantrips = true })
+    check(okp and pr.switched == true and TABS.levelupTab._p.IsSelected == true,
+        "spell_probe: " .. t .. " -> overview first")
+end
+
 -- 28. no feat chosen and nothing planned: luMissing says so
 openPage(SH)
 check(BG3AI.Progression.luMissing(dc):find("a feat (plan.feat)", 1, true), "luMissing: no feat")
@@ -635,6 +649,28 @@ j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "C
 openPage = origOpen
 check(j.status == "done" and opened == before + 1 and j.result.closed_page == nil and (j.result.waited_intro_ms or 0) >= 1000,
       "own open: waits for the intro before the stages (" .. tostring(j.result.waited_intro_ms) .. " ms, " .. tostring(j.error) .. ")")
+-- 31g. a long intro (live L5, Wizard 2: 13 sequenced items, about 10 s): no tab is chosen until it ends, since a tab
+--      drops the template its end lives in
+closePage()
+page = nil
+local firstTabStep
+openPage = function(spec)
+    origOpen(spec)
+    dc._p.LevelUpStep = "Started"
+    startedAt = now
+    page.on_tick = function() if dc and now - startedAt >= 10000 then dc._p.LevelUpStep = "IntroComplete" end end
+end
+page = { spec = PAL }
+TAB_LOG = {}
+local tabSet = TABS.featTab.SetProperty
+TABS.featTab.SetProperty = function(self, k, v)
+    firstTabStep = firstTabStep or dc._p.LevelUpStep
+    tabSet(self, k, v)
+end
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+openPage, TABS.featTab.SetProperty = origOpen, tabSet
+check(j.status == "done" and j.result.intro_timeout == nil and firstTabStep == "IntroComplete",
+      "long intro: waited out before any tab (" .. tostring(firstTabStep) .. ", " .. tostring(j.error) .. ")")
 -- 31e. a frozen intro page that ignores the close (button and ESCAPE): used as it is after the give-up, no timeout
 openPage(PAL)
 dc._p.LevelUpStep = "Started"
