@@ -8,7 +8,8 @@ and stub objects. Nothing depends on timing: a stub safe_read frees the object a
 plausible_vtable and the use, and a stub C call releases the object at a fixed line. Each scenario runs as its own
 process, so one that dies on the free-list word is seen as a signal. test_scenarios_fail_without_the_fix runs the same
 scenarios on the series without the fix and requires them to die or report a failure. The crash log's scenarios link
-the real src/stackdump.cpp, with a stub log.h, and crash for real.
+the real src/stackdump.cpp and src/mem.cpp (a real read), with a stub log.h, and crash for real, some of them with dead
+memory where the handler looks: it must get past it and reach the registers.
 Run: python3 -m unittest tools/test_bg3le_ui_refs.py
 """
 
@@ -45,6 +46,7 @@ HARNESS = r"""
 #include <mutex>
 #include <new>
 #include <string>
+#include <sys/mman.h>
 #include <sys/prctl.h>
 #include <unordered_map>
 #include <vector>
@@ -117,10 +119,17 @@ static int luaL_argerror(lua_State*, int, char const* msg) { throw LuaError{ msg
 // ---- stub bg3le: safe_read reads, and frees the armed object at a fixed read
 static void free_armed();
 static int g_free_at_read = 0;
+#ifdef WITH_CRASH_LOG
+#include "log.h"
+#include "mem.h"
+#endif
 namespace bg3le {
+#ifndef WITH_CRASH_LOG
 static void logf(char const* fmt, ...) {
   va_list ap; va_start(ap, fmt); std::vfprintf(stdout, fmt, ap); va_end(ap); std::printf("\n");
 }
+#endif
+#ifndef WITH_CRASH_LOG
 static bool safe_read(void const* addr, void* out, std::size_t n) {
   std::memcpy(out, addr, n);
   if (g_free_at_read != 0 && --g_free_at_read == 0) free_armed();
@@ -129,6 +138,7 @@ static bool safe_read(void const* addr, void* out, std::size_t n) {
 static bool safe_cstr(void const* addr, char* buf, std::size_t n) {
   std::strncpy(buf, static_cast<char const*>(addr), n - 1); buf[n - 1] = 0; return true;
 }
+#endif
 static char const* client_game_state() { return "Running"; }
 static bool noesis_update_hooked() { return true; }
 // A code range that holds none of the stub's functions: their vtables pass through own_code, the real one.
@@ -193,6 +203,8 @@ static int l_release_then_use(lua_State* L) {
   o->Release(); o->Release();
   o->GetClassType(); ++g_used; return 0;
 }
+static int g_own_in_call = 0;
+static int l_read_own(lua_State* L) { g_own_in_call = static_cast<TypeObject*>(object_arg(L, 1))->Own; return 0; }
 static int l_two(lua_State* L) { object_arg(L, 1); object_arg(L, 2); return 0; }
 static int l_two_then_raise(lua_State* L) { object_arg(L, 1); object_arg(L, 2); return luaL_error(L, "raised"); }
 
@@ -207,6 +219,16 @@ static void check(char const* what, bool ok) { std::printf("%s %s\n", ok ? "ok" 
 
 // A box whose object is held by the box alone
 static void boxed(lua_State* L, Button* o) { push_object(L, o); o->Release(); }
+
+// A nested call: what the outer object's count is once the inner has returned and the outer has not
+static int g_count_after_inner = 0;
+static int l_nested(lua_State* L) {
+  auto o = static_cast<Button*>(object_arg(L, 1));
+  lua_State inner; boxed(&inner, new_button());
+  call(&inner, l_use);
+  g_count_after_inner = o->mRefCount.load();
+  return 0;
+}
 
 static void freed_between() {
   lua_State L; Button* o = new_button(); boxed(&L, o);
@@ -246,14 +268,16 @@ static void counts() {
   call(&L, l_two); check("two arguments, both back", a->mRefCount.load() == 2 && b->mRefCount.load() == 2);
   std::string error; call(&L, l_two_then_raise, &error);
   check("an error gives them back too", error == "raised" && a->mRefCount.load() == 2 && b->mRefCount.load() == 2);
+  call(&L, l_nested);
+  check("a nested call leaves the outer call's reference", g_count_after_inner == 3 && a->mRefCount.load() == 2);
   g_serialize = false;
   call(&L, l_use); check("serializing off, the same", a->mRefCount.load() == 2);
   g_serialize = true;
   check("nothing queued while others hold it", g_releases.empty());
 
   lua_State T; TypeObject* type = new TypeObject; push_object(&T, type);
-  const int used = g_used;
-  call(&T, l_use); check("a Type's +8 is not touched", type->Own == 77 && g_used == used + 1);
+  call(&T, l_read_own);
+  check("a Type's +8 is not touched, in the call or after", g_own_in_call == 77 && type->Own == 77);
 
   lua_State F; Button* freed = new_button(); to_free_list(freed, freed->mRefCount); push_object(&F, freed);
   check("a block on the free list is nil, not a call through it", lua_type(&F, -1) == LUA_TNIL && F.st.size() == 1);
@@ -280,11 +304,47 @@ static void crash(lua_CFunction fn) {
   call(&L, fn);
 }
 static void crash_no_call() { bg3le::install_crash_handler(); lua_State L; l_crash(&L); }
+
+// Dead memory where the crash handler looks
+static void* unmapped_page() {
+  void* p = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  munmap(p, 4096);
+  return p;
+}
+// object_arg notes the object, then refuses it; the call goes on and dies
+int l_crash_after_refusal(lua_State* L) {
+  try { object_arg(L, 1); } catch (LuaError const&) {}
+  return l_crash(L);
+}
+static void crash_dead_box(bool class_too) {
+  bg3le::install_crash_handler();
+  lua_State L; boxed(&L, new_button()); lua_pushliteral(&L, "Text");
+  auto h = static_cast<Held*>(at(&L, 1).p);
+  h->Object = static_cast<BaseObject*>(unmapped_page());
+  if (class_too) h->ClassName = static_cast<char const*>(unmapped_page());
+  std::printf("object %p\n", static_cast<void*>(h->Object));
+  call(&L, l_crash_after_refusal);
+}
+int l_crash_note_unmapped(lua_State* L) { t_call_note = static_cast<CallNote*>(unmapped_page()); return l_crash(L); }
+int l_crash_note_low(lua_State* L) {
+  t_call_note = reinterpret_cast<CallNote*>(std::uintptr_t{ 0x10 });
+  return l_crash(L);
+}
+int l_crash_note_cycle(lua_State* L) { t_call_note->Outer = t_call_note; return l_crash(L); }
+int l_crash_note_junk(lua_State* L) {
+  std::memset(t_call_note->Key, 'A', sizeof t_call_note->Key);
+  t_call_note->Fn = reinterpret_cast<lua_CFunction>(std::uintptr_t{ 0xdeadbeef000 });
+  return l_crash(L);
+}
 #endif
 
 int main(int argc, char** argv) {
   prctl(PR_SET_DUMPABLE, 0);  // a scenario that dies leaves no core
   setvbuf(stdout, nullptr, _IOLBF, 0);
+#ifdef WITH_CRASH_LOG
+  // The handler's stack scan reads 1024 words up from the fault: mapped here, however small the environment is.
+  char volatile room[16384]; room[0] = 0;
+#endif
   std::string s = argc > 1 ? argv[1] : "";
   if (s == "freed_between") freed_between();
   else if (s == "released_during_call") released_during_call();
@@ -295,6 +355,12 @@ int main(int argc, char** argv) {
   else if (s == "crash_before_object") crash(l_crash);
   else if (s == "crash_nested") crash(l_crash_nested);
   else if (s == "crash_no_call") crash_no_call();
+  else if (s == "dead_object") crash_dead_box(false);
+  else if (s == "dead_class") crash_dead_box(true);
+  else if (s == "note_unmapped") crash(l_crash_note_unmapped);
+  else if (s == "note_low") crash(l_crash_note_low);
+  else if (s == "note_cycle") crash(l_crash_note_cycle);
+  else if (s == "note_junk") crash(l_crash_note_junk);
 #endif
   else { std::printf("FAIL no scenario %s\n", s.c_str()); return 2; }
   return fails != 0;
@@ -307,8 +373,12 @@ namespace bg3le { void logf(const char* fmt, ...); void log_mark_crash(); }
 STUB_LOG_CPP = """#include "log.h"
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 namespace bg3le {
 void logf(const char* fmt, ...) {
+  // A log that never ends (a note chain with no bound) exits here at once, not at the timeout with the output in RAM
+  static int lines = 0;
+  if (++lines > 500) std::_Exit(77);
   va_list ap; va_start(ap, fmt); std::vfprintf(stdout, fmt, ap); va_end(ap); std::printf("\\n");
 }
 void log_mark_crash() {}
@@ -346,7 +416,10 @@ class UiRefsTest(unittest.TestCase):
             }
         )
         archive = subprocess.run(
-            ["git", "archive", "HEAD", "src/stackdump.h", *touched], cwd=SUBMODULE, check=True, capture_output=True
+            ["git", "archive", "HEAD", "src/stackdump.h", "src/mem.h", "src/mem.cpp", *touched],
+            cwd=SUBMODULE,
+            check=True,
+            capture_output=True,
         ).stdout
         subprocess.run(["tar", "-x"], cwd=src, input=archive, check=True)
         subprocess.run(["git", "init", "-q"], cwd=src, check=True)
@@ -362,7 +435,7 @@ class UiRefsTest(unittest.TestCase):
             (root / "log.h").write_text(STUB_LOG_H)
             (root / "log.cpp").write_text(STUB_LOG_CPP)
             cmd += ["-DWITH_CRASH_LOG", "-rdynamic", "-include", "cstdint", f"-I{root}", f"-I{src / 'src'}"]
-            cmd += [str(src / "src" / "stackdump.cpp"), str(root / "log.cpp"), "-ldl"]
+            cmd += [str(src / "src" / "stackdump.cpp"), str(src / "src" / "mem.cpp"), str(root / "log.cpp"), "-ldl"]
         res = subprocess.run(
             cmd,
             capture_output=True,
@@ -426,6 +499,40 @@ class UiRefsTest(unittest.TestCase):
         res = self.run_scenario(exe, "crash_no_call")
         self.assertEqual(res.returncode, -signal.SIGSEGV, res.stdout + res.stderr)
         self.assertIn("crash: no Ext.UI call on this thread", res.stdout)
+
+    def test_the_crash_log_gets_past_dead_memory(self):
+        exe = self.build(ALL_PATCHES, "dead", crash_log=True)
+
+        def log_of(name):
+            res = self.run_scenario(exe, name)
+            self.assertEqual(res.returncode, -signal.SIGSEGV, name + "\n" + res.stdout + res.stderr)
+            self.assertIn("crash:   pc", res.stdout, name)
+            self.assertIn("crash: register dump and stack scan done", res.stdout, name)
+            return res.stdout
+
+        log = log_of("dead_object")
+        printed = re.search(r"^object (0x[0-9a-f]+)$", log, re.MULTILINE)
+        self.assertIsNotNone(printed, log)
+        assert printed is not None
+        self.assertRegex(
+            log, rf"call 0: \S*l_crash_after_refusal\S* key 'Text' object {printed.group(1)} class 'StubButton' "
+        )
+        self.assertRegex(log, r"boxed 1 counted 1\n")
+        self.assertNotIn("its first word", log)
+
+        log = log_of("dead_class")
+        self.assertRegex(
+            log, r"call 0: \S*l_crash_after_refusal\S* key 'Text' object \S+ class '\?' boxed 1 counted 1\n"
+        )
+        self.assertNotIn("its first word", log)
+
+        self.assertRegex(log_of("note_unmapped"), r"crash: Ext\.UI call 0: note at 0x[0-9a-f]+ unreadable\n")
+        self.assertIn("crash: Ext.UI call 0: note at 0x10 unreadable\n", log_of("note_low"))
+
+        calls = re.findall(r"^crash: Ext\.UI call (\d+):", log_of("note_cycle"), re.MULTILINE)
+        self.assertEqual(calls, ["0", "1", "2", "3"])
+
+        self.assertRegex(log_of("note_junk"), r"crash: Ext\.UI call 0: \? key 'A{63}' object ")
 
 
 if __name__ == "__main__":
