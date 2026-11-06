@@ -313,7 +313,7 @@ do
     p = page6(STOP, { [2] = "Strength", [1] = "Constitution" }, false)
     r = apply(p, plan)
     check(table.concat(r.result.problems, ";"):find("abilities: 6 points left", 1, true) ~= nil,
-        "point buy: a pick that doesn't read stops as live did, now named (" .. table.concat(r.result.problems, ";") .. ")")
+        "point buy: a pick that doesn't read stops as live did, now named")
 
     p = page6(STOP, { [2] = "Strength", [1] = "Constitution" }, true)
     p.refuse.Strength = 13

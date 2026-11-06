@@ -692,8 +692,8 @@ end)
 --               skills?, expertise?, cantrips?, spells?, passives?, name?}, finish? = true}
 ------------------------------------------------------------------------
 
--- What `name` holds from the bonus columns (the page's +2/+1). Value includes it; RaceBonus reads 0 for it on the respec
--- page (live 2026-11-06: a hireling's picks stay through ResetAbilities, so 15 Value was 13 bought, 6 points left).
+-- What `name` holds from the bonus columns (the page's +2/+1). Value includes it; RaceBonus reads 0 for it on the
+-- respec page (live 2026-11-06: a hireling's picks stay through ResetAbilities, so 15 Value was 13 bought, 6 left).
 local function pickedBonus(dc, name)
     local n = 0
     for _, col in ipairs(list(UI.path(dc, "RaceProgressionDetails.AbilityBonusSelection"))) do
@@ -758,7 +758,8 @@ local function abilitiesStage(ctx, plan)
                 return "wait", P.CC_POLL_MS
             end
             if target and base ~= target then
-                stuck[#stuck + 1] = ("%s bought %s, wanted %s%s"):format(name, base, target, err and (": " .. tostring(err)) or "")
+                local why = err and (": " .. tostring(err)) or ""
+                stuck[#stuck + 1] = ("%s bought %s, wanted %s%s"):format(name, base, target, why)
             end
         end
         for _, s in ipairs(stuck) do ctx.result.problems[#ctx.result.problems + 1] = "abilities: " .. s end
@@ -891,18 +892,18 @@ RPC.register("ui.cc_apply", function(args)
         { "abilities", abilitiesStage(ctx, plan), 30000 },
         { "ability_bonus", abilityBonusStage(ctx, plan) },
         { "abilities?", function()
-            local view = abilitiesView(get())
-            ctx.result.set.abilities = view
-            local left = tonumber(view.points_left) or 0
+            local got = abilitiesView(get())
+            ctx.result.set.abilities = got
+            local left = tonumber(got.points_left) or 0
             if type(plan.abilities) == "table" and left ~= 0 then
                 ctx.result.problems[#ctx.result.problems + 1] = ("abilities: %s points left"):format(left)
             end
-            local cols = { table.unpack(view.bonus or {}) }
+            local cols = { table.unpack(got.bonus or {}) }
             table.sort(cols, function(a, b) return (tonumber(a.bonus) or 0) > (tonumber(b.bonus) or 0) end)
             for i, name in ipairs(type(plan.bonus) == "table" and plan.bonus or {}) do
-                local got = cols[i] and cols[i].picked
-                if got and got ~= abilityName(name) then
-                    ctx.result.problems[#ctx.result.problems + 1] = ("bonus %s: the page has %s"):format(name, got)
+                local has = cols[i] and cols[i].picked
+                if has and has ~= abilityName(name) then
+                    ctx.result.problems[#ctx.result.problems + 1] = ("bonus %s: the page has %s"):format(name, has)
                 end
             end
             return "next", 0
