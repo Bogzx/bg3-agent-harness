@@ -66,6 +66,17 @@ REASONS = (
 STOP_BEATS = (401, 410)  # revoked, closed or expired: no later beat can land
 
 
+class _NoRedirect(urlrequest.HTTPRedirectHandler):
+    """The ticket routes never redirect. A followed POST becomes a GET elsewhere that carries the token and the Access
+    secret, and its 200 reads as a delivered end."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+open_url: Open = urlrequest.build_opener(_NoRedirect).open
+
+
 def base_url(url: str | None) -> str:
     """The site's base URL: https, or http on this machine only (a local copy of the site). ValueError otherwise."""
     if not url:
@@ -123,7 +134,7 @@ class Site:
     """The site's ticket routes (standard library). Each call is one try; a site that doesn't answer raises."""
 
     base: str
-    urlopen: Open = urlrequest.urlopen
+    urlopen: Open = open_url
     headers: Mapping[str, str] = field(default_factory=dict[str, str])
 
     def _post(self, token: str, path: str, doc: Mapping[str, Any]) -> tuple[int, Json]:
@@ -251,21 +262,24 @@ class Beats:
         self.tail = Tail(run_dir, ticket["nonce"], values)
         self.seq = 0
         self.stopped = False
-        self.lock = threading.Lock()  # the end waits for a beat that is still being sent
+        self.lock = threading.Lock()  # one beat at a time; held while one is out, for the end to see
 
     def tick(self) -> None:
         with self.lock:
             if self.stopped:
                 return
-            seq, self.seq = self.seq, self.seq + 1
+            seq = self.seq
             try:
                 lines, root = self.tail.read()
+                if not any(lines.values()):  # still launching: a ticket with a beat can no longer end not_played
+                    return
+                self.seq = seq + 1
                 status = self.site.beat(self.token, self.ticket["id"], {"seq": seq, "lines": lines, "root": root})
             except Exception as e:  # noqa: BLE001 - the next beat covers this one; the run plays on
                 _log(self.run_dir, self.now(), {"seq": seq, "error": type(e).__name__})
                 return
             _log(self.run_dir, self.now(), {"seq": seq, "lines": lines, "root": root, "status": status})
-            if status in STOP_BEATS:
+            if status in STOP_BEATS and not self.stopped:  # stopped: the end came first, and ticket.json keeps it
                 self.stopped = True
                 self._note_stopped(status)
 
@@ -277,7 +291,9 @@ class Beats:
             _log(self.run_dir, self.now(), {"kind": "ticket.json", "error": type(e).__name__})
 
     def finish(self, outcome: str, reason: str | None) -> None:
-        with self.lock:
+        """After halt, which has waited JOIN_S: a beat that still holds the lock isn't coming back, and the end goes."""
+        locked = self.lock.acquire(blocking=False)
+        try:
             self.stopped = True
             try:
                 lines, root = self.tail.read()
@@ -286,6 +302,9 @@ class Beats:
                 return
             doc: Json = {"seq": self.seq, "lines": lines, "root": root, "outcome": outcome, "reason": reason}
             _send_end(self.site, self.token, self.run_dir, self.ticket, doc, self.now())
+        finally:
+            if locked:
+                self.lock.release()
 
 
 def thread_beats(tick: Callable[[], None], every: float) -> Callable[[], None]:
@@ -507,7 +526,7 @@ def view(run_dir: Path) -> Json | None:
 
 
 def http_site(base: str, environ: Mapping[str, str], urlopen: Open | None = None) -> Site:
-    return Site(base, urlopen or urlrequest.urlopen, access_headers(environ))
+    return Site(base, urlopen or open_url, access_headers(environ))
 
 
 def from_env(

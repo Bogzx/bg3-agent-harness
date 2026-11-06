@@ -196,6 +196,59 @@ def test_the_last_interval_is_committed_only_by_the_end(tmp_path):
     assert ok_of(job(bdir, release, ticket), "T04") is True
 
 
+def left_out(bdir: Path, ticket: dict, *names: str) -> dict:
+    """A modified client's beats: on time, over the honest lines, without these streams and with no end."""
+    raw = streams_of(bdir)
+    beats = []
+    for b in (x for x in ticket["beats"] if not x.get("e")):
+        lines = {n: c for n, c in b["l"].items() if n not in names}
+        beats.append({**b, "l": lines, "r": ticket_hash.root_at(NONCE, raw, lines)})
+    return {**ticket, "beats": beats, "status": "open"}
+
+
+def end_after(bdir: Path, ticket: dict) -> dict:
+    """The end sent once the files were edited: it commits the edit."""
+    raw, last = streams_of(bdir), ticket["beats"][-1]
+    lines = ticket_hash.counts(raw)
+    end = {"s": last["s"] + 1, "a": last["a"] + 30, "l": lines, "r": ticket_hash.root_at(NONCE, raw, lines), "e": 1}
+    return {**ticket, "beats": [*ticket["beats"], end], "status": "ended"}
+
+
+def test_facts_left_out_of_the_beats_and_edited_fail_t04(ticketed):
+    bdir, release, ticket = ticketed
+    forged = left_out(bdir, ticket, ticket_hash.FACTS)
+    edit_line(bdir, ticket_hash.FACTS, 3)
+    rehash(bdir)
+    sign(bdir)
+    v = job(bdir, release, forged)
+    assert ok_of(v, "T03") is True and ok_of(v, "T04") is False and not v.accepted
+    assert ticket_hash.FACTS in detail_of(v, "T04")
+
+
+def test_facts_left_out_with_an_end_sent_after_the_edit_fail_t04(ticketed):
+    bdir, release, ticket = ticketed
+    forged = left_out(bdir, ticket, ticket_hash.FACTS)
+    edit_line(bdir, ticket_hash.FACTS, 3)
+    rehash(bdir)
+    sign(bdir)
+    v = job(bdir, release, end_after(bdir, forged))
+    assert ok_of(v, "T04") is False and not v.accepted
+    assert ticket_hash.FACTS in detail_of(v, "T04")
+
+
+def test_empty_beats_and_one_end_after_the_edits_fail_t04(ticketed):
+    bdir, release, ticket = ticketed
+    forged = left_out(bdir, ticket, *streams_of(bdir))
+    assert {tuple(b["l"]) for b in forged["beats"]} == {()}
+    edit_line(bdir, ticket_hash.FACTS, 3)
+    edit_line(bdir, "S001.events.jsonl", 3)
+    rehash(bdir)
+    sign(bdir)
+    v = job(bdir, release, end_after(bdir, forged))
+    assert ok_of(v, "T04") is False and not v.accepted
+    assert ticket_hash.FACTS in detail_of(v, "T04") and "S001.events.jsonl" in detail_of(v, "T04")
+
+
 def test_a_line_removed_fails_t04(ticketed):
     bdir, release, ticket = ticketed
     lines = (bdir / "S001.events.jsonl").read_bytes().split(b"\n")
@@ -355,6 +408,21 @@ def test_a_release_without_tickets_runs_no_t_checks(tmp_path):
     sign(bdir)
     after = job(bdir, release, None)
     assert [(r.code, r.ok) for r in after.checks] == [(r.code, r.ok) for r in before.checks]
+
+
+@pytest.mark.parametrize("where", ["panel", "job"])
+@pytest.mark.parametrize("how", ["a file gone", "a file changed"])
+def test_an_early_rejection_on_a_release_without_tickets_names_no_t_code(tmp_path, where, how):
+    """_skip_rest writes a null row per check still to run: a released suite's verdict has no T row there either."""
+    d = good_run(tmp_path, GOLD)
+    wall = json.loads((d / "result.json").read_text())["wall_s"]
+    bdir = pack.pack(d, tmp_path / "out", attempt=pack.Attempt(1), video=VIDEO | {"duration_s": wall}).bundle_dir
+    if how == "a file gone":
+        (bdir / ticket_hash.ROLLS).unlink()
+    else:
+        (bdir / ticket_hash.ROLLS).write_bytes(b"{}\n")
+    v = validate.validate(bdir, release_for(d), where=where)
+    assert not v.accepted and not {r.code for r in v.checks} & set(TICKET_CODES)
 
 
 def test_the_shipped_bench_v011_release_has_no_tickets_and_no_t_checks(tmp_path):

@@ -9,6 +9,7 @@ import json
 import os
 import threading
 from email.message import Message
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib import error as urlerror
 
@@ -184,13 +185,12 @@ def test_a_run_takes_a_ticket_beats_and_ends(tmp_path):
             "condition": "rules",
         }
     ]
-    assert [b["seq"] for b in site.beats] == [0, 1, 2]
+    assert [b["seq"] for b in site.beats] == [0, 1]
     assert [b["lines"] for b in site.beats] == [
-        {},
         {"facts.jsonl": 2},
         {"S001.events.jsonl": 1, "facts.jsonl": 3},
     ]
-    assert site.ends[0]["seq"] == 3 and site.ends[0]["outcome"] == "valid" and site.ends[0]["reason"] is None
+    assert site.ends[0]["seq"] == 2 and site.ends[0]["outcome"] == "valid" and site.ends[0]["reason"] is None
     assert run.every == 60  # the server's beat_s
     assert site.auth == {f"Bearer {TOKEN}"} and site.timeouts == {tickets.TIMEOUT_S}
     d = run.root / "j1-r1"
@@ -388,6 +388,22 @@ def test_a_raising_site_never_reaches_run_one(tmp_path, what):
     assert ticket_of(run.root / "j1-r1")["end"]["delivered"] is False
 
 
+def test_no_beat_goes_before_a_line_so_a_refused_start_stays_not_played(tmp_path):
+    """The site answers 409 to not_played on a ticket that holds a beat, and a launch can take longer than a beat_s."""
+    site = FakeSite()
+
+    def play(d, tick):
+        tick()
+        (d / "facts.jsonl").touch()  # a stream with no line yet
+        tick()
+
+    run = FakeRun(tmp_path, RunResult(None, False, False, 0.0, "refused: the game build", True, refused=True), play)
+    assert ticketed(site, run)(JOB).refused
+    assert site.beats == []
+    assert (site.ends[0]["seq"], site.ends[0]["outcome"]) == (0, "not_played")
+    assert not (run.root / "j1-r1" / tickets.BEATS_FILE).read_text().count('"seq": 1')
+
+
 def test_a_tick_survives_a_run_dir_that_went_away(tmp_path):
     site = FakeSite()
 
@@ -578,6 +594,54 @@ def test_thread_beats_ticks_until_halted():
     assert len(calls) == count
 
 
+class StuckBeat(FakeSite):
+    """A beat that doesn't return until told to, then answers `late`."""
+
+    def __init__(self, late: int = 204):
+        super().__init__()
+        self.sending, self.let_go, self.late = threading.Event(), threading.Event(), late
+
+    def __call__(self, req, timeout=None):
+        if req.full_url.endswith("/beat"):
+            self.sending.set()
+            self.let_go.wait()
+            self.beat_answer = self.late
+        return super().__call__(req, timeout)
+
+
+def test_a_beat_that_never_returns_holds_up_neither_the_end_nor_the_process(tmp_path, monkeypatch):
+    monkeypatch.setattr(tickets, "JOIN_S", 0.01)
+    site = StuckBeat(410)  # by the time it lands the ticket has ended
+
+    def play(d, _tick):
+        append(d / "facts.jsonl", {"t": 1})
+        assert site.sending.wait(30)
+
+    run = FakeRun(tmp_path, play=play)
+    t = tickets.Ticketed(
+        run,
+        tickets.Site("https://site.test", site),
+        token=lambda: TOKEN,
+        values=lambda _t: (),
+        suite_tag="bench-v0.12",
+        now=lambda: T0,
+        start_beats=lambda tick, _every: tickets.thread_beats(tick, 0.0),
+    )
+    results: list[RunResult] = []
+    caller = threading.Thread(target=lambda: results.append(t(JOB)), daemon=True)
+    caller.start()
+    try:
+        caller.join(30)
+        assert results and results[0].valid and [e["outcome"] for e in site.ends] == ["valid"]
+        beat_thread = next(x for x in threading.enumerate() if x.name == "ticket-beats")
+        assert beat_thread.daemon
+    finally:
+        site.let_go.set()
+    beat_thread.join(30)
+    kept = ticket_of(run.root / "j1-r1")  # its 410 changes nothing: the end stays kept and delivered
+    assert kept["end"]["delivered"] is True and "beats_stopped" not in kept
+
+
 # ------------------------------------------------------------------------------------------------- the site URL, env
 
 
@@ -628,6 +692,51 @@ def test_the_site_reads_a_body_that_is_not_json_or_an_object(tmp_path):
 
     assert tickets.Site("https://s.test", Raw(b"<html>")).issue(TOKEN, {}) == (201, {})
     assert tickets.Site("https://s.test", Raw(b"[1]")).issue(TOKEN, {}) == (201, {})
+
+
+class Local:
+    """A real HTTP server on this machine for the length of a `with`: `answer` is what it says to any request."""
+
+    def __init__(self, answer: int, location: str = ""):
+        self.seen: list[dict[str, str]] = []
+        seen = self.seen
+
+        class Handler(BaseHTTPRequestHandler):
+            def respond(self):
+                seen.append(dict(self.headers.items()))
+                self.send_response(answer)
+                if location:
+                    self.send_header("Location", location)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            do_GET = do_POST = respond
+
+            def log_message(self, format, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def __enter__(self):
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        return self
+
+    def __exit__(self, *exc):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_the_site_follows_no_redirect_so_the_token_and_the_access_secret_stay_there(status):
+    """Staging behind Access without a working service token answers with a redirect to its login page."""
+    env = {tickets.ACCESS_ID_ENV: "id", tickets.ACCESS_SECRET_ENV: "secret"}
+    with Local(200) as other, Local(status, other.url + "/login") as site:
+        client = tickets.http_site(site.url, env)
+        assert client.end(TOKEN, TICKET_ID, {"seq": 0}) == status  # read as an answer, not a delivered end
+        assert client.beat(TOKEN, TICKET_ID, {"seq": 0}) == status
+        assert tickets.Site(site.url).issue(TOKEN, {})[0] == status
+    assert len(site.seen) == 3 and other.seen == []
 
 
 # ----------------------------------------------------------------------------------------------------- matrix_cli

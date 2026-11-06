@@ -122,7 +122,8 @@ CHECKS: tuple[Check, ...] = (
         _PJ,
         "reject",
         "every stored beat's root recomputes at its line counts under the server's nonce; counts never fall or pass"
-        " the file; the end's root is the bundle's",
+        " the file; each beat before run_end reaches every stream's lines over 240 s old; the end's root is the"
+        " bundle's",
     ),
     Check(
         "T05",

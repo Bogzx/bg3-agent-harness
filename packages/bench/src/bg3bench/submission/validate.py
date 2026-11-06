@@ -30,6 +30,7 @@ import io
 import json
 import sys
 import tarfile
+from bisect import bisect_left
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from itertools import pairwise
@@ -556,41 +557,78 @@ def t03_recompute(raw: dict[str, bytes], env: Json, local_end: Json | None = Non
     return True, ""
 
 
-def t04_beats(raw: dict[str, bytes], env: Json, ticket: Json) -> Outcome:
-    """Every beat the server stored, against the bundle's files under the server's nonce."""
+def t04_beats(b: Loaded, ticket: Json) -> Outcome:
+    """Every beat the server stored, against the bundle's files under the server's nonce, and what each had to name:
+    without that a client could leave a stream out of its beats and edit it afterwards."""
+    raw, env = b.raw, b.envelope
     if env["ticket"]["nonce"] != ticket["nonce"]:
         return False, "the nonce isn't the server's"
     beats = ticket["beats"]  # in arrival order, as the server stores them
     if not beats:
         return False, "the server holds no beats for this ticket"
     wanted: dict[str, set[int]] = {}
-    for b in beats:
-        for name, n in b["l"].items():
+    for beat in beats:
+        for name, n in beat["l"].items():
             wanted.setdefault(name, set()).add(n)
     try:
         hashes = {n: ticket_hash.digests_at(ticket["nonce"], n, raw.get(n, b""), c) for n, c in wanted.items()}
     except ValueError as e:
         return False, str(e)
     last: dict[str, int] = {}
-    for b in beats:
-        fell = sorted(n for n, c in last.items() if b["l"].get(n, 0) < c)
+    for beat in beats:
+        fell = sorted(n for n, c in last.items() if beat["l"].get(n, 0) < c)
         if fell:
-            return False, f"beat {b['s']}: the line count fell in {', '.join(fell)}"
-        last = b["l"]
-        if ticket_hash.root((n, c, hashes[n][c]) for n, c in b["l"].items()) != b["r"]:
-            return False, f"beat {b['s']}: the root doesn't recompute (a committed line differs)"
-        if b.get("e") and b["r"] != env["ticket"]["root"]:
+            return False, f"beat {beat['s']}: the line count fell in {', '.join(fell)}"
+        last = beat["l"]
+        if ticket_hash.root((n, c, hashes[n][c]) for n, c in beat["l"].items()) != beat["r"]:
+            return False, f"beat {beat['s']}: the root doesn't recompute (a committed line differs)"
+        if beat.get("e") and beat["r"] != env["ticket"]["root"]:
             return False, "the end's root isn't the bundle's"
+    return _t04_streams(b, ticket)
+
+
+def _t04_streams(b: Loaded, ticket: Json) -> Outcome:
+    """At each regular beat before run_end, every stream's count reaches all its lines older than MAX_STALE_S on the
+    server's clock. A quiet stream has nothing to cover. The last old line counts, not a running maximum: moving one
+    early `t` forward must not excuse the lines after it, and record lines are in t order (facts.FactsWriter._write)."""
+    bt = _beat_times(b, ticket)
+    if bt.offset is None:
+        return False, "no beat or end covers a line"
+    floors = {n: _floors(d) for n, d in b.raw.items() if ticket_hash.is_stream(n)}
+    for beat in bt.regular:
+        if beat["l"].get(ticket_hash.FACTS, 0) >= bt.end_line:
+            continue
+        cutoff = beat["a"] - bt.offset - MAX_STALE_S
+        short = sorted(n for n, f in floors.items() if beat["l"].get(n, 0) < bisect_left(f, cutoff))
+        if short:
+            return False, f"beat {beat['s']}: lines over {MAX_STALE_S} s old are left out of {', '.join(short)}"
     return True, ""
+
+
+def _line_t(line: bytes) -> float | None:
+    row = _loads(line) if line.strip() else None
+    t = row.get("t") if isinstance(row, dict) else None
+    return float(t) if t is not None and _num(t) else None
+
+
+def _floors(data: bytes) -> list[float]:
+    """Per line, the smallest `t` from it to the end of the stream. It never falls, so bisect_left(floors, x) is how
+    many lines it takes to reach the last line older than x. A line with no time is never older than anything."""
+    out: list[float] = []
+    low = float("inf")
+    for line in reversed(ticket_hash.complete_lines(data)):
+        t = _line_t(line)
+        low = low if t is None else min(low, t)
+        out.append(low)
+    return out[::-1]
 
 
 def _latest_t(data: bytes) -> list[float]:
     """Per line count: the largest `t` among that many first lines of a stream ([0] is -inf: nothing covered)."""
     out = [float("-inf")]
     for line in ticket_hash.complete_lines(data):
-        row = _loads(line) if line.strip() else None
-        t = row.get("t") if isinstance(row, dict) else None
-        out.append(max(out[-1], float(t)) if t is not None and _num(t) else out[-1])
+        t = _line_t(line)
+        out.append(out[-1] if t is None else max(out[-1], t))
     return out
 
 
@@ -692,7 +730,7 @@ def _ticket_checks(
     if ticket is None or not named:
         why = "the site holds no such ticket" if named else "bundle.json names no ticket"
         return [*out, *((c, (False, why)) for c in ("T04", "T05", "T06")), ("T07", (None, why))]
-    out.append(("T04", _guarded(t04_beats, b.raw, env, ticket)))
+    out.append(("T04", _guarded(t04_beats, b, ticket)))
     out.append(("T05", _guarded(t05_times, b, ticket)))
     out.append(("T06", _guarded(t06_coverage, b, ticket)))
     out.append(("T07", _guarded(t07_gaps, b, ticket)))
