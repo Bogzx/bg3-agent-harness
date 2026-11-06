@@ -6,13 +6,13 @@ local stub, guarded, named, mirrorArena, mirrorSetup = M.stub, M.guarded, M.name
 local HOST, twin = M.HOST, M.twin
 
 -- The tier's XP (G6): XP_FAKE is the host's total; a grant lands after `lag` ms (0: in its call).
-local function xpGame(have, lag)
+local function xpGame(have, lag, extra)
     twin(HOST, {})
     world[HOST].comps.Experience = { TotalExperience = have }
     stub("AddExplorationExperience", function(u, n)
         local calls = M.calls()
         calls[#calls + 1] = { "AddExplorationExperience", u, n }
-        local land = function() world[HOST].comps.Experience.TotalExperience = have + n end
+        local land = function() world[HOST].comps.Experience.TotalExperience = have + n + (extra or 0) end
         if lag == nil then return end -- never lands
         tickers[#tickers + 1] = function() if clock >= lag then land() end end
     end)
@@ -30,6 +30,31 @@ test("tier XP: under the tier the host gets the difference before any twin exist
     for i, c in ipairs(M.calls()) do first[c[1]] = first[c[1]] or i end
     assert(first.AddExplorationExperience < first.CreateAt, "the XP before the first spawn")
     eq(#named("AddExplorationExperience"), 1, "one grant")
+end))
+
+test("a kit part only a reference can check, in a pair with none, is refused at the call", guarded(function()
+    local a = mirrorArena()
+    for _, part in ipairs({ { subclass = "life" }, { grants = {} }, { prepared = { "Target_Bless" } } }) do
+        local k = next(part)
+        a.mirror.pairs[2].kit[k] = part[k]
+        local ok, err = pcall(Ar.Setup.check_mirror, a.mirror)
+        eq(ok, false, k .. " refused")
+        assert(tostring(err):find("pair 2: its kit's " .. k .. " has no reference", 1, true), tostring(err))
+        a.mirror.pairs[2].reference = { profile = {} }
+        eq(pcall(Ar.Setup.check_mirror, a.mirror), true, k .. " with a reference")
+        a.mirror.pairs[2].kit[k], a.mirror.pairs[2].reference = nil, nil
+    end
+end))
+
+test("tier XP: a grant that lands above the window fails setup with no twin made", guarded(function()
+    local n = #tickers
+    xpGame(100, 0, 1000)
+    local j = mirrorSetup(mirrorArena({ mirror = { party_xp = { total = 300, below = 900 },
+        pairs = mirrorArena().mirror.pairs } }))
+    for i = #tickers, n + 1, -1 do table.remove(tickers, i) end
+    eq(j.status, "failed", "above the window after the grant: " .. tostring(j.step))
+    assert(j.error:find("the host has 1300 XP", 1, true), j.error)
+    eq(#named("CreateAt"), 0, "no twin")
 end))
 
 test("tier XP: inside the window no call (L2 on a 428 XP save); above it, or a grant that never lands, fails setup",

@@ -292,6 +292,32 @@ test("reference: an accepted entry passes and is listed; any other entry in that
     eq(enc(d.diffs[1].only_twin), enc({ "c/null/4" }), "named")
 end)
 
+test("reference: abilities are compared by position: a Strength and a Dexterity swapped is a diff", function()
+    local want = { abilities = { 17, 13, 15, 10, 12, 8 } }
+    for _, f in ipairs(Ar.Symmetry.FIELDS) do want[f] = want[f] or {} end
+    local twin_ = {}
+    for k, v in pairs(want) do twin_[k] = v end
+    twin_.abilities = { 13, 17, 15, 10, 12, 8 }
+    local d = Ar.Symmetry.reference_diff(twin_, { profile = want })
+    eq(d.ok, false, "not ok")
+    eq(enc(d.diffs), enc({ { field = "abilities", only_twin = { "1=13", "2=17" },
+        only_reference = { "1=17", "2=13" } } }), "each score at its place")
+    eq(Ar.Symmetry.reference_diff(want, { profile = want }).ok, true, "the same scores pass")
+end)
+
+-- The profile is a character's whole sheet: a side reading one would read the other team's.
+test("arena.profile and arena.reference_diff: refused with a side and without the switch", function()
+    mirror()
+    for _, op in ipairs({ "arena.profile", "arena.reference_diff" }) do
+        local args = string.format("{uuid=%q,reference={profile={}}}", A1)
+        assert(enc(rpc(op, args, "A")):find("arena ops are the harness's", 1, true), op .. ": a side")
+        assert(enc(rpc(op, args, "B")):find("arena ops are the harness's", 1, true), op .. ": the other side")
+        env.BG3AI_ARENA = nil
+        assert(enc(rpc(op, args)):find("BG3AI_ARENA=1", 1, true), op .. ": switch off")
+        env.BG3AI_ARENA = "1"
+    end
+end)
+
 test("reference: a field that doesn't read on either side isn't ok; no profile is refused", function()
     local t = refProfile()
     t.spells = nil

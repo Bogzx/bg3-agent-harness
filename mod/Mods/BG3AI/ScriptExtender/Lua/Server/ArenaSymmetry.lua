@@ -274,12 +274,13 @@ local function canon(v)
 end
 Sym.canon = canon
 
--- A field's value as a sorted list of entries: a list's items, a map's "key=value", anything else its one text.
-local function flat(v)
+-- A field's value as a sorted list of entries: a list's items ("index=item" when its order means something, as in
+-- abilities: Str..Cha), a map's "key=value", anything else its one text.
+local function flat(v, ordered)
     if type(v) ~= "table" then return { tostring(v) } end
     local out = {}
     if #v > 0 or next(v) == nil then
-        for _, x in ipairs(v) do out[#out + 1] = canon(x) end
+        for i, x in ipairs(v) do out[#out + 1] = ordered and i .. "=" .. canon(x) or canon(x) end
     else
         for k, x in pairs(v) do out[#out + 1] = tostring(k) .. "=" .. canon(x) end
     end
@@ -321,7 +322,7 @@ function Sym.reference_diff(profile, reference)
         if t == nil or r == nil then
             out.unread[#out.unread + 1] = f
         else
-            local ft, fr = flat(t), flat(r)
+            local ft, fr = flat(t, f == "abilities"), flat(r, f == "abilities")
             local onlyT, onlyR = beyond(ft, fr), beyond(fr, ft)
             local a = accepted[f] or {}
             local badT, badR = unaccepted(onlyT, a.only_twin), unaccepted(onlyR, a.only_reference)

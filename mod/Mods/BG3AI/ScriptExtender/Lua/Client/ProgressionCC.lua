@@ -377,6 +377,7 @@ local function skillsStage(getDC, ctx, wanted, only)
     return function()
         local dc = getDC()
         local want = wantList(wanted)
+        if only and not want then return "next", 0 end
         local groups = skillGroups(dc)
         if want then
             for _, name in ipairs(want) do

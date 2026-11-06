@@ -236,6 +236,8 @@ do
         "expertise: both picked in the expertise group, the class group untouched")
     P.inner.skillsStage(function() return {} end, ctx, { "Athletics" }, "expertise")()
     check(ctx.result.problems[1] == "skill Athletics: not offered", "expertise: one not in its group is a problem")
+    local to, wait = P.inner.skillsStage(function() return {} end, ctx, nil, "expertise")()
+    check(to == "next" and wait == 0, "expertise: no pick, no settle wait on a normal level-up")
     BG3AI.UI.path, BG3AI.UI.command = path, command
 end
 

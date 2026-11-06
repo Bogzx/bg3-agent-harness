@@ -179,8 +179,7 @@ def _check_location(loc: Any, draft: bool) -> list[str]:
     if not isinstance(loc, dict) or set(loc) - {"line_gap"} != {"level", "spawns"}:
         return ["location must be {level, spawns, line_gap?}"]
     errs = [] if _str(loc["level"]) else ["location.level must be the level name"]
-    gap = loc.get("line_gap", LINE_GAP_M)
-    if isinstance(gap, bool) or not isinstance(gap, int | float) or gap <= 0:
+    if not _num(gap := loc.get("line_gap", LINE_GAP_M)) or gap <= 0:
         errs.append("location.line_gap must be a number above 0 (metres)")
     spawns = loc["spawns"]
     if not isinstance(spawns, dict) or set(spawns) != set(SIDES):
@@ -274,8 +273,10 @@ def _check_mirror(mirror: Any, teams: Any, draft: bool = False) -> list[str]:
             isinstance(p["reference"], dict) and isinstance(p["reference"].get("profile"), dict)
         ):
             errs.append(f"mirror.pairs[{i}].reference must hold its profile")
-        if "build" in p and "reference" not in p and not draft:
-            errs.append(f"mirror.pairs[{i}]: build {p['build']} has no reference (only a draft may lack one)")
+        parts = [k for k in ("subclass", "grants", "prepared") if isinstance(p["kit"], dict) and k in p["kit"]]
+        if ("build" in p or parts) and "reference" not in p and not draft:  # only a reference shows a twin holds these
+            who = f"build {p['build']}" if "build" in p else f"a kit with {', '.join(parts)}"
+            errs.append(f"mirror.pairs[{i}]: {who} has no reference (only a draft may lack one)")
         errs += [f"mirror.pairs[{i}].{k} must be a non-empty string" for k in ("class", "template", "race", "stats")
                  if not _str(p[k])]  # fmt: skip
         names = p["names"]

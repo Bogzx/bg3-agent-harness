@@ -934,6 +934,14 @@ test("a kit's subclass: both twins' class row written, replicated, read back; a 
         j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit({ subclass = "life" }) }).job]
         runJob(j)
         eq(j.status, "failed", "two rows")
+        twin(T1, { stats = "x" })
+        twin(T2, { stats = "x" })
+        world[T1].comps.Classes = { Classes = { setmetatable({ ClassUUID = "c" }, { __newindex = function() end }) } }
+        world[T2].comps.Classes = { Classes = { { ClassUUID = "c" } } }
+        j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit({ subclass = "life" }) }).job]
+        runJob(j)
+        eq(j.status, "failed", "a write that doesn't stick")
+        assert(tostring(j.error):find("subclass reads nil after the write of life", 1, true), tostring(j.error))
     end))
 
 test("a kit's prepared has no game call: named in the result; a part nothing reads is refused at the call",

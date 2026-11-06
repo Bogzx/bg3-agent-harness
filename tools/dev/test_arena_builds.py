@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -498,11 +499,15 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
         self.assertEqual(m[2]["template"], "3d24f5eb-7220-4e00-bc02-3e6ac819ac26")
         self.assertTrue(m[2]["race"].startswith("2cf6c770"))
 
-    def test_no_build_on_a_team_holds_a_knock_down_source(self):
+    def test_no_build_picks_a_knock_down_source_in_its_script_or_kit(self):
+        # What a build picks. A Cleric copy's class rows add its whole list, Command included, and neither shows here:
+        # the reference compare fails that, and no rated team holds a Cleric. The last three: ice surfaces, from play.
         banned = {"Target_Grease", "Projectile_IceKnife", "Zone_Thunderwave", "Target_HideousLaughter", "Target_Sleep",
-                  "TripAttack", "PushingAttack", "MenacingAttack", "TotemSpirit_Elk"}  # fmt: skip
+                  "TripAttack", "PushingAttack", "MenacingAttack", "TotemSpirit_Elk", "Target_Command_Container",
+                  "Target_SleetStorm", "Target_IceStorm", "Target_FreezingSphere"}  # fmt: skip
         for path in sorted((REPO / "packages/bench/builds").glob("l*_4v4_*.json")):
             d = json.loads(path.read_text())
             for b in d["builds"]:
                 with self.subTest(file=path.name, build=b["id"]):
-                    self.assertFalse(banned & set(json.dumps(b["script"]).replace('"', " ").replace(",", " ").split()))
+                    held = json.dumps(b["script"]) + json.dumps(plan(d, b["id"]))
+                    self.assertFalse(banned & set(re.findall(r"[A-Za-z_]+", held)))
