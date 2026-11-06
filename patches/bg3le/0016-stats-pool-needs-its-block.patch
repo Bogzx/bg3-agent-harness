@@ -1,0 +1,254 @@
+bg3le stats: a string pool candidate must have the guid, float and translated pools after it
+
+On top of 0001-0015. find_string_pool took the first array of 256+ entries holding a dice string. On 11 of 655 kept
+launches that was the 1512-entry array at -384 from the rarity run (TreasureTables' NextIds by the header), not the real
+pool at +32: guid, float and translated pools came up missing, "attributes available" was logged anyway, and FixedString
+writes went into the engine's array (arena S5 2026-11-06: Size 1512 -> 1524, no Progressions landed). Over the kept logs
+all 1287 good scans have all three pools at +32/+48/+64 from the pool, and all 22 bad scans have none.
+
+- A candidate passes only with those three pools after it (pool_block_holds), using find_value_pools' own checks, moved
+  to file scope. The scan goes on past a false match.
+- The dice string, its id and the entry it matched go in the log, for a rejected candidate and for the chosen one: why
+  the dice test passes on that array is still not explained, and the next false match says.
+- Attributes need the string pool: with no candidate the log says so, "attributes unavailable", and reads and writes
+  refuse instead of going through a wrong pool.
+
+Test: tools/test_bg3le_stats_pool.py.
+
+diff --git a/src/vendor/stats.cpp b/src/vendor/stats.cpp
+index 2635771..91ca4e5 100644
+--- a/src/vendor/stats.cpp
++++ b/src/vendor/stats.cpp
+@@ -490,14 +490,25 @@ constexpr char const* kDiceStrings[] = {"1d8", "1d6", "1d10", "2d6"};
+ constexpr std::size_t kDiceCount =
+     sizeof(kDiceStrings) / sizeof(kDiceStrings[0]);
+ 
++// Which wanted string a pool matched on, for the log.
++struct PoolMatch {
++    char const* Text = nullptr;
++    std::uint32_t Id = 0;
++    std::size_t Entry = 0;
++};
++
+ // Whether a pool of FixedString indices holds any of the given strings.
+ bool pool_contains_any(ArrayRef const& pool, char const* const* wanted,
+-                       std::size_t count) {
++                       std::size_t count, PoolMatch* match) {
+     std::uint32_t ids[8];
++    char const* texts[8];
+     std::size_t n = 0;
+     for (std::size_t i = 0; i < count && n < 8; ++i) {
+         std::uint32_t id = 0;
+-        if (bg3le_fixed_string_index_of(wanted[i], &id)) ids[n++] = id;
++        if (bg3le_fixed_string_index_of(wanted[i], &id)) {
++            texts[n] = wanted[i];
++            ids[n++] = id;
++        }
+     }
+     if (n == 0) {
+         static bool said = false;
+@@ -517,12 +528,17 @@ bool pool_contains_any(ArrayRef const& pool, char const* const* wanted,
+             return false;
+         }
+         for (std::size_t k = 0; k < n; ++k) {
+-            if (entry == ids[k]) return true;
++            if (entry == ids[k]) {
++                *match = PoolMatch{texts[k], ids[k], i};
++                return true;
++            }
+         }
+     }
+     return false;
+ }
+ 
++bool pool_block_holds(unsigned long long poolAddr);
++
+ // RPGStats::FixedStrings, the pool a FixedString attribute indexes into.
+ //
+ // An attribute's raw int is not a global string index. It is a position in
+@@ -553,8 +569,8 @@ bool find_string_pool(unsigned long long runAddr, ArrayRef* out,
+         // No structural pre-filter. Requiring the first entries to resolve
+         // and differ rejected the real pool on its first run -- a pool may
+         // hold empty or repeated slots -- while happily accepting the stat
+-        // name array, which has neither. The dice test below is the only
+-        // thing that actually distinguishes them, so it decides alone.
++        // name array, which has neither. The dice test below and the pools
++        // after the candidate are what actually distinguish them.
+ 
+         // Distinctness is not enough here. The Objects manager keeps a
+         // NameToHandle map whose key array is 15754 resolvable, distinct
+@@ -566,20 +582,37 @@ bool find_string_pool(unsigned long long runAddr, ArrayRef* out,
+         // So the test is positive rather than structural: the value pool has
+         // to contain dice notation, because that is what weapon damage is
+         // written as. A list of stat names does not.
+-        if (!pool_contains_any(pool, kDiceStrings, kDiceCount)) {
++        PoolMatch dice{};
++        if (!pool_contains_any(pool, kDiceStrings, kDiceCount, &dice)) {
+             logf("stats:   candidate pool at %#llx rejected: %u resolvable "
+                  "entries but no dice notation", at, pool.Size);
+             continue;
+         }
+ 
++        // Dice notation alone is not enough either. On about one launch in
++        // thirty the array at -384, TreasureTables' NextIds by the header,
++        // passed the test above, and every attribute then read through the
++        // wrong pool with no guids, floats or translated strings behind it.
++        // The real pool has all three after it, and that array never did.
++        if (!pool_block_holds(at)) {
++            logf("stats:   candidate pool at %#llx (%+lld from the run) "
++                 "rejected: %u entries, \"%s\" (id %#x) at entry %zu, but no "
++                 "guid, float and translated pools after it", at,
++                 (long long)(at - runAddr), pool.Size, dice.Text, dice.Id,
++                 dice.Entry);
++            continue;
++        }
++
+         *out = pool;
+         *poolAddrOut = at;
+         logf("stats: string pool at %#llx (%+lld from the run), %u entries",
+              at, (long long)(at - runAddr), pool.Size);
++        logf("stats:   its dice string: \"%s\" (id %#x) at entry %zu",
++             dice.Text, dice.Id, dice.Entry);
+         return true;
+     }
+-    logf("stats: no string pool found after the rarity run; FixedString "
+-         "attributes will report their raw index");
++    logf("stats: no string pool found after the rarity run; attributes stay "
++         "unavailable");
+     return false;
+ }
+ 
+@@ -660,6 +693,53 @@ void find_conditions(unsigned long long poolAddr, Found* f) {
+          "nothing");
+ }
+ 
++// Floats: finite, and not a block of zeroes or garbage exponents.
++bool plausible_floats(ArrayRef const& a) {
++    if (a.Size < 8) return false;
++    std::size_t sane = 0;
++    std::size_t nonzero = 0;
++    for (std::size_t i = 0; i < 16 && i < a.Size; ++i) {
++        float v = 0.0f;
++        if (!read_as((char const*)a.Buffer + i * sizeof(float), &v)) {
++            return false;
++        }
++        const float mag = v < 0 ? -v : v;
++        if (v == v && mag < 1e9f) ++sane;      // v == v rejects NaN
++        if (v != 0.0f) ++nonzero;
++    }
++    return sane >= 16 && nonzero >= 2;
++}
++
++// Guids: 16 bytes each, and a real one is not all zeroes.
++bool plausible_guids(ArrayRef const& a) {
++    if (a.Size < 4) return false;
++    std::size_t nonzero = 0;
++    for (std::size_t i = 0; i < 8 && i < a.Size; ++i) {
++        std::uint64_t w[2] = {};
++        if (!read_as((char const*)a.Buffer + i * 16, &w)) return false;
++        if (w[0] != 0 || w[1] != 0) ++nonzero;
++    }
++    return nonzero >= 4;
++}
++
++constexpr std::size_t kGuidsAt = 32;
++constexpr std::size_t kFloatsAt = 48;
++constexpr std::size_t kTranslatedAt = 64;
++
++// Whether the pools the member order puts after FixedStrings are there.
++bool pool_block_holds(unsigned long long poolAddr) {
++    ArrayRef guids{};
++    ArrayRef floats{};
++    ArrayRef translated{};
++    return array_header_at((void const*)(poolAddr + kGuidsAt), &guids)
++           && plausible_guids(guids)
++           && array_header_at((void const*)(poolAddr + kFloatsAt), &floats)
++           && plausible_floats(floats)
++           && array_header_at((void const*)(poolAddr + kTranslatedAt),
++                              &translated)
++           && plausible_handles(translated);
++}
++
+ // RPGStats::Floats and RPGStats::GUIDs, the pools the other indexed
+ // attribute kinds point into.
+ //
+@@ -670,35 +750,6 @@ void find_conditions(unsigned long long poolAddr, Found* f) {
+ // against what its contents should look like rather than accepted on
+ // position alone.
+ void find_value_pools(unsigned long long poolAddr, Found* f) {
+-    // Floats: finite, and not a block of zeroes or garbage exponents.
+-    auto plausible_floats = [](ArrayRef const& a) {
+-        if (a.Size < 8) return false;
+-        std::size_t sane = 0;
+-        std::size_t nonzero = 0;
+-        for (std::size_t i = 0; i < 16 && i < a.Size; ++i) {
+-            float v = 0.0f;
+-            if (!read_as((char const*)a.Buffer + i * sizeof(float), &v)) {
+-                return false;
+-            }
+-            const float mag = v < 0 ? -v : v;
+-            if (v == v && mag < 1e9f) ++sane;      // v == v rejects NaN
+-            if (v != 0.0f) ++nonzero;
+-        }
+-        return sane >= 16 && nonzero >= 2;
+-    };
+-
+-    // Guids: 16 bytes each, and a real one is not all zeroes.
+-    auto plausible_guids = [](ArrayRef const& a) {
+-        if (a.Size < 4) return false;
+-        std::size_t nonzero = 0;
+-        for (std::size_t i = 0; i < 8 && i < a.Size; ++i) {
+-            std::uint64_t w[2] = {};
+-            if (!read_as((char const*)a.Buffer + i * 16, &w)) return false;
+-            if (w[0] != 0 || w[1] != 0) ++nonzero;
+-        }
+-        return nonzero >= 4;
+-    };
+-
+     // At the positions the member order predicts, not the first thing that
+     // passes. Scanning forward for "the first plausible guid array" picked
+     // pool+16, which is Int64s: an array of pointers read sixteen bytes at a
+@@ -709,8 +760,6 @@ void find_value_pools(unsigned long long poolAddr, Found* f) {
+       // index into -- upstream's Object::GetFlags reads
+       // GetStats()->GetInt64(index) and treats the result as a bitmask.
+     constexpr std::size_t kInt64sAt = 16;
+-    constexpr std::size_t kGuidsAt = 32;
+-    constexpr std::size_t kFloatsAt = 48;
+ 
+     ArrayRef int64s{};
+     if (array_header_at((void const*)(poolAddr + kInt64sAt), &int64s)
+@@ -752,7 +801,6 @@ void find_value_pools(unsigned long long poolAddr, Found* f) {
+     // first -- and a handle resolves to text like
+     // "h5fafec24g30d5g425cg952cga9c53752059c", which is what confirms it
+     // rather than the position.
+-    constexpr std::size_t kTranslatedAt = 64;
+     ArrayRef translated{};
+     if (array_header_at((void const*)(poolAddr + kTranslatedAt), &translated)
+         && plausible_handles(translated)) {
+@@ -874,14 +922,15 @@ bool build_from_run(unsigned long long run) {
+     f.NameOffset = nameOffset;
+     logf("stats: %u stats via the rarity run at %#llx", objects.Size, run);
+ 
+-    // Attributes need three more things, each identified by content. Any
++    // Attributes need four more things, each identified by content. Any
+     // of them missing leaves enumeration working and attributes reporting
+     // themselves unavailable.
+     const bool lists = find_named_array(
+         run, "Weapon", 4, 4096, 128, &f.Lists, &f.ListNameOffset,
+         "modifier lists");
+     unsigned long long poolAddr = 0;
+-    if (find_string_pool(run, &f.Strings, &poolAddr)) {
++    const bool pools = find_string_pool(run, &f.Strings, &poolAddr);
++    if (pools) {
+         f.StringsHeader = (void const*)poolAddr;
+         find_value_pools(poolAddr, &f);
+     }
+@@ -895,7 +944,7 @@ bool build_from_run(unsigned long long run) {
+                   && find_object_offsets(f, &f.PropsOffset,
+                                          &f.ListIndexOffset);
+     }
+-    f.Attributes = lists && values && offsets;
++    f.Attributes = lists && pools && values && offsets;
+     logf("stats: attributes %s", f.Attributes ? "available" : "unavailable");
+     return true;
+ }
