@@ -152,6 +152,16 @@ class RespecTest(unittest.TestCase):
             live(FakeGame([]), FakeRoute(deny=("StartRespec",))).respec(PLANS, "u1")
 
 
+class SetupCheckTest(unittest.TestCase):
+    def test_done_is_0_and_a_failure_is_1_with_its_rows(self):
+        rows = [{"pair": 1, "ok": False, "diffs": [{"field": "passives"}]}]
+        code, rec = ar.setup_check(FakeGame([Job("failed", {"reference": rows}, "the twins are not their builds")]), {})
+        self.assertEqual((code, rec["reference"]), (1, rows))
+        self.assertIn("not their builds", rec["error"])
+        code, rec = ar.setup_check(FakeGame([Job("done", {"xp": {"added": 6072}})]), {})
+        self.assertEqual((code, rec["xp"]), (0, {"added": 6072}))
+
+
 KIT = {"items": [{"item": "WPN_X", "root": "r", "count": 1, "equip": True}], "prepared": ["Target_Bless"]}
 
 

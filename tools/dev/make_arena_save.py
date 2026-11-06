@@ -709,6 +709,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     ba.add_argument("names", nargs="+", type=_pair_arg, help="each pair's twins' names, A:B, in the builds' order")
     ba.add_argument("--spawn-a", required=True, type=_spawn_arg, help="x,y,z")
     ba.add_argument("--spawn-b", required=True, type=_spawn_arg, help="x,y,z")
+    ba.add_argument("--round-cap", type=int, help="else the base's")
+    ba.add_argument("--wall-cap-min", type=float, help="else the base's")
     ba.add_argument("--out", required=True, type=Path)
     y = sub.add_parser("symmetry", help="ask the running game whether each pair is a mirror")
     y.add_argument("pairs", nargs="+", type=_pair_arg)
@@ -735,6 +737,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             a = arena_builds.arena_file(
                 arena_builds.load_builds(args.builds), base, args.name, args.names, args.spawn_a, args.spawn_b
             )
+            if args.round_cap is not None:
+                a["round_cap"] = args.round_cap
+            if args.wall_cap_min is not None:
+                a["wall_cap_min"] = args.wall_cap_min
             args.out.write_text(json.dumps(a, indent=1) + "\n")
             print(f"{args.out}: {args.name}, {len(a['mirror']['pairs'])} pairs, level {a['level']}")
             return 0

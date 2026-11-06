@@ -6,7 +6,8 @@ prepared spells; make_arena_save.py reference-read then stores its profile. $0, 
     $P plan <builds.json> <build id>                 # offline: what the pages will be asked, per step
     $P respec <builds.json> <build id> --who <uuid>  # StartRespec, cc_apply, every level-up, the spell picks by click
     $P dress <builds.json> <build id> --who <uuid>   # its items out, the tier's in, its prepared spells
-    $P read-levels --who <uuid>                      # level, classes, whether a level-up waits
+    $P read-levels --who <uuid>                      # level, classes, max HP, race
+    $P setup-check <arena.json>                      # arena.setup on the running game: each twin against its reference
 
 The hire and the party XP are probe_route_h.py's (`hire --class X`, `xp --amount N`). Fail closed: a page that doesn't
 open, a pick the page refuses or a problem in a job's result stops the step with exit 1 and the reads so far; nothing is
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from collections.abc import Callable
@@ -161,6 +163,16 @@ def _lua_list(ids: list[str]) -> str:
     return "{" + ",".join(_lua_str(x) for x in ids) + "}"
 
 
+def setup_check(game: Any, arena: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """arena.setup on the loaded start save (S4). -> (exit code, what to log): 0 when it stood the match up (every twin
+    its build's), 1 with the error and its reference rows when it didn't. A match stood up is left unplayed: reload."""
+    r = game.run_job("arena.setup", {"arena": arena, "round_cap": arena.get("round_cap")}, wait_s=JOB_WAIT_S)
+    res = r.result if isinstance(r.result, dict) else {}
+    keep = ("reference", "xp", "not_applied", "teams", "members", "surfaces", "spawn_order")
+    rec = {"status": r.status, "error": r.error} | {k: res[k] for k in keep if k in res}
+    return (0 if r.status == "done" else 1), rec
+
+
 class Live:
     """The live steps over probe_route_h's RouteH (chunks, page reads) and the bridge's Game. Tests give fakes."""
 
@@ -277,8 +289,8 @@ def _find(path: Path, build_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
-    ap.add_argument("step", choices=("plan", "respec", "dress", "read-levels"))
-    ap.add_argument("builds", type=Path, nargs="?")
+    ap.add_argument("step", choices=("plan", "respec", "dress", "read-levels", "setup-check"))
+    ap.add_argument("builds", type=Path, nargs="?", help="the build file (setup-check: the arena file)")
     ap.add_argument("build", nargs="?")
     ap.add_argument("--who", default="")
     ap.add_argument("--out", type=Path, default=REPO / "runtime" / "probes" / "4v4-references")
@@ -289,13 +301,18 @@ def main(argv: list[str] | None = None) -> int:
             doc, b = _find(a.builds, a.build)
             print(json.dumps(ui_plans(b, doc["level"], static), indent=1))
             return 0
-        if not a.who:
+        if not a.who and a.step != "setup-check":
             ap.error(f"{a.step} needs --who")
+        os.environ.setdefault("BG3AI_RUNTIME", str(REPO / "runtime" / "arena_reference"))
         sys.path.insert(0, str(REPO / "bridge" / "src"))
         from bg3ai import leveling
         from bg3ai.tools import core, progression, world_tools
 
         game = core.game
+        if a.step == "setup-check":
+            code, rec = setup_check(game, json.loads(a.builds.read_text()))
+            print(json.dumps(rec, indent=1, default=str))
+            return code
         live = Live(
             rh.RouteH(game, a.out),
             game,

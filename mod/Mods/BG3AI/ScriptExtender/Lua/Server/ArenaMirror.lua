@@ -25,7 +25,7 @@
 --       DownedStatus(DOWNED): Lae'zel's, live check 12 step 10)
 --     ability_bonus = {+2 ability, +1 ability} or nil (SelectAbilityBonus)
 --     grants = {boosts, passives, passives_removed, spells}: what a subclass's rows up to the level and the
---       improvements (an ASI's Ability boosts, a feat's own parts) give; the game applies only the class rows' to a copy
+--       improvements (an ASI's Ability boosts, a feat's own parts) give; the game gives a copy only the class rows'
 --     choices = [{kind = skills|expertise|passives|spells, list, n, exact, ids}]: one per Select* selector;
 --       every id must be in the game's list (Ext.StaticData SkillList / PassiveList / SpellList), #ids == n when
 --       exact, else 1..n (a wizard's prepared spells out of its spellbook selector)
