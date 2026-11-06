@@ -647,7 +647,14 @@ end
 
 -- ui.dump {root?=widget name, depth?, text_only?, max?, hidden?}
 -- Without root: one entry per visible widget with its content.
+-- The raw screen ops are dev tools of the harness (no side): a side's reads go through the side-filtered UIState
+-- (audit S3-3: notifications, popups and the other side's widgets came back whole).
+local function harnessOnly(op)
+    if RPC.Ctx.side then error(op .. " is the harness's (no side)", 0) end
+end
+
 RPC.register("ui.dump", function(args)
+    harnessOnly("ui.dump")
     local t0 = RPC.now_ms()
     local out = {}
     for _, w in ipairs(UI.widgets()) do
@@ -663,6 +670,7 @@ end)
 
 -- ui.widgets: names and DataContext types of the open pages.
 RPC.register("ui.widgets", function()
+    harnessOnly("ui.widgets")
     local out = {}
     for _, w in ipairs(UI.widgets()) do
         out[#out + 1] = { n = w.name, dc = w.dc, vis = UI.isVisible(w.el) or nil }
@@ -673,6 +681,7 @@ end)
 -- ui.props {widget, path?}: primitive properties and command names of a
 -- DataContext (or a VM below it). Dev tool for finding bindings.
 RPC.register("ui.props", function(args)
+    harnessOnly("ui.props")
     local dc = UI.dc(args.widget or "")
     if not dc then error("no widget " .. tostring(args.widget)) end
     local obj = args.path and UI.path(dc, args.path) or dc

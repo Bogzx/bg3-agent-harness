@@ -4,6 +4,8 @@ The bridge (bg3ai.game.Game) sends Lua; the real game runs it through the mod's 
 the two Lua shapes the bridge sends are decoded instead (bg3ai.rpc_record.decode, the recorder's own decoder) and each
 mod op is answered by the first responder that knows it: typically a scripted GameModel (scripted.py), then recorded
 fixtures (fixtures.py). An op nobody answers gets the mod's own refusal ("unknown op '<op>' in <ctx> context").
+A call whose envelope names a side (a bridge started with BG3AI_SIDE) goes to a responder's `reply_side` when it has
+one (the scripted game answers from that team's view), else to its `reply` (a mod with no match ignores the side).
 
 Deterministic by construction: no ticks, no sleeps. Every eval is answered under one lock in arrival order, and every
 op the bridge called is kept in `calls` for assertions. Point the bridge at it with BG3LE_DEBUG_PORT=<fake.port>.
@@ -48,6 +50,7 @@ class FakeMod:
     def __init__(self, *responders: Responder, host: str = "127.0.0.1"):
         self.responders = list(responders)
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
+        self.call_sides: list[str | None] = []  # the envelope's side of each entry in calls (None: no side)
         self.evals = 0
         self.refuse_connects = 0  # the next N LuaDebug handshakes are dropped (a game refusing connections)
         self.connects = 0  # handshakes answered
@@ -76,17 +79,19 @@ class FakeMod:
                         return out
                 raise LuaError(f"fake mod can't run: {code[:80]}")
             calls, multi = decoded
-            replies = [self._one(ctx, c["op"], c["args"]) for c in calls]
+            replies = [self._one(ctx, c["op"], c["args"], c.get("side")) for c in calls]
             for rep in replies:
                 if "lua_error" in rep:
                     raise LuaError(str(rep["lua_error"]))
             parts = [json.dumps(rep, separators=(",", ":")) for rep in replies]
             return "[" + ",".join(parts) + "]" if multi else parts[0]
 
-    def _one(self, ctx: str, op: str, args: dict[str, Any]) -> Reply:
+    def _one(self, ctx: str, op: str, args: dict[str, Any], side: str | None = None) -> Reply:
         self.calls.append((ctx, op, args))
+        self.call_sides.append(side)
         for r in self.responders:
-            rep = r.reply(ctx, op, args)
+            sided = getattr(r, "reply_side", None) if side is not None else None
+            rep = sided(ctx, op, args, side) if sided is not None else r.reply(ctx, op, args)
             if rep is not None:
                 return rep
         return unknown(ctx, op)
@@ -95,6 +100,19 @@ class FakeMod:
         """The ops called so far, in order (one context or both)."""
         with self._lock:
             return [op for c, op, _ in self.calls if ctx is None or c == ctx]
+
+    def sided_ops(self, since: int = 0) -> list[tuple[str | None, str]]:
+        """(envelope side, op) of every call from index `since` on, in order."""
+        with self._lock:
+            return [(side, op) for (_, op, _), side in zip(self.calls[since:], self.call_sides[since:], strict=True)]
+
+    def sides(self) -> dict[str | None, int]:
+        """How many ops arrived per envelope side (None: no side)."""
+        with self._lock:
+            out: dict[str | None, int] = {}
+            for side in self.call_sides:
+                out[side] = out.get(side, 0) + 1
+            return out
 
     def broadcast(self, message: str) -> None:
         """A Lua print sent to every attached debugger (bg3le forwards prints; the bridge's jobpush listens)."""

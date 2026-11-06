@@ -172,6 +172,8 @@ def combat_row(line: str) -> str:
     if "hp_pct" in kv:
         out.append(f"hp {kv['hp_pct']}%")
     out += [f"{k}={kv[k]}" for k in ("hp", "max_hp") if k in kv]
+    if "ended" in flags:  # as render_combat: an ended row is not the current one
+        flags = [f for f in flags if f != "current"]
     out += flags + extra
     if pos:
         out.append(pos)

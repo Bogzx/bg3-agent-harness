@@ -62,11 +62,12 @@ def use_ability(ability: str, target: str = "", x: float | None = None, y: float
         args["force"] = True
     if which:
         args["which"] = which
-    if twostep.TWOSTEP_ENABLED and twostep.is_two_step(spell) and not upcast and len(picks) <= 1:
+    clicks = not world_tools._shared_screen()  # a two-team match: no hotbar or two-step clicks, as with the routes off
+    if clicks and twostep.TWOSTEP_ENABLED and twostep.is_two_step(spell) and not upcast and len(picks) <= 1:
         # ACT-9: Revivify (the body, then the ground beside it) and Dimension Door (who goes, then the landing) by
         # the player's clicks; with the route off the mod refuses them (its TargetPos2 write is off)
         return _twostep_use(char, spell, args, note)
-    hb_on = hotbar.HOTBAR_CAST_ENABLED and "pos" not in args and not upcast
+    hb_on = clicks and hotbar.HOTBAR_CAST_ENABLED and "pos" not in args and not upcast
     if len(picks) > 2 and hb_on:
         # ACT-8: Bless on 3, Magic Missile darts, Scorching Ray / Eldritch Blast beams: the player's route (hotbar
         # cell, one click per target, the tick); the mod checks the cast first and watches it like an Osiris cast
@@ -333,6 +334,15 @@ END_HUD_QUICK_S = 1.0   # ended this soon after the press: the press did it
 # order stays the fallback). OFF until acceptance sec_combat "end_turn after a companion's request (probe)" confirms;
 # flip live: BG3AI_END_HUD_FIRST=1 (bridge restart) or server.END_HUD_FIRST = True.
 END_HUD_FIRST = os.environ.get("BG3AI_END_HUD_FIRST", "0") == "1"
+# A two-team match: the mod's end of a turn group's last member waits up to Actions.lua A.END_LAST_WAIT_MS (20 s) for
+# the game to close the group (S087: 18 s) before it hands back, so a shorter job wait answers "not finished" while
+# the end still settles. With a side every act.end_turn job is waited on this long (normal play keeps its waits).
+END_ARENA_WAIT_S = 22.0
+
+
+def _end_wait_s(s: float) -> float:
+    """How long to wait for an act.end_turn job: s, with a side at least END_ARENA_WAIT_S."""
+    return max(s, END_ARENA_WAIT_S) if world_tools._shared_screen() else s
 
 
 def _peer_requested(cs: dict, char: str) -> str | None:
@@ -406,13 +416,14 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
     if core._session_over():
         return reporting._finish("end_turn", args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
     cs = core.game.try_rpc("state.combat") or {}
-    if char in turn.downed(cs):
-        # S018: end_turn on downed Claude/Shadowheart -> "FAILED: character is downed" (x2).
-        body = f"end_turn {queueing._label(char)}: skipped — {turn_slots._downed_text(char)}"
-        if wait and not reporting._batch["active"]:
-            body += "\n" + _wait_for_party_turn(80.0)
-        return reporting._finish("end_turn", args, body, t0)
-    peer = _peer_requested(cs, char) if END_HUD_FIRST and cs.get("active") else None
+    # A row's `downed` is the DOWNED status or 0 HP (StateWorld.lua): who can't end is the mod's to say (its refusal,
+    # _cant_end). Live 10 m1 a2 (D297): Lae'zel at 0 HP without DOWNED read as downed, end_turn skipped her turn the
+    # game kept open and waited the 80 s of _wait_for_party_turn on it.
+    down_row = char in turn.downed(cs)
+    # a two-team match: the end goes through the mod only (no HUD press on the shared screen)
+    hud_ok = not world_tools._shared_screen()
+    peer = (_peer_requested(cs, char) if hud_ok and END_HUD_FIRST and cs.get("active") and not down_row
+            else None)
     r = None
     if peer:
         hud = _end_turn_by_hud(char, JobResult("failed", None, f"after {queueing._label(peer)}'s end", [], 0))
@@ -420,11 +431,19 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
             r = JobResult("done", {"ended": True, "via": f"the HUD's End Turn at once ({queueing._label(peer)} had ended first)"},
                           None, hud.events, hud.elapsed_ms)
     if r is None:
-        r = core.game.run_job("act.end_turn", args, wait_s=15)
-        if r.status == "failed" and END_IGNORED in str(r.error or ""):
+        r = core.game.run_job("act.end_turn", args, wait_s=_end_wait_s(15))
+        if hud_ok and r.status == "failed" and END_IGNORED in str(r.error or ""):
             r = _end_turn_by_hud(char, r)
     plumbing._remember_names(r.result)
     reporting._batch["last"] = r.status
+    cant = _cant_end(char, r)
+    if cant:
+        # S018: end_turn on downed Claude/Shadowheart -> "FAILED: character is downed" (x2): not a failure
+        reporting._batch["last"] = "done"
+        body = f"end_turn {queueing._label(char)}: skipped — {cant}"
+        if wait and not reporting._batch["active"]:
+            body += "\n" + _wait_for_party_turn(80.0)
+        return reporting._finish("end_turn", args, body, t0)
     nothing = _nothing_to_end(r)
     if nothing:
         # S023-S025: 24 end_turn calls on a turn combat_turn had already ended (shared turn groups) or that
@@ -440,11 +459,25 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
         # Name whose turn it was: in a shared turn group the game moves the selection, and the agent
         # read Lae'zel's after={...} as Claude's (claude-run-2 S001).
         body = body.replace("end_turn:", f"end_turn {queueing._label(char)}:", 1)
+    if down_row and r.status == "done":
+        body += (f"\n{queueing._label(char)} is at 0 HP without the Downed status (no death saving throws): the game "
+                 "kept its turn open")
     if r.status == "done" and wait and not reporting._batch["active"]:
         body += "\n" + _wait_for_party_turn(80.0)
     elif r.status == "done" and wait:
         body += " — " + _wait_for_party_turn(80.0)
     return reporting._finish("end_turn", args, body, t0)
+
+
+def _cant_end(char: str, r) -> str:
+    """Why the mod refused to end char's turn because char can't act ('' = it didn't): downed (the DOWNED status,
+    Guard.is_downed) or dead."""
+    err = str(r.error or "") if r.status != "done" else ""
+    if err.startswith("character is downed"):
+        return turn_slots._downed_text(char)
+    if err.startswith("character is dead"):
+        return f"{queueing._label(char)} is dead: it has no turn"
+    return ""
 
 
 def _nothing_to_end(r) -> str:
@@ -538,6 +571,8 @@ def flee(who: str | None = None) -> str:
         who_near = near[2] or overview._name_of(near[1])
         return (f"REFUSED: enemy too close: {core.H.get(near[1])} {who_near} at {near[0]:.1f} m; "
                 f"fleeing needs every enemy {FLEE_MIN_M:.0f} m away (the Flee button's tooltip).")
+    if world_tools._shared_screen():  # the HUD's Flee button
+        return f"FAILED: flee is {world_tools.SHARED_SCREEN}"
     # The metrics record's flee numbers (not the agent's text), filled in place up to the record's write: client op ->
     # [calls, ms], and the hover search's tries and outcome
     ops: dict[str, list] = {}

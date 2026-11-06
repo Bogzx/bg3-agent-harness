@@ -237,6 +237,9 @@ def _react_click(args: dict, which: int, t0: float) -> str:
     mouse, hover-checked (reactclick)."""
     from .. import reactclick
 
+    if world_tools._shared_screen():
+        return reporting._finish("react", args, "react: FAILED — this prompt answers only to a click on its row, which "
+                                 f"is {world_tools.SHARED_SCREEN}", t0)
     inp = world_tools._inp()
     if inp is None:
         return reporting._finish("react", args, "react: FAILED — this prompt answers only to a click on its row, and the input"

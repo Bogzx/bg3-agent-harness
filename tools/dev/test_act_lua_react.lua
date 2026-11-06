@@ -195,14 +195,14 @@ test("path_provokes: a visible enemy with its reaction whose reach the path leav
         characterVisible = function(_, u) return u ~= GOB or seen end,
     }
     local ok, err = pcall(function()
-        -- the goblin at 2.4 m on x; reach 1.5 m + both Move radii 0.25 (the fallback: no AIBounds here) = 2.0 m: the
-        -- path from x 1 to x -5 leaves it at 0.4
+        -- the goblin at 2.4 m on x; the path from x 1 to x -5 leaves its reach (G.melee_reach) on the way
         local path = { { 1, 0, 0 }, { -2, 0, 0 }, { -5, 0, 0 } }
         local r = G.path_provokes(P1, path)
         eq(#r, 1, "one")
         eq(r[1].uuid, GOB, "the goblin"); eq(r[1].name, "Goblin", "named")
-        eq(r[1].along_m, 0.6, "0.6 m along")
-        eq(string.format("%.1f,%.1f,%.1f", table.unpack(r[1].at)), "0.4,0.0,0.0", "where it leaves the reach")
+        local reach = G.melee_reach(GOB, P1, G.DEFAULT_MELEE_M) -- the goblin at x 2.4, the path from x 1 west
+        eq(r[1].along_m, U.round(1 - (2.4 - reach), 1), "how far along")
+        eq(string.format("%.1f", r[1].at[1]), string.format("%.1f", 2.4 - reach), "where it leaves the reach")
         eq(#G.path_provokes(P1, { { -5, 0, 0 }, { -9, 0, 0 } }), 0, "a path never in its reach")
         world[GOB].comps.ActionResources.Resources.ReactionActionPoint[1].Amount = 0
         eq(#G.path_provokes(P1, path), 0, "its reaction spent: nothing, as the game's preview")

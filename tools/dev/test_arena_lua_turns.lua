@@ -1,0 +1,434 @@
+-- Part of test_arena_lua.lua (split for the 1000-line cap): whose turn, whose characters, how a match ends.
+-- test_arena_lua.lua runs it after its stubs and helpers, which it shares as globals.
+
+test("the other side's character as actor, leader or `to`: '<name> is not on your side'", function()
+    begin()
+    osiv[key("CanSee", A1, B1)], osiv[key("CanSee", B1, SA)], osiv[key("CanSee", A1, GOB)] = 1, 1, 1 -- in sight: named
+    refused(function() as("A", G.actor, B1) end, "Bo is not on your side")
+    refused(function() as("B", G.actor, SA) end, "Aspect is not on your side")
+    refused(function() as("A", G.actor, GOB) end, "Goblin is not on your side")
+    eq(as("A", G.actor, SA), SA, "A's summon")
+    eq(as("A", G.actor, A2), A2, "A's member")
+    eq(G.actor(B1), B1, "no side: any party member")
+end)
+
+test("audit S3-6: the other side's character out of the side's sight is refused without its name", function()
+    begin()
+    world[B1].pos = { 200, 0, 0 } -- far past sight range
+    refused(function() as("A", G.actor, B1) end, "that character is not on your side")
+    local ok, err = pcall(as, "A", G.actor, B1)
+    eq(ok, false, "refused")
+    eq(tostring(G.is_refusal(err) and err.reason or err):find("Bo", 1, true), nil, "no name: " .. tostring(err.reason))
+end)
+
+test("in combat, the side not acting: 'not your turn (side A is acting)'", function()
+    begin()
+    setTurn(A1, true, false)
+    refused(function() as("B", G.combat_gate, B1, "turn") end, "not your turn (side A is acting)")
+    as("A", G.combat_gate, A1, "turn")
+    refused(function() as("A", G.combat_gate, A2, "turn") end, "it is not this character's turn")
+end)
+
+test("guard.side_gate (confirm / dismiss_popups ask it first): only the acting side may answer a box", function()
+    begin()
+    setTurn(A1, true, false)
+    local r = rpc("guard.side_gate", "{}", "B")
+    eq(r.ok, false, "B while A acts")
+    eq(r.error, "not your turn (side A is acting)", "B's refusal")
+    eq(rpc("guard.side_gate", "{}", "A").ok, true, "A acts")
+    eq(rpc("guard.side_gate", "{}").ok, true, "no side")
+end)
+
+test("between turns, the side of the last team member whose turn started acts", function()
+    begin()
+    fire("TurnStarted", "S_Player_" .. B2)
+    eq(Ar.state.turn.side, "B", "turn.side")
+    eq(Ar.state.turn.uuid, B2, "turn.uuid")
+    eq(Ar.acting_side(), "B", "acting")
+    refused(function() as("A", G.combat_gate, A1, "turn") end, "not your turn (side B is acting)")
+end)
+
+test("a turn group across the teams: the side listed first acts, the other's members wait their turn", function()
+    begin()
+    setTurn(A1, true, false)
+    setTurn(B1, true, false)
+    order = { B1, A1 }
+    eq(Ar.acting_side(), "B", "acting: listed first")
+    eq(Ar.held(A1), true, "A1 waits")
+    eq(Ar.held(B1), false, "B1 acts")
+    eq(G.is_my_turn(A1), false, "A1's turn")
+    eq(G.is_my_turn(B1), true, "B1's turn")
+    refused(function() as("A", G.combat_gate, A1, "turn") end, "not your turn (side B is acting)")
+    as("B", G.combat_gate, B1, "turn")
+    setTurn(B1, true, true) -- B1 ended: A's turn now
+    eq(Ar.acting_side(), "A", "acting after B1's end")
+    eq(Ar.held(A1), false, "A1 acts")
+    as("A", G.combat_gate, A1, "turn")
+end)
+
+test("a TurnStarted of the other team ends a member's turn for its side, though both are player characters", function()
+    begin()
+    setTurn(A1, true, false)
+    G.note_turn_started(A1)
+    clock = clock + 2000
+    G.note_turn_started(B1) -- the game shows A1 open a moment longer (S084/S087)
+    eq(G.turn_moved_on(A1), true, "A1's turn moved on")
+    eq(G.is_my_turn(A1), false, "A1's turn")
+end)
+
+test("the other team's bag: '<name> is not on your side' for its item", function()
+    begin()
+    osiv[key("CanSee", A1, B1)] = 1 -- in sight: named (out of sight: "that character", audit S3-6)
+    local GEM = "dddddddd-0000-0000-0000-000000000004"
+    world[GEM] = { pos = { 10, 0, 0 }, comps = {} }
+    osiv[key("IsItem", GEM)] = 1
+    osiv[key("IsEquipable", GEM)] = 1
+    osiv[key("GetInventoryOwner", GEM)] = B1
+    osiv[key("IsInCombat", A1)] = 0
+    local r = rpc("act.equip", "{char=" .. string.format("%q", A1) .. ",item=" .. string.format("%q", GEM) .. "}", "A")
+    eq(enc(r):find("Bo is not on your side", 1, true) ~= nil, true, "A equips B1's item: " .. enc(r))
+end)
+
+-- BUILDS F6 (arena-bridge 2026-11-02): a party member on no team (a sitter) keeps its bag out of a side's reach.
+test("a sitter's item: equip, unequip and give from a side are refused, in and out of combat", function()
+    begin()
+    local SIT = "cccccccc-0000-0000-0000-0000000000c9"
+    local GEM = "dddddddd-0000-0000-0000-000000000005"
+    partyRows[#partyRows + 1] = SIT
+    world[SIT] = { pos = { 30, 0, 0 }, comps = { ServerCharacter = {} } }
+    world[GEM] = { pos = { 30, 0, 0 }, comps = {} }
+    osiv[key("IsOnStage", SIT)], osiv[key("IsCharacter", SIT)] = 1, 1
+    osiv[key("IsInCombat", SIT)] = 0
+    osiv[key("IsItem", GEM)], osiv[key("IsEquipable", GEM)] = 1, 1
+    osiv[key("GetInventoryOwner", GEM)] = SIT
+    local args = "{char=" .. string.format("%q", A1) .. ",item=" .. string.format("%q", GEM) .. ",to="
+        .. string.format("%q", A2) .. "}"
+    for _, combat in ipairs({ 0, 1 }) do
+        osiv[key("IsInCombat", A1)] = combat
+        for _, op in ipairs({ "act.equip", "act.unequip", "act.transfer" }) do
+            local r = rpc(op, args, "A")
+            local why = r.error or (r.result and r.result.status == "failed" and r.result.error)
+            eq(type(why), "string", op .. " in combat " .. combat .. " refused: " .. enc(r))
+            if combat == 0 then -- in combat the combat gate refuses first
+                eq(why:find("that item is not in the party's inventory", 1, true) ~= nil, true, op .. ": " .. why)
+            end
+        end
+    end
+end)
+
+-- A side has no click tool (both sides share one game screen): the in-combat refusal must not name click_on.
+test("interact on an object in combat with a side: the refusal names no click tool", function()
+    begin()
+    local DOOR = "dddddddd-0000-0000-0000-000000000006"
+    world[DOOR] = { pos = { 1, 0, 0 }, comps = {} }
+    osiv[key("IsItem", DOOR)] = 1
+    local args = "{char=" .. string.format("%q", A1) .. ",target=" .. string.format("%q", DOOR) .. "}"
+    local r = enc(rpc("act.interact", args, "A"))
+    eq(r:find("click_on", 1, true), nil, "no click_on: " .. r)
+    eq(r:find("in a two-team match no clicks are made", 1, true) ~= nil, true, r)
+    r = enc(rpc("act.interact", args))
+    eq(r:find("click_on " .. DOOR, 1, true) ~= nil, true, "without a side, click_on as before: " .. r)
+end)
+
+-- The same for the refusals that name the UI tools: a side has no UI either.
+test("UI-tools refusals with a side say no clicks or key presses are made; without a side the UI tools", function()
+    begin()
+    local GEM = "dddddddd-0000-0000-0000-000000000007"
+    world[GEM] = { pos = { 0, 0, 0 }, comps = {} }
+    osiv[key("IsItem", GEM)], osiv[key("IsEquipable", GEM)] = 1, 1
+    osiv[key("GetInventoryOwner", GEM)] = A1
+    local NO_UI = "(in a two-team match no clicks or key presses are made: both sides share one game screen)"
+    local function why(op, args, side)
+        local r = rpc(op, args, side)
+        return tostring(r.error or (r.result and r.result.error)) .. " " .. enc(r)
+    end
+    local item = "{char=" .. string.format("%q", A1) .. ",item=" .. string.format("%q", GEM) .. ",to="
+        .. string.format("%q", A2) .. "}"
+    for _, op in ipairs({ "act.equip", "act.transfer" }) do -- the combat gate; give in combat
+        local w = why(op, item, "A")
+        eq(w:find("not available during combat through this action " .. NO_UI, 1, true) ~= nil, true, op .. ": " .. w)
+        eq(w:find("UI tools", 1, true), nil, op .. ": no UI named")
+    end
+    local w = why("act.equip", item)
+    eq(w:find("not available during combat through this action (the UI tools can do it)", 1, true) ~= nil, true,
+        "no side: " .. w)
+    osiv[key("IsInCombat", A1)] = 0 -- looting, out of combat
+    osiv[key("IsDead", A2)], osiv[key("IsInCombat", A2)] = 1, 0 -- a teammate's corpse (party: visible)
+    w = why("act.interact", "{char=" .. string.format("%q", A1) .. ",target=" .. string.format("%q", A2) .. "}", "A")
+    eq(w:find("looting corpses is not supported by this action yet " .. NO_UI, 1, true) ~= nil, true, "loot: " .. w)
+end)
+
+test("arena.status: each team's true HP fraction; the summon's HP is not a member's", function()
+    begin()
+    local r = rpc("arena.status")
+    eq(r.result.hp.A, 0.75, "A: 30/40")
+    eq(r.result.hp.B, 0.75, "B: 45/60")
+    eq(r.result.ended, nil, "ended")
+end)
+
+test("a side all downed or dead at a turn boundary ends the match: reason wipe, the other side wins", function()
+    begin()
+    fire("CombatRoundStarted", "combat1", 3)
+    osiv[key("HasActiveStatus", B1, "DOWNED")] = 1
+    world[B1].comps.Health.Hp = 0
+    osiv[key("IsDead", B2)] = 1
+    world[B2].comps.Health.Hp = 0
+    fire("TurnStarted", "S_Player_" .. A1)
+    local e = rpc("arena.status").result.ended
+    eq(e and e.winner, "A", "winner")
+    eq(e.reason, "wipe", "reason")
+    eq(e.rounds, 3, "rounds")
+    eq(e.hp_left_A, 0.75, "hp_left_A")
+    eq(e.hp_left_B, 0, "hp_left_B")
+    eq(rpc("arena.end", "{reason=\"cap\",winner=\"B\"}").result.ended.winner, "A", "the mod's end is kept")
+end)
+
+-- Review R2 (review-arena-v0.md): A downs B's last member mid-phase, then the runner forfeits A (its third forced turn
+-- in a row) before any turn boundary: the wipe is the end.
+test("arena.end after a wipe no turn boundary has checked: the wipe is the end, not the runner's reason", function()
+    begin()
+    fire("CombatRoundStarted", "combat1", 2)
+    fire("TurnStarted", "S_Player_" .. A1)
+    eq(Ar.state.ended, nil, "the match is on")
+    osiv[key("HasActiveStatus", B1, "DOWNED")] = 1
+    world[B1].comps.Health.Hp = 0
+    osiv[key("HasActiveStatus", B2, "DOWNED")] = 1
+    world[B2].comps.Health.Hp = 0
+    local e = rpc("arena.end", "{reason=\"forfeit\",winner=\"B\"}").result.ended
+    eq(e.reason, "wipe", "reason")
+    eq(e.winner, "A", "winner")
+    eq(#refs("arena_end"), 1, "one end recorded")
+end)
+
+test("both sides wiped at once: reason wipe, no winner", function()
+    begin()
+    for _, u in ipairs({ A1, A2, B1, B2 }) do osiv[key("IsDead", u)] = 1 end
+    fire("TurnStarted", "S_Player_" .. A1)
+    local e = Ar.state.ended
+    eq(e and e.reason, "wipe", "reason")
+    eq(e.winner, nil, "winner")
+end)
+
+test("no wipe while a member stands", function()
+    begin()
+    osiv[key("IsDead", B1)] = 1
+    fire("TurnStarted", "S_Player_" .. A1)
+    eq(Ar.state.ended, nil, "ended")
+end)
+
+test("arena.end: the runner's reason and winner; a winner other than A/B refused", function()
+    begin()
+    eq(rpc("arena.end", "{reason=\"cap\",winner=\"C\"}").error, "winner must be A or B", "bad winner")
+    eq(Ar.state.ended, nil, "not ended by the refusal")
+    local e = rpc("arena.end", "{reason=\"cap\"}").result.ended
+    eq(e.reason, "cap", "reason")
+    eq(e.winner, nil, "winner")
+    eq(rpc("arena.status").result.active, true, "the arena stays active until reset")
+end)
+
+test("the round cap: the start of round cap+1 ends the match as a draw, rounds = the cap", function()
+    begin({ round_cap = 2 })
+    fire("CombatRoundStarted", "combat1", 1)
+    fire("TurnStarted", "S_Player_" .. A1)
+    fire("CombatRoundStarted", "combat1", 2)
+    eq(Ar.state.ended, nil, "round 2 is played")
+    fire("CombatRoundStarted", "combat1", 3)
+    local e = Ar.state.ended
+    eq(e and e.reason, "round_cap", "reason")
+    eq(e.winner, nil, "winner")
+    eq(e.rounds, 2, "rounds")
+    eq(#refs("arena_end"), 1, "recorded")
+end)
+
+test("a wipe at the round cap's boundary is a wipe, not a draw", function()
+    begin({ round_cap = 2 })
+    fire("CombatRoundStarted", "combat1", 2)
+    osiv[key("IsDead", B1)], osiv[key("IsDead", B2)] = 1, 1
+    fire("CombatRoundStarted", "combat1", 3)
+    eq(Ar.state.ended.reason, "wipe", "reason")
+    eq(Ar.state.ended.winner, "A", "winner")
+end)
+
+test("a turn before the first CombatRoundStarted is round 1's, never round 0", function()
+    begin()
+    fire("TurnStarted", "S_Player_" .. B1)
+    eq(Ar.state.turn.round, 1, "turn.round")
+    setTurn(B1, true, false)
+    tick()
+    eq(refs("arena_turn")[1].round, 1, "the arena_turn record")
+    fire("CombatRoundStarted", "combat1", 1)
+    eq(Ar.state.round, 1, "round")
+end)
+
+-- Live 2026-11-02 (live 7 and every earlier load): setup's combat call fires round 1's CombatRoundStarted and the
+-- first group's TurnStarted before Ar.begin; the match's round stayed 0 through that group.
+test("a match begun mid-round takes its combat's round: CombatRoundStarted's, else the engine's; arena.status has it",
+    function()
+    fire("CombatRoundStarted", "combat1", 1)
+    fire("TurnStarted", "S_Player_" .. A1)
+    begin({ round_cap = 2 })
+    eq(Ar.state.round, 1, "round 1 from its CombatRoundStarted")
+    eq(rpc("arena.status").result.round, 1, "arena.status round")
+    eq(rpc("arena.end", "{reason=\"cap\"}").result.ended.rounds, 1, "an end in round 1's first group: 1 round")
+    reset()
+    engineRound = 3 -- no CombatRoundStarted seen (G.round_of nil): the engine's turn order
+    begin()
+    eq(Ar.state.round, 3, "the engine's round")
+    reset()
+    osiv[key("CombatGetGuidFor", A1)] = nil -- out of combat: no round yet, never 0
+    begin()
+    eq(Ar.state.round, nil, "no round")
+    eq(rpc("arena.status").result.round, nil, "arena.status round")
+end)
+
+test("another fight's rounds are not the match's", function()
+    begin()
+    osiv[key("CombatGetGuidFor", GOB)] = "combat2"
+    fire("CombatRoundStarted", "combat1", 1)
+    fire("CombatRoundStarted", "combat2", 7)
+    eq(Ar.state.round, 1, "round")
+    eq(Ar.state.combat, "combat1", "the arena's combat")
+end)
+
+test("the arena's combat ends with a side all dead and no turn after: the match ends as a wipe", function()
+    begin()
+    fire("CombatRoundStarted", "combat1", 2)
+    osiv[key("IsDead", B1)], osiv[key("IsDead", B2)] = 1, 1
+    fire("CombatEnded", "combat1")
+    local e = Ar.state.ended
+    eq(e and e.winner, "A", "winner")
+    eq(e.reason, "wipe", "reason")
+    eq(e.rounds, 2, "rounds")
+end)
+
+test("the arena's combat ends with both sides standing: recorded for the runner, not ended by the mod", function()
+    begin()
+    fire("CombatRoundStarted", "combat1", 4)
+    fire("CombatEnded", "combat2")
+    eq(#refs("arena_combat_ended"), 0, "another combat's end")
+    fire("CombatEnded", "combat1")
+    eq(Ar.state.ended, nil, "ended")
+    local r = refs("arena_combat_ended")
+    eq(#r, 1, "recorded")
+    eq(r[1].rounds, 4, "rounds")
+end)
+
+test("a cross-team turn group without a readable turn order: the earliest turn start acts, recorded once", function()
+    begin()
+    fire("CombatRoundStarted", "combat1", 1)
+    setTurn(A1, true, false)
+    setTurn(B1, true, false)
+    G.note_turn_started(B1)
+    clock = clock + 10
+    G.note_turn_started(A1)
+    order = {}
+    eq(Ar.acting_side(), "B", "acting")
+    eq(Ar.acting_side(), "B", "again")
+    local r = refs("arena_tie_fallback")
+    eq(#r, 1, "recorded once")
+    eq(r[1].side, "B", "the record's side")
+    eq(r[1].round, 1, "the record's round")
+end)
+
+-- REVIEW-5 F9: with no turn start stamped and no last turn, the fallback was always A; now the seed and round pick it
+test("a cross-team turn group with no turn start or last turn: the side alternates by seed + round, not always A",
+    function()
+    local function fallback(seed, round)
+        reset()
+        begin({ seed = seed })
+        fire("CombatRoundStarted", "combat1", round)
+        setTurn(A1, true, false)
+        setTurn(B1, true, false)
+        order = {}
+        return Ar.acting_side()
+    end
+    eq(fallback(nil, 1), "A", "no seed, round 1")
+    eq(fallback(nil, 2), "B", "no seed, round 2")
+    eq(fallback(3, 1), "B", "seed 3, round 1")
+    eq(fallback(3, 2), "A", "seed 3, round 2")
+    eq(refs("arena_tie_fallback")[1].side, "A", "recorded")
+end)
+
+-- Live 2026-11-02 (live 9): the avatar, sitting out, joined the fight ~3 min in; nobody ends a sitter's turn and the
+-- match stalled until the runner faulted it.
+test("a character on no team entering the arena's combat ends the match as a fault, named; a summon, a prop or "
+    .. "another fight doesn't", function()
+    local PROP = "dddddddd-0000-0000-0000-0000000000d1"
+    begin()
+    osiv[key("IsCharacter", PROP)] = 0
+    fire("EnteredCombat", "S_Player_" .. SA, "combat1")     -- A1's summon
+    fire("EnteredCombat", "S_Item_" .. PROP, "combat1")     -- a prop on the turn order
+    osiv[key("CombatGetGuidFor", GOB)] = "combat2"
+    fire("EnteredCombat", "S_Goblin_" .. GOB, "combat2")     -- a fight elsewhere
+    eq(Ar.state.ended, nil, "still on")
+    fire("EnteredCombat", "S_Goblin_" .. GOB, "combat1")
+    local e = Ar.state.ended
+    eq(e and e.reason, "fault", "reason")
+    eq(e.winner, nil, "no winner")
+    eq(e.detail, "Goblin (not on a team) joined the fight", "detail")
+    local r = refs("arena_end")
+    eq(#r, 1, "recorded once")
+    eq(r[1].detail, e.detail, "the record's detail")
+end)
+
+test("a character on no team in the turn order ends the match at the next phase check; a prop there doesn't",
+    function()
+    local PROP = "dddddddd-0000-0000-0000-0000000000d1"
+    begin()
+    world[PROP] = { pos = { 3, 0, 0 }, comps = {} }
+    osiv[key("IsCharacter", PROP)] = 0
+    setTurn(A1, true, false)
+    order = { A1, PROP, B1 }
+    tick()
+    eq(Ar.state.ended, nil, "a prop: still on")
+    eq(#refs("arena_turn"), 1, "the phase recorded")
+    order = { A1, GOB, B1 }
+    tick()
+    eq(Ar.state.ended and Ar.state.ended.detail, "Goblin (not on a team) joined the fight", "the goblin")
+end)
+
+-- Review C4 (arena-fight-analysis.md): a slow side whose turn the runner ended at its cap sent its next action into
+-- the other side's phase and read only "not your turn". The side is told, as a fact, and only that side.
+test("the runner's cap end: the side gets turn_forced; its refusals name the cap until its next phase", function()
+    begin()
+    order = { A1, B1 }
+    setTurn(A1, true, false)
+    tick()
+    local why = "the per-turn time cap (90 s of model time)"
+    local r = rpc("act.end_turn", "{char=" .. string.format("%q", A1) .. ",forced=" .. string.format("%q", why) .. "}",
+        "A")
+    eq(r.ok, true, "the end starts: " .. enc(r))
+    local a = kinds(rpc("events.since", "{seq=0}", "A"), "turn_forced")
+    eq(#a, 1, "side A told once")
+    eq(a[1].data.name, "Ana", "whose turn")
+    eq(a[1].data.why, why, "which cap")
+    eq(#kinds(rpc("events.since", "{seq=0}", "B"), "turn_forced"), 0, "side B is not told")
+    setTurn(A1, true, true) -- A1 ended: B's phase
+    setTurn(B1, true, false)
+    tick()
+    refused(function() as("A", G.combat_gate, A1, "turn") end,
+        "not your turn (side B is acting): Ana's turn was ended at " .. why)
+    as("B", G.combat_gate, B1, "turn") -- B acts
+    setTurn(B1, true, true) -- B's phase over: A's next one
+    setTurn(A1, false, false)
+    setTurn(A2, true, false)
+    order = { A2, B2 }
+    tick()
+    setTurn(A2, true, true)
+    setTurn(B2, true, false)
+    tick()
+    local ok, err = pcall(as, "A", G.combat_gate, A2, "turn")
+    eq(ok, false, "refused")
+    eq(err.reason, "not your turn (side B is acting)", "A's new phase: the forced one is over")
+end)
+
+-- Fairness audit S2-2 (2026-11-03): act.select took the one client's selection in the other side's phase (B's
+-- set_reactions then failed "not the selected character", and the recording's camera moved).
+test("act.select in the other side's phase: 'not your turn (side B is acting)'; in its own phase it starts", function()
+    begin()
+    setTurn(B1, true, false)
+    local r = rpc("act.select", "{char=" .. string.format("%q", A1) .. "}", "A")
+    eq(enc(r):find("not your turn (side B is acting)", 1, true) ~= nil, true, "A selects in B's phase: " .. enc(r))
+    r = rpc("act.select", "{char=" .. string.format("%q", B1) .. "}", "B")
+    eq(enc(r):find("not your turn", 1, true), nil, "B selects in its own phase: " .. enc(r))
+end)

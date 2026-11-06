@@ -3,14 +3,13 @@
 
 from __future__ import annotations
 
-import math
 import re
 import time
 from typing import Any
 
 from .. import actq, economy, hotbar, hoverclick, macros, render, twostep
-from ..game import GameError, JobResult, hold_client, release_client
-from . import core, overview, plumbing, reporting
+from ..game import GameError, JobResult
+from . import core, overview, plumbing, reporting, transition
 
 # ---------------------------------------------------------------------------
 # act: world
@@ -171,8 +170,21 @@ def pick_up(item: str, who: str | None = None, wait: bool = True) -> str:
 _inp_client = {"c": None}
 
 
+# A server playing one side of a two-team match (BG3AI_SIDE) shares the one game screen with the other side: it makes
+# no clicks or key presses (both sides act only through the mod's ops). _inp() never opens the input shim then, and
+# every route that would click refuses at once, before it does anything, with SHARED_SCREEN.
+SHARED_SCREEN = ("not available in a two-team match: both sides share one game screen, so this server makes no "
+                 "clicks or key presses")
+
+
+def _shared_screen() -> bool:
+    return bool(getattr(core.game, "side", None))
+
+
 def _inp():
     from ..input import InputClient
+    if _shared_screen():
+        return None
     if _inp_client["c"] is None:
         try:
             c = InputClient()
@@ -181,84 +193,6 @@ def _inp():
         except Exception:
             return None
     return _inp_client["c"]
-
-
-# A23 (S086 05:17:45 hang; impl-setup S17/S21): our click on the rest/travel Yes/No box starts the game's transition
-# (End the Day, a camp scene, a region load). S086: after the click, ui.box_open polls and then the follow-up
-# ui.long_rest job read the client UI while the game tore the box down: 954 frame-lock timeouts in two client Ticks,
-# the story thread stopped answering, FAULT hang. From the click on, no client call at all (game.hold_client) until
-# the server says the transition is over: a rest-flow answer (end_day_ok, rest_started, a refusal), a conversation
-# starting (the rest check's Dialog flag), the server's game state back to Running after a load, or the leader moved
-# (a trip within the level); then TRANSITION_SETTLE_S with the server up. No word in TRANSITION_MAX_S: go on anyway.
-TRANSITION_TOOLS = ("long_rest", "short_rest", "fast_travel")
-TRANSITION_MAX_S = 20.0
-TRANSITION_SETTLE_S = 1.0
-TRANSITION_POLL_S = 0.25
-_TRANSITION_DONE = ("end_day_ok", "end_day_failed", "rest_started", "rest_start_failed", "rest_cancelled",
-                    "gather_failed", "ready_failed", "rest_denied")
-_TRANSITION_LAST: dict = {}
-
-
-def _transition_wait(tool: str) -> dict:
-    """Server reads only (sys.info, camp.rest_flow, state.status) until the transition after the box click is over.
-    -> {transition: what ended it, transition_s}."""
-    t0 = time.monotonic()
-
-    def srv(op: str, a: dict | None = None) -> Any:
-        try:
-            return core.game.rpc(op, a or {}, context="server", timeout=3.0)
-        except GameError:
-            return None  # a load resets the server Lua: no answer = still loading
-
-    pos0 = travel._lead_pos(srv("state.status")) if tool == "fast_travel" else None
-    left, why = False, "no word from the game"
-    while time.monotonic() - t0 < TRANSITION_MAX_S:
-        info = srv("sys.info")
-        gs = info.get("game_state") if isinstance(info, dict) else None
-        if gs not in ("Running", "Paused"):
-            left = True
-        elif left:
-            why = "the game loaded"
-            break
-        elif tool == "short_rest" and time.monotonic() - t0 >= TRANSITION_SETTLE_S:
-            why = "settled"
-            break
-        elif tool == "long_rest":
-            flow = srv("camp.rest_flow", {"since_ms": int((time.monotonic() - t0) * 1000) + 300})
-            steps = [str(x) for x in (flow.get("steps") or [])] if isinstance(flow, dict) else []
-            done = [x for x in steps if inventory._rest_step(x) in _TRANSITION_DONE]
-            can = flow.get("can_rest") if isinstance(flow, dict) else None
-            if done:
-                why = f"the game answered ({inventory._rest_step(done[-1])})"
-                break
-            if any("Dialog" in (r.get("flags") or []) for r in (can or {}).get("blocked") or [] if isinstance(r, dict)):
-                why = "a conversation started"
-                break
-        elif tool == "fast_travel" and pos0:
-            p = travel._lead_pos(srv("state.status"))
-            if p and math.dist(p[:3], pos0[:3]) > 3.0:
-                why = "the party moved"
-                break
-        time.sleep(TRANSITION_POLL_S)
-    if why not in ("settled", "no word from the game"):
-        time.sleep(TRANSITION_SETTLE_S)
-    out = {"transition": why, "transition_s": round(time.monotonic() - t0, 1)}
-    _TRANSITION_LAST.clear()
-    _TRANSITION_LAST.update(out, tool=tool)
-    return out
-
-
-def _transition_after(tool: str):
-    """boxclick's after-click step for a transition box: hold every client call, wait on the server, release."""
-    def after(res: dict) -> dict:
-        hold_client(TRANSITION_MAX_S + TRANSITION_SETTLE_S + 5.0, f"{tool}: the game is changing screens after the Yes")
-        try:
-            res.update(_transition_wait(tool))
-        finally:
-            release_client()
-        res["closed"] = True
-        return res
-    return after
 
 
 def _box_act(tool: str, op: str, args: dict, wait_s: float, rounds: int = 3, on_start=None) -> str:
@@ -274,9 +208,11 @@ def _box_act(tool: str, op: str, args: dict, wait_s: float, rounds: int = 3, on_
         ans = res.get("needs_click") if isinstance(res, dict) else None
         inp = _inp() if ans else None
         if inp is None:
+            if ans and _shared_screen():
+                notes.append(f"clicking the box's button is {SHARED_SCREEN}")
             break
         c = boxclick.click_box(lambda o, a: core.game.rpc(o, a, context="client"), inp, str(ans),
-                               after=_transition_after(tool) if tool in TRANSITION_TOOLS else None)
+                               after=transition._transition_after(tool) if tool in transition.TRANSITION_TOOLS else None)
         q = res.get("question")
         notes.append(boxclick.describe(c) + (f" (the question: {q})" if q and "[ForceUpdate]" not in str(q) else ""))
         if c.get("transition") == "a conversation started":
@@ -302,6 +238,9 @@ def _click_act(tool: str, op: str, args: dict, wait_s: float = 40.0) -> str:
     t0 = time.monotonic()
     if core._session_over():
         return reporting._finish(tool, args, "REFUSED: the session is over. Save and write your handoff notes.", t0)
+    if _shared_screen():
+        reporting._batch["last"] = "failed"
+        return reporting._finish(tool, args, f"{tool}: FAILED — {SHARED_SCREEN}", t0)
     r = run_click_action(core.game, _inp(), op, args, wait_s)
     plumbing._remember_names(r.result)
     reporting._batch["last"] = r.status
@@ -461,6 +400,12 @@ def _pocket_handle(it: dict) -> str:
     return core.H.get(u, it.get("name")) if isinstance(u, str) and u else ""
 
 
+# state.inventory's cat (the item's ObjectCategory): PotionHealing, PotionUtility, PotionResistance (elixirs) are
+# drunk from the bags with no target; MagicScroll, MagicScroll_3, MagicScroll_Utility ... put a spell in hand.
+_POTION_CAT = re.compile(r"Potion")
+_SCROLL_CAT = re.compile(r"MagicScroll")
+
+
 def _carried_scroll(char: str, ability: str) -> dict | None:
     """A scroll (any carried item) named like `ability` ('Scroll of Invisibility' or just 'Invisibility'): the
     character's own first, else a party member's. S030 16:34: use_ability(Shadowheart, "Scroll of Invisibility")
@@ -588,10 +533,22 @@ def _use_scroll(char: str, it: dict, target: str, targets: list[str] | None = No
     like casting; the mod refuses it off-turn or with no action left.
     A scroll on another member's bags is named, not taken."""
     name = str(it.get("name"))
+    if _shared_screen() and not _POTION_CAT.match(str(it.get("cat") or "")):  # its target is clicked
+        # live 10 m2: a Potion of Healing was refused as a scroll; a potion is drunk with no click (the mod: drunk)
+        what = "reading a scroll" if _SCROLL_CAT.match(str(it.get("cat") or "")) else f"using {name}"
+        raise GameError(f"{what} is {SHARED_SCREEN}")
     if it.get("owner") and it.get("owner") != char:
         raise GameError(f"{queueing._label(char)} has no action called that; {queueing._label(it['owner'])} carries {name} "
                         f"({core.H.get(it['uuid'])})")
     tgt0 = plumbing._uuid(target) if target else char
+    if _POTION_CAT.match(str(it.get("cat") or "")) and tgt0 != char:
+        # live smoke 2026-11-03 (L5): "Potion of Healing" target=e1 (a downed ally) was drunk by the user and the
+        # target dropped without a word; a potion's use is its user drinking it. Window 4 (2026-11-03): no game call
+        # throws an item (no Osiris throw; Throw_Throw takes its item from the UI only): a side, which makes no clicks,
+        # can't throw; without a side the UI route is open, so the text says nothing about throwing (REVIEW-B1 M1)
+        throw = "throwing items isn't available; " if _shared_screen() else ""
+        raise GameError(f"{name} is drunk by whoever uses it: {queueing._label(char)} would drink it, not "
+                        f"{queueing._label(tgt0)}; {throw}nothing used")
     # live N4 (2026-10-28): read on a living Claude it answered "Claude REVIVED": the revive check only asked "not
     # dead" after the read. Live N7 2d: on the reader herself (who=target, alive) it skipped this check and read "done
     # ... cast on e1 Shadowheart by a click" (the click landed; the game took no target, the scroll stayed)
@@ -878,6 +835,8 @@ def click_on(target: str, button: str = "left") -> str:
     from ..clicker import click_entity
 
     t0 = time.monotonic()
+    if _shared_screen():
+        raise GameError(f"click_on is {SHARED_SCREEN}")
     inp = _inp()
     if inp is None:
         raise GameError("input shim not available")
@@ -985,5 +944,5 @@ def loot(take: str = "all", who: str | None = None) -> str:
 # The next module (and so the rest, in file order) loads after this one; later ones used here.
 # isort: off
 from . import (  # noqa: E402
-    travel, combat, inventory, uitools, queueing, travel_macro,
+    travel, combat, uitools, queueing, travel_macro,
 )

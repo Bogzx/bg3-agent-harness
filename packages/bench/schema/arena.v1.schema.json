@@ -1,0 +1,359 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/arena.v1.schema.json",
+  "title": "An arena file (packages/bench/arenas/<name>.json), v1",
+  "description": "One fight two models play against each other: the start save, where the two sides start, each side's team, the dice seed, Karmic Dice off, the caps (rounds, wall clock, model time per turn), the condition and the bridge's tools-off list; a mirror arena's twins (made per match by arena.setup). bg3bench.arena.validate is the full check (names unique across both teams, the file name, a draft's missing save).",
+  "type": "object",
+  "required": [
+    "schema",
+    "name",
+    "title",
+    "about",
+    "save",
+    "location",
+    "teams",
+    "seed",
+    "karmic",
+    "turn_cap_s",
+    "tools_off"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "point": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "[x, y, z] in metres, y up"
+    },
+    "team": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "the character's display name"
+          },
+          "template": {
+            "type": "string",
+            "minLength": 1,
+            "description": "its root template id, when the name alone is ambiguous"
+          },
+          "uuid": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "description": "the character's uuid; arena.setup fails when it and the name disagree"
+          }
+        }
+      }
+    },
+    "pair": {
+      "type": "object",
+      "required": [
+        "class",
+        "template",
+        "race",
+        "stats",
+        "names",
+        "kit"
+      ],
+      "additionalProperties": false,
+      "description": "one mirror pair: two twins of one class, one per team (tools/dev/make_arena_save.py mirror)",
+      "properties": {
+        "class": {
+          "type": "string",
+          "minLength": 1,
+          "description": "informational"
+        },
+        "build": {
+          "type": "string",
+          "minLength": 1,
+          "description": "the build file's build the pair is made from (tools/dev/arena_builds.py), informational"
+        },
+        "template": {
+          "type": "string",
+          "minLength": 1,
+          "description": "the twins' root template id"
+        },
+        "race": {
+          "type": "string",
+          "minLength": 1,
+          "description": "the race id the template reads; the kit's race part must name the same (kit.race.race)"
+        },
+        "stats": {
+          "type": "string",
+          "minLength": 1,
+          "description": "the stats entry the twins spawn with"
+        },
+        "names": {
+          "type": "object",
+          "required": [
+            "A",
+            "B"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "A": {
+              "type": "string",
+              "minLength": 1
+            },
+            "B": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "description": "each twin's display name, unique across the arena"
+        },
+        "kit": {
+          "type": "object",
+          "description": "the kit arena.mirror_kit gives both twins"
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema": {
+      "const": "arena.v1"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,47}(?:\\.[0-9]+)?$",
+      "description": "the file's name without .json (a slug, optionally with a .N version: arena-v0.1)"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "about": {
+      "type": "string",
+      "minLength": 1
+    },
+    "draft": {
+      "type": "string",
+      "minLength": 1,
+      "description": "why the arena can't be played yet; the planner gives a draft no matches"
+    },
+    "save": {
+      "type": "object",
+      "required": [
+        "name",
+        "sha1"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "the save folder (<owner>-<id>__<label>); null only in a draft",
+          "pattern": "^.+-\\d+__.+$"
+        },
+        "sha1": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "the save file's sha1; null only in a draft"
+        }
+      }
+    },
+    "location": {
+      "type": "object",
+      "required": [
+        "level",
+        "spawns"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": "string",
+          "minLength": 1,
+          "description": "the game level the fight is in"
+        },
+        "spawns": {
+          "type": "object",
+          "required": [
+            "A",
+            "B"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "A": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/point"
+                },
+                {
+                  "type": "null",
+                  "description": "a draft's spawn, TODO until a live height read"
+                }
+              ]
+            },
+            "B": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/point"
+                },
+                {
+                  "type": "null",
+                  "description": "a draft's spawn, TODO until a live height read"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "teams": {
+      "type": "object",
+      "required": [
+        "A",
+        "B"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "A": {
+          "$ref": "#/$defs/team"
+        },
+        "B": {
+          "$ref": "#/$defs/team"
+        }
+      }
+    },
+    "level": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 12,
+      "default": 2,
+      "description": "the character level arena.setup gives every member of both teams"
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647,
+      "description": "the dice seed the mod sets before the fight"
+    },
+    "karmic": {
+      "const": false,
+      "description": "Karmic Dice: off in every arena"
+    },
+    "round_cap": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 20,
+      "description": "rounds; the cap is a draw (HP fractions recorded, never a tiebreak)"
+    },
+    "wall_cap_min": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "default": 30,
+      "description": "wall-clock minutes; the cap is a draw (HP fractions recorded, never a tiebreak)"
+    },
+    "turn_cap_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "model seconds a turn may take; at the cap the harness ends the turn (arena_turn_forced)"
+    },
+    "turn_order": {
+      "enum": [
+        "alternate",
+        "snake"
+      ],
+      "default": "alternate",
+      "description": "inside a shared turn group the sides alternate one character a phase; alternate: each round opens with the side of the group's first living member in the rolled order; snake: the opening side swaps every round"
+    },
+    "condition": {
+      "type": "string",
+      "default": "rules",
+      "description": "a condition id (bg3bench.conditions) without reloads"
+    },
+    "tools_off": {
+      "enum": [
+        "arena-v1"
+      ],
+      "description": "the bridge's named arena tools-off list (BG3AI_TOOLS_OFF)"
+    },
+    "mirror": {
+      "type": "object",
+      "required": [
+        "pairs"
+      ],
+      "additionalProperties": false,
+      "description": "a mirror arena: arena.setup makes each pair's twins for the match; teams then name pair i's twins at index i, names only (bg3bench.arena.validate checks the order)",
+      "properties": {
+        "pairs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/pair"
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "not": {
+          "required": [
+            "draft"
+          ]
+        }
+      },
+      "then": {
+        "properties": {
+          "save": {
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "sha1": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "mirror"
+        ]
+      },
+      "then": {
+        "properties": {
+          "teams": {
+            "properties": {
+              "A": {
+                "type": "array",
+                "items": {
+                  "maxProperties": 1
+                }
+              },
+              "B": {
+                "type": "array",
+                "items": {
+                  "maxProperties": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

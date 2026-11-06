@@ -1,0 +1,5828 @@
+{
+ "source": "game data of the installed BG3 (build in game_build), read-only from Shared.pak, Gustav.pak and GustavX.pak (modules Shared, SharedDev, Gustav, GustavDev, GustavX, a later module's same UUID or entry wins) by tools/dev/arena_static_gen.py",
+ "classes": {
+  "Fighter": {
+   "table": "ba4e707e-4bbd-4630-963b-ce2f2947f971",
+   "levels": {
+    "1": {
+     "Boosts": "ProficiencyBonus(SavingThrow,Strength);ProficiencyBonus(SavingThrow,Constitution);Proficiency(LightArmor);Proficiency(MediumArmor);Proficiency(HeavyArmor);Proficiency(Shields);Proficiency(SimpleWeapons);Proficiency(MartialWeapons)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSkills(6a4f8598-3a17-42d1-beac-d7ced582bafa,2);AddSpells(9e32fc2b-ce4f-47aa-b113-25cbdc025123);SelectPassives(da3203d8-750a-4de1-b8eb-1eccfccddf46,1,FightingStyle);SelectAbilityBonus(b9149c8e-52c8-46e5-9cb6-fc39301c05fe,AbilityBonus,2,1)",
+     "uuid": "dfb2fd83-9849-4c2d-be84-adedb81a867a",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(964e765d-5881-463e-b1b0-4fc6b8035aa8)",
+     "uuid": "aafbbc41-16e8-4296-a283-a2c5fdd0625b",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "23eacff0-9efe-4ea6-b031-19075cc96b63",
+     "subclasses": 4
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "05f6a6ef-a574-4317-b9e4-e710975e07b4",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "ExtraAttack",
+     "Selectors": "",
+     "uuid": "3b20daaa-91e3-45ec-ad66-69763bc5ab2d",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "3265e108-9c70-4714-b13b-4603e40d2f07",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "063562cd-a30d-40f9-a992-5a15c186a483",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "f6fbe4d4-ec8b-4b88-9851-d9aa398efb7f",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "Indomitable",
+     "Selectors": "",
+     "uuid": "5f69e04b-1d97-481c-995f-a069dfb9f555",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "7535f41a-d360-4adc-8166-9d2e29660b1d",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "ExtraAttack_2",
+     "Selectors": "",
+     "uuid": "fbf8b5f0-eb19-4da9-b89a-f8c743f684d1",
+     "subclasses": 0,
+     "PassivesRemoved": "ExtraAttack"
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "ddf55c97-9032-4aa1-af76-4ae669a6b53b",
+     "subclasses": 0,
+     "AllowImprovement": true
+    }
+   },
+   "equipment": [
+    {
+     "item": "WPN_Longsword",
+     "type": "Weapon",
+     "root": "1865323f-b428-4791-a0a9-578841e57463"
+    },
+    {
+     "item": "WPN_Shortbow",
+     "type": "Weapon",
+     "root": "c5403c1d-f372-43e1-927a-9189e9e3545d"
+    },
+    {
+     "item": "ARM_Boots_Leather",
+     "type": "Armor",
+     "root": "969bab00-b269-46a5-a7e9-dd4887814719"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "ARM_ScaleMail_Body",
+     "type": "Armor",
+     "root": "ca0aafad-0f1e-4d76-8e3b-925397bb436b"
+    },
+    {
+     "item": "OBJ_Scroll_Revivify",
+     "type": "Object",
+     "root": "c1c3e4fb-d68c-4e10-afdc-d4550238d50e"
+    },
+    {
+     "item": "OBJ_Keychain",
+     "type": "Object",
+     "root": "ee329627-dbee-405f-b9a6-b260de9ad34c"
+    },
+    {
+     "item": "OBJ_Bag_AlchemyPouch",
+     "type": "Object",
+     "root": "b7543ff4-5010-4c01-9bcd-4da1047aebfc"
+    },
+    {
+     "item": "ARM_Camp_Body",
+     "type": "Armor",
+     "root": "f369f4fa-2da7-4693-a147-16cfaf02bca5"
+    },
+    {
+     "item": "ARM_Camp_Shoes",
+     "type": "Armor",
+     "root": "6bb7a595-7646-48a9-9c44-d39f16c1c5cb"
+    },
+    {
+     "item": "OBJ_Backpack_CampSupplies",
+     "type": "Object",
+     "root": "efcb70b7-868b-4214-968a-e23f6ad586bc"
+    }
+   ],
+   "casting": null
+  },
+  "Rogue": {
+   "table": "9a44e828-92db-4d6c-acbc-a4f8ef340415",
+   "levels": {
+    "1": {
+     "Boosts": "ProficiencyBonus(SavingThrow,Dexterity);ProficiencyBonus(SavingThrow,Intelligence);Proficiency(LightArmor);Proficiency(SimpleWeapons);Proficiency(HandCrossbows);Proficiency(Longswords);Proficiency(Rapiers);Proficiency(Shortswords);ActionResource(SneakAttack_Charge,1,0)",
+     "PassivesAdded": "SneakAttack_Unlock",
+     "Selectors": "SelectSkills(a1c2b712-2ed6-4e5b-820f-c5db654fe006,4);SelectSkillsExpertise(f974ebd6-3725-4b90-bb5c-2b647d41615d,2);SelectAbilityBonus(b9149c8e-52c8-46e5-9cb6-fc39301c05fe,AbilityBonus,2,1)",
+     "uuid": "16f00e7f-12f6-4cff-b610-4ee738b02d62",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(2dc120ff-903b-494b-8dc8-38721098ce38)",
+     "uuid": "35863719-e935-4757-a9f3-eb38a8cd8cb7",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "6f8d3e70-9b20-4fe0-914f-0f8f19206329",
+     "subclasses": 4
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "a353b31a-23c3-44f6-9a7b-ec3218872387",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "UncannyDodge",
+     "Selectors": "",
+     "uuid": "19857e46-f5dc-4a9f-847e-5f714ceef7b1",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSkillsExpertise(f974ebd6-3725-4b90-bb5c-2b647d41615d,2,true)",
+     "uuid": "7e1ce634-c599-427a-b992-d4208ce99e6d",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "Evasion",
+     "Selectors": "",
+     "uuid": "ca43e06b-c2cb-46ab-a9cf-39852a903113",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "cb381a33-84b1-4d76-8a9b-b11d6d917a15",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "a32481e5-e514-4011-9de9-4e3cba389ee0",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "ebe28336-9176-443a-a190-1c729e7d0966",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "ReliableTalent",
+     "Selectors": "",
+     "uuid": "9cf65c52-0df9-4433-9059-f7ae29fb1f18",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "1a340e86-fcd6-4268-9f05-e7a45e30e6d1",
+     "subclasses": 0,
+     "AllowImprovement": true
+    }
+   },
+   "equipment": [
+    {
+     "item": "WPN_Shortbow",
+     "type": "Weapon",
+     "root": "c5403c1d-f372-43e1-927a-9189e9e3545d"
+    },
+    {
+     "item": "WPN_Shortsword",
+     "type": "Weapon",
+     "root": "467ddb4f-6791-41fa-99f7-ee8620d63bbe"
+    },
+    {
+     "item": "OBJ_Kit_ThievesTools",
+     "type": "Object",
+     "root": "e32a200c-5b63-414d-ae57-00e7b38f125b"
+    },
+    {
+     "item": "OBJ_GreaseBottle",
+     "type": "Object",
+     "root": "e2968a2e-bc83-4d50-99ef-39ce78d2d630"
+    },
+    {
+     "item": "OBJ_GreaseBottle",
+     "type": "Object",
+     "root": "e2968a2e-bc83-4d50-99ef-39ce78d2d630"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "ARM_Boots_Leather",
+     "type": "Armor",
+     "root": "969bab00-b269-46a5-a7e9-dd4887814719"
+    },
+    {
+     "item": "ARM_Leather_Body_Rogue",
+     "type": "Armor",
+     "root": "4c4396db-fa4a-4541-9b2a-23e43211dde7"
+    },
+    {
+     "item": "OBJ_Scroll_Revivify",
+     "type": "Object",
+     "root": "c1c3e4fb-d68c-4e10-afdc-d4550238d50e"
+    },
+    {
+     "item": "OBJ_Keychain",
+     "type": "Object",
+     "root": "ee329627-dbee-405f-b9a6-b260de9ad34c"
+    },
+    {
+     "item": "OBJ_Bag_AlchemyPouch",
+     "type": "Object",
+     "root": "b7543ff4-5010-4c01-9bcd-4da1047aebfc"
+    },
+    {
+     "item": "ARM_Camp_Body",
+     "type": "Armor",
+     "root": "f369f4fa-2da7-4693-a147-16cfaf02bca5"
+    },
+    {
+     "item": "ARM_Camp_Shoes",
+     "type": "Armor",
+     "root": "6bb7a595-7646-48a9-9c44-d39f16c1c5cb"
+    },
+    {
+     "item": "OBJ_Backpack_CampSupplies",
+     "type": "Object",
+     "root": "efcb70b7-868b-4214-968a-e23f6ad586bc"
+    }
+   ],
+   "casting": null
+  },
+  "Barbarian": {
+   "table": "60bbcc97-5381-4898-bc15-908c072895de",
+   "levels": {
+    "1": {
+     "Boosts": "ProficiencyBonus(SavingThrow,Strength);ProficiencyBonus(SavingThrow,Constitution);Proficiency(LightArmor);Proficiency(MediumArmor);Proficiency(Shields);Proficiency(SimpleWeapons);Proficiency(MartialWeapons);ActionResource(Rage,2,0)",
+     "PassivesAdded": "RageUnlock;UnarmouredDefence_Barbarian;Rage_Armour_Message;Rage_NoHeavyArmour_VFX",
+     "Selectors": "SelectSkills(233793b3-838a-4d4e-9d68-1e0a1089aba5,2);SelectAbilityBonus(b9149c8e-52c8-46e5-9cb6-fc39301c05fe,AbilityBonus,2,1)",
+     "uuid": "a2198ee9-ea4c-468e-b6b4-22b32d37806e",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "DangerSense;RecklessAttack",
+     "Selectors": "",
+     "uuid": "89986e8a-09b1-4163-b1d0-ddb2332bf3c5",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "ActionResource(Rage,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "0d4a6b4b-8162-414b-81ef-1838e36e778a",
+     "subclasses": 4
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "942265f9-bb74-4f9b-82e4-0c8c8036ac7f",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "ExtraAttack;FastMovement",
+     "Selectors": "",
+     "uuid": "76654cf4-89a5-4255-8e2a-cd4d08df0fe4",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "ActionResource(Rage,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "2c296206-6a78-4ff4-8b5e-a8ba7c62a62a",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "FeralInstinct",
+     "Selectors": "",
+     "uuid": "2ad3b99d-3dae-4c9e-b8b0-8d2e4e0da805",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "26c5e940-6f74-43a1-b46e-7eb98e211cf5",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "BrutalCritical",
+     "Selectors": "",
+     "uuid": "2b2be55c-8c01-4bcd-84ff-b4c9ca23faf8",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "38f50ca6-9511-4b32-81e6-bb9a8a941a3d",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "RelentlessRage",
+     "Selectors": "",
+     "uuid": "37055929-9081-4337-831f-7ac427ef02fd",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "ActionResource(Rage,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "d31c7f2f-52e6-4c83-8a7b-9f0b7b953a79",
+     "subclasses": 0,
+     "AllowImprovement": true
+    }
+   },
+   "equipment": [
+    {
+     "item": "WPN_Greataxe",
+     "type": "Weapon",
+     "root": "d5712e24-ce9e-42ce-8fad-6e049b62c28c"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "OBJ_Scroll_Revivify",
+     "type": "Object",
+     "root": "c1c3e4fb-d68c-4e10-afdc-d4550238d50e"
+    },
+    {
+     "item": "ARM_Shoes_Barbarian",
+     "type": "Armor",
+     "root": "2577a332-8ad2-4e54-b52b-f4f7cc5823a1"
+    },
+    {
+     "item": "ARM_Barbarian",
+     "type": "Armor",
+     "root": "f6599c3f-cfcd-4721-9cc2-1df5d8ff0154"
+    },
+    {
+     "item": "WPN_Handaxe",
+     "type": "Weapon",
+     "root": "46b64a36-8446-45bd-98e8-ee81e3136baa"
+    },
+    {
+     "item": "WPN_Handaxe",
+     "type": "Weapon",
+     "root": "46b64a36-8446-45bd-98e8-ee81e3136baa"
+    },
+    {
+     "item": "OBJ_Keychain",
+     "type": "Object",
+     "root": "ee329627-dbee-405f-b9a6-b260de9ad34c"
+    },
+    {
+     "item": "OBJ_Bag_AlchemyPouch",
+     "type": "Object",
+     "root": "b7543ff4-5010-4c01-9bcd-4da1047aebfc"
+    },
+    {
+     "item": "ARM_Camp_Body",
+     "type": "Armor",
+     "root": "f369f4fa-2da7-4693-a147-16cfaf02bca5"
+    },
+    {
+     "item": "ARM_Camp_Shoes",
+     "type": "Armor",
+     "root": "6bb7a595-7646-48a9-9c44-d39f16c1c5cb"
+    },
+    {
+     "item": "OBJ_Backpack_CampSupplies",
+     "type": "Object",
+     "root": "efcb70b7-868b-4214-968a-e23f6ad586bc"
+    }
+   ],
+   "casting": "Charisma"
+  },
+  "Ranger": {
+   "table": "8f068974-ed32-43fc-a9d9-028be1c01a9c",
+   "levels": {
+    "1": {
+     "Boosts": "ProficiencyBonus(SavingThrow,Strength);ProficiencyBonus(SavingThrow,Dexterity);Proficiency(LightArmor);Proficiency(MediumArmor);Proficiency(Shields);Proficiency(SimpleWeapons);Proficiency(MartialWeapons)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSkills(9e31661e-4c14-499d-98ca-9e00b20faf07,3);SelectPassives(d0f13dda-eb37-41f5-aea5-2683f0229e2e,1,FavoredEnemy);SelectPassives(72c63024-60af-486e-a180-c7aeee5d77c1,1,NaturalExplorer);SelectAbilityBonus(b9149c8e-52c8-46e5-9cb6-fc39301c05fe,AbilityBonus,2,1)",
+     "uuid": "ad1084b1-b99f-6720-cfdd-cf82ad44345b",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "ActionResource(SpellSlot,2,1)",
+     "PassivesAdded": "UnlockedSpellSlotLevel1",
+     "Selectors": "SelectSpells(458be063-60d4-4548-ae7d-50117fa0226f,2,0);SelectPassives(a0bdb113-1cce-45ac-94fb-72d4c3f207e9,1,FightingStyle)",
+     "uuid": "b9c3b0e1-38e6-4383-90d5-cb7e65348474",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "ActionResource(SpellSlot,1,1)",
+     "PassivesAdded": "UnlockedSpellSlotLevel1",
+     "Selectors": "SelectSpells(458be063-60d4-4548-ae7d-50117fa0226f,1,1)",
+     "uuid": "e6179c57-47e9-4f83-831e-28b73f4b5d0d",
+     "subclasses": 4
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(458be063-60d4-4548-ae7d-50117fa0226f,0,1)",
+     "uuid": "69c0c0a3-d22a-4f5e-ac64-3a972b58d848",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "5": {
+     "Boosts": "ActionResource(SpellSlot,1,1);ActionResource(SpellSlot,2,2)",
+     "PassivesAdded": "ExtraAttack;UnlockedSpellSlotLevel2",
+     "Selectors": "SelectSpells(e7cfb80a-f5c2-4304-8446-9b00ea6a9814,1,1)",
+     "uuid": "3aac34db-f7d6-4176-9ba2-5e77ecdaf140",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(e7cfb80a-f5c2-4304-8446-9b00ea6a9814,0,1);SelectPassives(d0f13dda-eb37-41f5-aea5-2683f0229e2e,1,FavoredEnemy);SelectPassives(72c63024-60af-486e-a180-c7aeee5d77c1,1,NaturalExplorer)",
+     "uuid": "774f7a73-3a29-404c-898b-e8810f41a8ba",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "ActionResource(SpellSlot,1,2)",
+     "PassivesAdded": "UnlockedSpellSlotLevel2",
+     "Selectors": "SelectSpells(e7cfb80a-f5c2-4304-8446-9b00ea6a9814,1,1)",
+     "uuid": "1e6721bf-8ba9-4495-9ff3-bcb0192369fe",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "LandsStride_DifficultTerrain;LandsStride_Surfaces",
+     "Selectors": "SelectSpells(e7cfb80a-f5c2-4304-8446-9b00ea6a9814,0,1)",
+     "uuid": "12b9a506-33c9-4dcf-81a1-ab8df2023e8e",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "9": {
+     "Boosts": "ActionResource(SpellSlot,2,3)",
+     "PassivesAdded": "UnlockedSpellSlotLevel3",
+     "Selectors": "SelectSpells(9a60f649-7f82-4152-90b1-0499c5c9f3e2,1,1)",
+     "uuid": "13821b69-d8b5-4179-a1fc-fa9dcfcc2561",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(89384c46-b6e2-4d3c-b61e-e48b932beafb);SelectSpells(9a60f649-7f82-4152-90b1-0499c5c9f3e2,0,1);SelectPassives(d0f13dda-eb37-41f5-aea5-2683f0229e2e,1,FavoredEnemy);SelectPassives(72c63024-60af-486e-a180-c7aeee5d77c1,1,NaturalExplorer)",
+     "uuid": "26e69682-2b1b-48c5-ad8d-6e6e31601a8b",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "ActionResource(SpellSlot,1,3)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(9a60f649-7f82-4152-90b1-0499c5c9f3e2,1,1)",
+     "uuid": "b149567f-8f3b-456e-b50e-946522e8d51c",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "ActionResource(SpellSlot,1,3)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(9a60f649-7f82-4152-90b1-0499c5c9f3e2,0,1)",
+     "uuid": "0bf247c5-2217-409e-8f88-eee095448f32",
+     "subclasses": 0,
+     "AllowImprovement": true
+    }
+   },
+   "equipment": [
+    {
+     "item": "WPN_Shortbow",
+     "type": "Weapon",
+     "root": "c5403c1d-f372-43e1-927a-9189e9e3545d"
+    },
+    {
+     "item": "WPN_Shortsword",
+     "type": "Weapon",
+     "root": "467ddb4f-6791-41fa-99f7-ee8620d63bbe"
+    },
+    {
+     "item": "ARM_Boots_Leather",
+     "type": "Armor",
+     "root": "969bab00-b269-46a5-a7e9-dd4887814719"
+    },
+    {
+     "item": "OBJ_ArrowOfIce",
+     "type": "Object",
+     "root": "2e297d80-823b-4200-926e-6ca23f488090"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "ARM_Leather_Body",
+     "type": "Armor",
+     "root": "02ae5d88-8044-43df-8363-02a2900776db"
+    },
+    {
+     "item": "OBJ_Scroll_Revivify",
+     "type": "Object",
+     "root": "c1c3e4fb-d68c-4e10-afdc-d4550238d50e"
+    },
+    {
+     "item": "OBJ_Keychain",
+     "type": "Object",
+     "root": "ee329627-dbee-405f-b9a6-b260de9ad34c"
+    },
+    {
+     "item": "OBJ_Bag_AlchemyPouch",
+     "type": "Object",
+     "root": "b7543ff4-5010-4c01-9bcd-4da1047aebfc"
+    },
+    {
+     "item": "ARM_Camp_Body",
+     "type": "Armor",
+     "root": "f369f4fa-2da7-4693-a147-16cfaf02bca5"
+    },
+    {
+     "item": "ARM_Camp_Shoes",
+     "type": "Armor",
+     "root": "6bb7a595-7646-48a9-9c44-d39f16c1c5cb"
+    },
+    {
+     "item": "OBJ_Backpack_CampSupplies",
+     "type": "Object",
+     "root": "efcb70b7-868b-4214-968a-e23f6ad586bc"
+    }
+   ],
+   "casting": "Wisdom"
+  },
+  "Cleric": {
+   "table": "64474b62-b4f5-46b3-b94a-c676c6da3116",
+   "casting": "Wisdom",
+   "levels": {
+    "1": {
+     "Boosts": "ActionResource(SpellSlot,2,1);ProficiencyBonus(SavingThrow,Wisdom);ProficiencyBonus(SavingThrow,Charisma);Proficiency(LightArmor);Proficiency(MediumArmor);Proficiency(Shields);Proficiency(SimpleWeapons);Proficiency(Morningstars);Proficiency(Flails)",
+     "PassivesAdded": "DomainSpells;UnlockedSpellSlotLevel1",
+     "Selectors": "SelectSkills(6cb9d731-a518-46f0-b20e-9e2bf18e6acd,2);SelectSpells(2f43a103-5bf1-4534-b14f-663decc0c525,3,0,,,,AlwaysPrepared);AddSpells(269d1a3b-eed8-4131-8901-a562238f5289);SelectAbilityBonus(b9149c8e-52c8-46e5-9cb6-fc39301c05fe,AbilityBonus,2,1)",
+     "uuid": "1dbce574-fff1-49be-b7da-704f9b73cad9",
+     "subclasses": 8
+    },
+    "2": {
+     "Boosts": "ActionResource(SpellSlot,1,1);ActionResource(ChannelDivinity,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(239cc7cc-f642-4ddc-b091-498d81612c51,,,,AlwaysPrepared)",
+     "uuid": "ef18265f-dda6-4eb6-8dd0-b14c57202c33",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "ActionResource(SpellSlot,1,1);ActionResource(SpellSlot,2,2)",
+     "PassivesAdded": "UnlockedSpellSlotLevel2",
+     "Selectors": "AddSpells(2968a3e6-6c8a-4c2e-882a-ad295a2ad8ac)",
+     "uuid": "4d9072bb-7b14-43b9-afb2-0d7e89f90c65",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "ActionResource(SpellSlot,1,2)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(2f43a103-5bf1-4534-b14f-663decc0c525,1,0,,,,AlwaysPrepared)",
+     "uuid": "051cd419-b843-4996-807e-d0ac78084ef0",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "5": {
+     "Boosts": "ActionResource(SpellSlot,2,3)",
+     "PassivesAdded": "DestroyUndead;UnlockedSpellSlotLevel3",
+     "Selectors": "AddSpells(21be0992-499f-4c7a-a77a-4430085e947a)",
+     "uuid": "078b465a-f79d-44cd-bdfa-9a9c51579b33",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "ActionResource(SpellSlot,1,3);ActionResource(ChannelDivinity,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "1ba0c22a-2655-4f3c-8bf8-f3314587ccaa",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "ActionResource(SpellSlot,1,4)",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(37e9b20b-5fd1-45c5-b1c5-159c42397c83)",
+     "uuid": "fe851490-be41-44f9-a7b9-1744c0948ce0",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "ActionResource(SpellSlot,1,4)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "4cfd9e91-38ef-4b24-8a2a-9b736be91cf8",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "9": {
+     "Boosts": "ActionResource(SpellSlot,1,4);ActionResource(SpellSlot,1,5)",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(b73aeea5-1ff9-4cac-b61d-b5aa6dfe31c2)",
+     "uuid": "4472e936-7c8e-40a1-a818-49117fc03361",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "ActionResource(SpellSlot,1,5)",
+     "PassivesAdded": "DivineIntervention",
+     "Selectors": "SelectSpells(2f43a103-5bf1-4534-b14f-663decc0c525,1,0,,,,AlwaysPrepared)",
+     "uuid": "0266b6b2-72d9-4319-84ae-afcdfc67b32b",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "ActionResource(SpellSlot,1,6)",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(f8ba7b05-1237-4eaa-97fa-1d3623d5862b)",
+     "uuid": "92bb47c7-6798-4952-a45d-e4b4693f0f9c",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "e209aba2-bb27-4416-af41-09ce37b7f08f",
+     "subclasses": 0,
+     "AllowImprovement": true
+    }
+   },
+   "equipment": [
+    {
+     "item": "WPN_Mace",
+     "type": "Weapon",
+     "root": "3186796d-3ab3-4d49-bfc2-cba1aff0cf5a"
+    },
+    {
+     "item": "OBJ_Scroll_Revivify",
+     "type": "Object",
+     "root": "c1c3e4fb-d68c-4e10-afdc-d4550238d50e"
+    },
+    {
+     "item": "ARM_Shield",
+     "type": "Armor",
+     "root": "d2af60ea-1b72-4d25-a188-6d8bc4fe255b"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "ARM_Boots_Leather",
+     "type": "Armor",
+     "root": "969bab00-b269-46a5-a7e9-dd4887814719"
+    },
+    {
+     "item": "ARM_ChainShirt_Body",
+     "type": "Armor",
+     "root": "921cd1e1-c39c-44c3-a090-b667322af7f8"
+    },
+    {
+     "item": "OBJ_Scroll_Revivify",
+     "type": "Object",
+     "root": "c1c3e4fb-d68c-4e10-afdc-d4550238d50e"
+    },
+    {
+     "item": "OBJ_Keychain",
+     "type": "Object",
+     "root": "ee329627-dbee-405f-b9a6-b260de9ad34c"
+    },
+    {
+     "item": "OBJ_Bag_AlchemyPouch",
+     "type": "Object",
+     "root": "b7543ff4-5010-4c01-9bcd-4da1047aebfc"
+    },
+    {
+     "item": "ARM_Camp_Body",
+     "type": "Armor",
+     "root": "f369f4fa-2da7-4693-a147-16cfaf02bca5"
+    },
+    {
+     "item": "ARM_Camp_Shoes",
+     "type": "Armor",
+     "root": "6bb7a595-7646-48a9-9c44-d39f16c1c5cb"
+    },
+    {
+     "item": "OBJ_Backpack_CampSupplies",
+     "type": "Object",
+     "root": "efcb70b7-868b-4214-968a-e23f6ad586bc"
+    }
+   ]
+  },
+  "Wizard": {
+   "table": "d18eda7e-4b7d-490d-9952-cd33a3c60479",
+   "casting": "Intelligence",
+   "levels": {
+    "1": {
+     "Boosts": "ActionResource(SpellSlot,2,1);ProficiencyBonus(SavingThrow,Intelligence);ProficiencyBonus(SavingThrow,Wisdom);Proficiency(Daggers);Proficiency(Quarterstaffs);Proficiency(LightCrossbows);ActionResource(ArcaneRecoveryPoint,1,0)",
+     "PassivesAdded": "UnlockedSpellSlotLevel1",
+     "Selectors": "SelectSkills(9f3a9f8d-f645-40b5-b36f-fb079b7b805e,2);SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,3,0,,,,AlwaysPrepared);SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,6,0);AddSpells(34c3321d-75ab-4b50-a44d-cbac8705a360,,,,AlwaysPrepared);SelectAbilityBonus(b9149c8e-52c8-46e5-9cb6-fc39301c05fe,AbilityBonus,2,1)",
+     "uuid": "c201c736-3717-4c3c-9e36-2ae7387597a3",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "ActionResource(SpellSlot,1,1)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "d6184c47-5b99-4e63-95ac-02f8ce4ccda1",
+     "subclasses": 9
+    },
+    "3": {
+     "Boosts": "ActionResource(SpellSlot,1,1);ActionResource(SpellSlot,2,2);ActionResource(ArcaneRecoveryPoint,1,0)",
+     "PassivesAdded": "UnlockedSpellSlotLevel2",
+     "Selectors": "",
+     "uuid": "314ad8a4-bf06-4774-bb23-7db0090b51b9",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "ActionResource(SpellSlot,1,2)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "ba8743c7-bc11-46ad-8512-be6fee2c8534",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "5": {
+     "Boosts": "ActionResource(SpellSlot,2,3);ActionResource(ArcaneRecoveryPoint,1,0)",
+     "PassivesAdded": "UnlockedSpellSlotLevel3",
+     "Selectors": "",
+     "uuid": "19ee8c82-fb48-465c-8690-04aa7adc3145",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "ActionResource(SpellSlot,1,3)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "27465c53-f521-49e0-871a-2a45b9f557bf",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "ActionResource(SpellSlot,1,4);ActionResource(ArcaneRecoveryPoint,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "7c1c811c-5959-49e2-b743-a45efb7f580f",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "ActionResource(SpellSlot,1,4)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "c7f6df40-9d4f-4039-8a29-9bcd5efb3b6a",
+     "subclasses": 0,
+     "AllowImprovement": true
+    },
+    "9": {
+     "Boosts": "ActionResource(SpellSlot,1,4);ActionResource(SpellSlot,1,5);ActionResource(ArcaneRecoveryPoint,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "4e4e702e-1ee1-4f31-a0a4-2d898ab6b741",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "ActionResource(SpellSlot,1,5)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "8268be8b-fe73-4dc6-82a3-beeab3ebed49",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "ActionResource(SpellSlot,1,6);ActionResource(ArcaneRecoveryPoint,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "6550e503-45ac-4e9a-b453-88e8e845ff6e",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "3cb9d873-5f41-4c3c-88f1-b7574c1bf661",
+     "subclasses": 0,
+     "AllowImprovement": true
+    }
+   },
+   "equipment": [
+    {
+     "item": "WPN_Quarterstaff",
+     "type": "Weapon",
+     "root": "96e2abaf-78ff-4dcb-a6a3-a5f0c348bd9f"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "OBJ_Potion_Healing",
+     "type": "Object",
+     "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab"
+    },
+    {
+     "item": "ARM_Shoes",
+     "type": "Armor",
+     "root": "97f37571-35e8-4cc8-8b0d-ff92d20ae0bb"
+    },
+    {
+     "item": "ARM_Robe_Body",
+     "type": "Armor",
+     "root": "168b9099-19f5-44e4-b55c-e64ceb60b71f"
+    },
+    {
+     "item": "OBJ_Scroll_Revivify",
+     "type": "Object",
+     "root": "c1c3e4fb-d68c-4e10-afdc-d4550238d50e"
+    },
+    {
+     "item": "OBJ_Keychain",
+     "type": "Object",
+     "root": "ee329627-dbee-405f-b9a6-b260de9ad34c"
+    },
+    {
+     "item": "OBJ_Bag_AlchemyPouch",
+     "type": "Object",
+     "root": "b7543ff4-5010-4c01-9bcd-4da1047aebfc"
+    },
+    {
+     "item": "ARM_Camp_Body",
+     "type": "Armor",
+     "root": "f369f4fa-2da7-4693-a147-16cfaf02bca5"
+    },
+    {
+     "item": "ARM_Camp_Shoes",
+     "type": "Armor",
+     "root": "6bb7a595-7646-48a9-9c44-d39f16c1c5cb"
+    },
+    {
+     "item": "OBJ_Backpack_CampSupplies",
+     "type": "Object",
+     "root": "efcb70b7-868b-4214-968a-e23f6ad586bc"
+    }
+   ]
+  }
+ },
+ "races": {
+  "HalfElf": {
+   "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
+   "table": "5f06db9e-31b0-41d9-bfbe-3446323c4bf6",
+   "levels": {
+    "1": {
+     "Boosts": "ActionResource(Movement,9,0)",
+     "PassivesAdded": "HumanMilitia;Darkvision;FeyAncestry",
+     "Selectors": "",
+     "uuid": "a1729574-2f7b-4561-91d8-3766cf940420",
+     "subclasses": 0
+    }
+   }
+  },
+  "HalfElf_Wood": {
+   "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
+   "rows": [
+    {
+     "race": "HalfElf",
+     "table": "5f06db9e-31b0-41d9-bfbe-3446323c4bf6",
+     "uuid": "a1729574-2f7b-4561-91d8-3766cf940420",
+     "Boosts": "ActionResource(Movement,9,0)",
+     "PassivesAdded": "HumanMilitia;Darkvision;FeyAncestry",
+     "Selectors": ""
+    },
+    {
+     "race": "HalfElf_Wood",
+     "table": "685d3b16-1f7f-49b3-906d-d7726276926b",
+     "uuid": "cb0f84ec-1b1d-4ecc-9ab5-76261e332f5a",
+     "Boosts": "ActionResource(Movement,1.5,0);ProficiencyBonus(Skill,Stealth)",
+     "PassivesAdded": "",
+     "Selectors": ""
+    }
+   ]
+  },
+  "Human": {
+   "race": "0eb594cb-8820-4be6-a58d-8be7a1a98fba",
+   "rows": [
+    {
+     "race": "Human",
+     "table": "4b6e7ec9-145b-4a95-9d8a-b2181de2749e",
+     "uuid": "dbde4d66-d3e4-4c3f-ae87-fd6e2d1cd276",
+     "Boosts": "ActionResource(Movement,9,0)",
+     "PassivesAdded": "HumanMilitia;HumanVersatility",
+     "Selectors": "SelectSkills(f974ebd6-3725-4b90-bb5c-2b647d41615d,1,HumanVersatility)"
+    }
+   ]
+  },
+  "Dwarf_GoldHill": {
+   "race": "78f5e3e8-a9f8-4249-8007-84dc922640b2",
+   "rows": [
+    {
+     "race": "Dwarf",
+     "table": "d93def5b-a2df-4675-8a33-e47c9647eeae",
+     "uuid": "3c9a0bd8-bb0f-4a42-b77f-7a9a1cff2e5d",
+     "Boosts": "ActionResource(Movement,7.5,0)",
+     "PassivesAdded": "Dwarf_DwarvenCombatTraining;Darkvision;Dwarf_DwarvenResilience",
+     "Selectors": ""
+    },
+    {
+     "race": "Dwarf_GoldHill",
+     "table": "fa449725-ed8a-4d8c-8908-9ff1469c2e21",
+     "uuid": "207d038e-1add-4335-81d1-b0861f524c19",
+     "Boosts": "IncreaseMaxHP(Level)",
+     "PassivesAdded": "",
+     "Selectors": ""
+    }
+   ]
+  },
+  "Drow_Seldarine": {
+   "race": "4d30b4f9-7bb2-4fc2-a7bc-080f116e325a",
+   "rows": [
+    {
+     "race": "Drow",
+     "table": "a43498f5-d72f-4a05-b721-1feea9acb3ad",
+     "uuid": "4a634f24-bdcb-4559-b8be-7847133ad1c3",
+     "Boosts": "ActionResource(Movement,9,0);ProficiencyBonus(Skill,Perception)",
+     "PassivesAdded": "Drow_DrowWeaponTraining;SuperiorDarkvision;FeyAncestry",
+     "Selectors": "AddSpells(d707ec70-da8a-457b-9b69-7cf5205eef0e,,Charisma,,AlwaysPrepared)"
+    },
+    {
+     "race": "Drow_Seldarine",
+     "table": "1037326e-43ed-4840-9f37-10f1efb3779a",
+     "uuid": "3feba964-0ae4-4ae5-b2a1-e515f0973efe",
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": ""
+    }
+   ]
+  },
+  "Drow": {
+   "race": "4f5d1434-5175-4fa9-b7dc-ab24fba37929",
+   "rows": [
+    {
+     "race": "Drow",
+     "table": "a43498f5-d72f-4a05-b721-1feea9acb3ad",
+     "uuid": "4a634f24-bdcb-4559-b8be-7847133ad1c3",
+     "Boosts": "ActionResource(Movement,9,0);ProficiencyBonus(Skill,Perception)",
+     "PassivesAdded": "Drow_DrowWeaponTraining;SuperiorDarkvision;FeyAncestry",
+     "Selectors": "AddSpells(d707ec70-da8a-457b-9b69-7cf5205eef0e,,Charisma,,AlwaysPrepared)"
+    }
+   ]
+  },
+  "Elf_HighElf": {
+   "race": "4fda6bce-0b91-4427-901f-690c2d091c47",
+   "rows": [
+    {
+     "race": "Elf",
+     "table": "eb9db11d-1091-49fa-9006-2f52bbb76f6a",
+     "uuid": "496486a4-b5f2-4f91-90ea-6cad9023952e",
+     "Boosts": "ProficiencyBonus(Skill,Perception);ActionResource(Movement,9,0)",
+     "PassivesAdded": "Elf_WeaponTraining;Darkvision;FeyAncestry",
+     "Selectors": ""
+    },
+    {
+     "race": "Elf_HighElf",
+     "table": "5fd1dfd5-b5bd-4152-a04a-87fb3faba1e9",
+     "uuid": "db13a1fb-7d64-4309-a1c8-e2a5c752ded5",
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,HighElfCantrip,Intelligence)"
+    }
+   ]
+  },
+  "Gnome_Rock": {
+   "race": "2cf6c770-24ab-4608-9617-d1e46c11ab55",
+   "rows": [
+    {
+     "race": "Gnome",
+     "table": "c1d4adfe-9f00-44b4-a433-a45250d00631",
+     "uuid": "d48f8fb3-4351-4b5d-a28c-946fd33be726",
+     "Boosts": "ActionResource(Movement,7.5,0)",
+     "PassivesAdded": "Gnome_Cunning",
+     "Selectors": ""
+    },
+    {
+     "race": "Gnome_Rock",
+     "table": "1e9f254e-6aa4-4e54-9937-82065b3182ee",
+     "uuid": "aa2257a9-1779-4d8b-be65-8a08eede07fa",
+     "Boosts": "",
+     "PassivesAdded": "Darkvision;RockGnome_ArtificersLore",
+     "Selectors": ""
+    }
+   ]
+  }
+ },
+ "races_source": "A1 races (orchestrator D411), read 2026-11-03 from the installed game's paks with tools/pak.py, read-only (no game run): Shared.pak Public/Shared/Races/Races.lsx (race and subrace ids, ParentGuid, ProgressionTableUUID); Public/Shared + Public/SharedDev Progressions/Progressions.lsx, the level-1 row of the parent race's table and of the subrace's (SharedDev's row wins over Shared's with the same UUID; Gustav, GustavDev, GustavX and the hotfix paks carry none of these rows); Public/Shared/Lists/SpellLists.lsx (the Drow cantrip list). `race` is the id a template of that race reads (Races.lsx UUID of the subrace, or the race when it has none); `rows` the level-1 rows in the order the kit applies them, parent first.",
+ "spell_lists": {
+  "d707ec70-da8a-457b-9b69-7cf5205eef0e": {
+   "name": "Drow cantrip",
+   "spells": [
+    "Target_DancingLights"
+   ]
+  }
+ },
+ "backgrounds_source": "Shared.pak Public/Shared/Backgrounds/Backgrounds.lsx (uuid -> passive) and Public/Shared*/Stats/Generated/Data/Passive.txt (the passive's ProficiencyBonus boosts), read 2026-11-03 with tools/pak.py",
+ "backgrounds": {
+  "Soldier": {
+   "uuid": "1252a86e-9baa-4ccb-b8ce-2378ae006f0b",
+   "passive": "Background_Soldier",
+   "skills": [
+    "Athletics",
+    "Intimidation"
+   ]
+  },
+  "Urchin": {
+   "uuid": "ac38525a-222b-4280-9c8e-60d5533b675c",
+   "passive": "Background_Urchin",
+   "skills": [
+    "SleightOfHand",
+    "Stealth"
+   ]
+  },
+  "Outlander": {
+   "uuid": "5b1e726f-52bf-4e93-a798-9f93c067ee7f",
+   "passive": "Background_Outlander",
+   "skills": [
+    "Athletics",
+    "Survival"
+   ]
+  },
+  "Criminal": {
+   "uuid": "e8c84134-5e91-4ecc-881a-efc47680129b",
+   "passive": "Background_Criminal",
+   "skills": [
+    "Deception",
+    "Stealth"
+   ]
+  },
+  "Acolyte": {
+   "uuid": "633aa4be-365f-4358-ba56-e2b85f9a88ec",
+   "passive": "Background_Acolyte"
+  },
+  "Sage": {
+   "uuid": "8807a6c6-d8cf-494b-aec2-cc01d7517a56",
+   "passive": "Background_Sage"
+  }
+ },
+ "hirelings_source": "Each class's hireling (route H's reference, A1 D411), read 2026-11-03 with tools/pak.py: Shared.pak Public/SharedDev/Origins/Origins.lsx Hireling_<Class> (UUID, RaceUUID, SubRaceUUID, BackgroundUUID, GlobalTemplate, LockRace true); Gustav.pak Mods/GustavDev/Globals/SYS_Hirelings/Characters/_merged.lsf S_GLO_Hirelings_<Class> (MapKey = GlobalTemplate, TemplateName = the root); Shared.pak Public/SharedDev/RootTemplates/_merged.lsf Hirelings_Stats_Player_<Class> (its ParentTemplateId) and Public/Shared/RootTemplates/_merged.lsf the parent's Race (BASE_HalfElves_Female_Wood, BASE_Humans_Female -> BASE_Humans, BASE_Dwarves_Female_Hill, BASE_Elves_Male_Drow_Seldarine). Live-read so far: only the Fighter's template race (live check 9, d9401d40 Race 76057327); arena.mirror_spawn refuses a template of another race, so the others fail closed until read.",
+ "hirelings": {
+  "Fighter": {
+   "origin": "8078e34e-2dce-44ee-8072-072ac433350f",
+   "template": "d9401d40-453b-4512-84ee-d1c6ab29afea",
+   "template_name": "Hirelings_Stats_Player_Fighter",
+   "race": "HalfElf_Wood",
+   "background": "Soldier"
+  },
+  "Rogue": {
+   "origin": "9e188239-c0ae-40d2-9298-930095e170b5",
+   "template": "6df14611-1da5-4f2a-9300-ff74778d49b4",
+   "template_name": "Hirelings_Stats_Player_Rogue",
+   "race": "Human",
+   "background": "Urchin"
+  },
+  "Barbarian": {
+   "origin": "106511fd-b572-4468-bf9a-6b3da3e8646a",
+   "template": "aa621720-3722-43e2-98ca-4feb12c238fc",
+   "template_name": "Hirelings_Stats_Player_Barbarian",
+   "race": "Dwarf_GoldHill",
+   "background": "Outlander"
+  },
+  "Ranger": {
+   "origin": "7198b8ec-8fb4-4a44-9306-a68d533d1cfb",
+   "template": "15e83382-c44d-447d-874e-5426e8ed7694",
+   "template_name": "Hirelings_Stats_Player_Ranger",
+   "race": "Drow_Seldarine",
+   "background": "Criminal",
+   "todo": "the origin names race Drow (4f5d1434) and no subrace, its template's parent is Drow_Seldarine (4d30b4f9): which one a hired, respecced Ranger reads is a live read (route-H probe); the kit's rows are the same either way (Seldarine's level-1 row is empty)"
+  },
+  "Cleric": {
+   "origin": "db94d9bd-f4b6-4664-b592-c49d25fe7ad8",
+   "race": "Elf_HighElf",
+   "background": "Acolyte",
+   "template": null,
+   "template_name": null,
+   "todo": "the root template (S_GLO_Hirelings_<Class> TemplateName, a binary .lsf) is not read yet: arena.mirror_spawn needs it; read it live (Ext.Template) or with an .lsf reader"
+  },
+  "Wizard": {
+   "origin": "2b5ac4dd-0b15-472c-b215-1f47fbbdfcbe",
+   "race": "Gnome_Rock",
+   "background": "Sage",
+   "template": null,
+   "template_name": null,
+   "todo": "the root template (S_GLO_Hirelings_<Class> TemplateName, a binary .lsf) is not read yet: arena.mirror_spawn needs it; read it live (Ext.Template) or with an .lsf reader"
+  }
+ },
+ "subclasses": {
+  "BattleMaster": {
+   "class": "Fighter",
+   "uuid": "e668c6f1-5149-4b10-ab7e-3637ed444066",
+   "table": "69eb2e41-0317-46d7-a6b6-3593de1a5220",
+   "levels": {
+    "1": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "da34ac1f-362f-4271-972c-e5a79b49ee59",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "6d8e161f-4b16-4ca3-8d33-d7d519c47739",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "ActionResource(SuperiorityDie,4,0)",
+     "PassivesAdded": "",
+     "Selectors": "SelectPassives(e51a2ef5-3663-43f9-8e74-5e28520323f1,3,Maneuvers)",
+     "uuid": "01115231-fa37-4cd2-b750-5f282c8ab667",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "c1c4df37-b95d-4e3e-88e2-a1d0ff433887",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "ActionResource(SuperiorityDie,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "SelectPassives(e51a2ef5-3663-43f9-8e74-5e28520323f1,2,Maneuvers)",
+     "uuid": "0f5b48cb-619d-4153-b100-f42321a44dc3",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "ImprovedCombatSuperiority",
+     "Selectors": "SelectPassives(e51a2ef5-3663-43f9-8e74-5e28520323f1,2,Maneuvers)",
+     "uuid": "bddec33b-81db-4941-ae71-e044799bae05",
+     "subclasses": 0
+    }
+   }
+  },
+  "EldritchKnight": {
+   "class": "Fighter",
+   "uuid": "b722614a-303f-411a-bb19-a1882ad1f4cc",
+   "table": "2db3f02e-dfa9-4235-b9bd-28a89bf41435",
+   "levels": {
+    "1": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "ed68cf5e-0f53-4dae-b16c-d3628f8017dd",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "0743e55d-73b9-4812-9c18-dcd1983eceac",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "ActionResource(SpellSlot,2,1)",
+     "PassivesAdded": "UnlockedSpellSlotLevel1",
+     "Selectors": "AddSpells(42c2f7ed-8d06-4347-a912-01172a0e318b,,,,AlwaysPrepared);SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,2,0,,,,AlwaysPrepared);SelectSpells(32aeba85-13bd-4a6f-8e06-cd4447b746d8,2,0,EldritchKnightAbjEvo);SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,1,0,EldritchKnightAny)",
+     "uuid": "77ef26e6-6872-4f9c-82eb-a0640a49030d",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "ActionResource(SpellSlot,1,1)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(32aeba85-13bd-4a6f-8e06-cd4447b746d8,1,0,EldritchKnightAbjEvo);SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,0,1,EldritchKnightAny)",
+     "uuid": "6300c505-0bb1-4c73-9565-ab155bec4e1f",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,0,1,EldritchKnightAny)",
+     "uuid": "56bf6e19-7b63-456d-b696-ee47ead4f24a",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,0,1,EldritchKnightAny)",
+     "uuid": "f5e62d8b-dbbe-4d5d-a3ea-dbcde877b727",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "ActionResource(SpellSlot,1,1);ActionResource(SpellSlot,2,2)",
+     "PassivesAdded": "WarMagic;UnlockedSpellSlotLevel2",
+     "Selectors": "SelectSpells(4a86443c-6a21-4b8d-b1bf-55a99e021354,2,0,EldritchKnightAbjEvo);SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,0,1,EldritchKnightAny)",
+     "uuid": "6b099a1b-dd6c-4b6a-a0b5-70fa86dbe6d3",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,1,1,EldritchKnightAny)",
+     "uuid": "9604e657-2475-4a0f-9c75-4a9314269b2c",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,0,1,EldritchKnightAny)",
+     "uuid": "e1f144e6-b72d-4904-818b-ae77c4244205",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "ActionResource(SpellSlot,1,2)",
+     "PassivesAdded": "EldritchStrike",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(4a86443c-6a21-4b8d-b1bf-55a99e021354,1,0,EldritchKnightAbjEvo);SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,0,1,EldritchKnightAny)",
+     "uuid": "af0ea1d7-6a82-4c63-92c0-495c46914514",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(4a86443c-6a21-4b8d-b1bf-55a99e021354,1,0,EldritchKnightAbjEvo);SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,0,1,EldritchKnightAny)",
+     "uuid": "d393b47c-629b-4c26-a857-741f9ef2eff2",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,0,1,EldritchKnightAny)",
+     "uuid": "3a32caaa-ad37-4374-9130-17b81d8262f6",
+     "subclasses": 0
+    }
+   }
+  },
+  "Champion": {
+   "class": "Fighter",
+   "uuid": "0a01dc6b-ab1a-4c0e-8a5e-4787fe1f2caf",
+   "table": "9b2ff703-7924-4a66-b119-ae4d716a4522",
+   "levels": {
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "ImprovedCritical",
+     "Selectors": "",
+     "uuid": "cbd87913-03ee-484b-bc62-57d6867e8aca",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "RemarkableAthlete_Proficiency;RemarkableAthlete_Jump",
+     "Selectors": "",
+     "uuid": "07180f5f-54ab-4fe6-9972-df150a5fb85a",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectPassives(da3203d8-750a-4de1-b8eb-1eccfccddf46,1,FightingStyle)",
+     "uuid": "a4b1948f-7367-43bb-bff2-e5e18cc2c5a7",
+     "subclasses": 0
+    }
+   }
+  },
+  "ArcaneArcher": {
+   "class": "Fighter",
+   "uuid": "1be5aa5a-e221-4f0e-a1bf-be25f5d23224",
+   "table": "537d34a9-c60d-4f1b-be41-312ab5d8c792",
+   "levels": {
+    "3": {
+     "Boosts": "ActionResource(ArcaneShot,4,0);ProficiencyBonus(Skill,Arcana);ProficiencyBonus(Skill,Nature)",
+     "PassivesAdded": "ArcaneShot",
+     "Selectors": "SelectSpells(a8a358c4-d5d5-4cf8-baa1-0ac682aebd0a,1,0,,,,AlwaysPrepared);SelectSpells(ca17da37-65bc-4d00-96d1-61e48fcfb51d,3,0,ArcaneShot,,,AlwaysPrepared)",
+     "uuid": "4d77c220-22d5-496f-9783-343f20a3fbcd",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(ca17da37-65bc-4d00-96d1-61e48fcfb51d,0,1,ArcaneShot,,,AlwaysPrepared)",
+     "uuid": "01961302-5fa1-4e77-9e7b-39603a432223",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(ca17da37-65bc-4d00-96d1-61e48fcfb51d,0,1,ArcaneShot,,,AlwaysPrepared)",
+     "uuid": "fb2d24fb-4def-4642-a2ad-337b36cd3f37",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(ca17da37-65bc-4d00-96d1-61e48fcfb51d,0,1,ArcaneShot,,,AlwaysPrepared)",
+     "uuid": "e5c0b111-22d6-4cc9-be6f-e52efbb6464d",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "ActionResource(ArcaneShot,3,0)",
+     "PassivesAdded": "MagicArrow;CurvingShot",
+     "Selectors": "SelectSpells(ca17da37-65bc-4d00-96d1-61e48fcfb51d,1,0,ArcaneShot,,,AlwaysPrepared)",
+     "uuid": "05b5e373-bf36-4e2a-91e6-ee5984a0fdf3",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(ca17da37-65bc-4d00-96d1-61e48fcfb51d,0,1,ArcaneShot,,,AlwaysPrepared)",
+     "uuid": "3a0f2961-a472-4001-87c2-e3d0186f830c",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(ca17da37-65bc-4d00-96d1-61e48fcfb51d,0,1,ArcaneShot,,,AlwaysPrepared)",
+     "uuid": "9c38618f-c536-4077-993b-b0cf21aeb714",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "ActionResource(ArcaneShot,3,0)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(ca17da37-65bc-4d00-96d1-61e48fcfb51d,1,0,ArcaneShot,,,AlwaysPrepared)",
+     "uuid": "1079f080-2f33-4036-9d7e-8b25c0558677",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(ca17da37-65bc-4d00-96d1-61e48fcfb51d,0,1,ArcaneShot,,,AlwaysPrepared)",
+     "uuid": "424c7efd-9b6e-46a7-9d95-cbbbc3534581",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(ca17da37-65bc-4d00-96d1-61e48fcfb51d,0,1,ArcaneShot,,,AlwaysPrepared)",
+     "uuid": "9086bdb9-221f-43ec-a85c-8f62f1b0d1e9",
+     "subclasses": 0
+    }
+   }
+  },
+  "Thief": {
+   "class": "Rogue",
+   "uuid": "32c7b8df-a6ec-4848-a9db-c0dce781beb9",
+   "table": "f6acc595-46b4-4d96-b7d5-6f33366fc2de",
+   "levels": {
+    "1": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "2820ed6e-4eb6-40f6-bff8-3776a022b111",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "0c43b700-951d-4602-962e-9dca67ad3e44",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "FastHands;SecondStoryWork",
+     "Selectors": "",
+     "uuid": "3f95146b-90bc-4064-b3e0-4e1e751cd08d",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "c8d88359-97e1-4018-84a0-db89f822c8f9",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(7cf87f47-e2f7-4ac5-a0b2-88a3e963d29d)",
+     "uuid": "949309de-6da5-4c20-be16-d4b25f3a100e",
+     "subclasses": 0
+    }
+   }
+  },
+  "ArcaneTrickster": {
+   "class": "Rogue",
+   "uuid": "ede4778e-7602-440f-9075-b4bc8dc31cea",
+   "table": "7205dbe2-5eef-4cd6-ad7f-45b3dc254f78",
+   "levels": {
+    "1": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "7fcb7261-5e2e-4d39-8a9d-1adc2921faf9",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "be899de7-1f73-44d8-99ec-741d1981e723",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "ActionResource(SpellSlot,2,1)",
+     "PassivesAdded": "MageHandLegerdemain;UnlockedSpellSlotLevel1",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,2,0,,,,AlwaysPrepared);SelectSpells(4b629bbb-203b-4382-9786-755bf897567f,2,0,ArcaneTricksterIlluEnch);SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,1,0,ArcaneTricksterAny);AddSpells(e1407db3-e476-4d8f-a687-d3c795ad8c04,,,,AlwaysPrepared)",
+     "uuid": "a7dc1d04-ba88-42d6-a2cf-3f0573a203ba",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "ActionResource(SpellSlot,1,1)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(4b629bbb-203b-4382-9786-755bf897567f,1,0,ArcaneTricksterIlluEnch);SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,0,1,ArcaneTricksterAny)",
+     "uuid": "f52e1781-3d1a-4fcd-84a7-c2db55423c0f",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,0,1,ArcaneTricksterAny)",
+     "uuid": "3977b90c-9447-48b7-948b-4c73ef417ea1",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,0,1,ArcaneTricksterAny)",
+     "uuid": "8e2d89e9-28ae-4842-aa58-a651cf60d749",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "ActionResource(SpellSlot,1,1);ActionResource(SpellSlot,2,2)",
+     "PassivesAdded": "UnlockedSpellSlotLevel2",
+     "Selectors": "SelectSpells(f9fd64f1-f417-4544-94a9-51d8876d68df,1,0,ArcaneTricksterIlluEnch);SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,0,1,ArcaneTricksterAny)",
+     "uuid": "47ba134f-e4f0-452d-87cd-b3b92d41e918",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,1,1,ArcaneTricksterAny)",
+     "uuid": "6b529a20-1bbb-4d9c-b5a4-88776e5b8580",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "MagicalAmbush",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,0,1,ArcaneTricksterAny)",
+     "uuid": "530341bc-d996-49ee-a63d-e1007fccad90",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "ActionResource(SpellSlot,2,1)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(f9fd64f1-f417-4544-94a9-51d8876d68df,1,0,ArcaneTricksterIlluEnch);SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0) ",
+     "uuid": "53ecef19-2f1c-4d4b-81e9-11a72ad3e0ac",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(f9fd64f1-f417-4544-94a9-51d8876d68df,1,0,ArcaneTricksterIlluEnch)",
+     "uuid": "fa2eeb09-09e7-405e-88e7-14655e736e6b",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,0,1,ArcaneTricksterAny)",
+     "uuid": "dc94de47-af1f-49cb-a7a4-b60218140b41",
+     "subclasses": 0
+    }
+   }
+  },
+  "Assassin": {
+   "class": "Rogue",
+   "uuid": "b53a8061-f31d-4985-adfe-d4d691a918d9",
+   "table": "43c75b78-757b-4875-9932-427bc95278a0",
+   "levels": {
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "Assassinate_Initiative;Assassinate_Ambush;Assassinate_Resource",
+     "Selectors": "",
+     "uuid": "a0d702c1-4286-40be-9ae5-2b8b7954f1f8",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(fab9f457-4570-472e-95be-ffe5b5aa863d)",
+     "uuid": "b3ea7f97-4cba-4d03-91cc-ef07993642b9",
+     "subclasses": 0
+    }
+   }
+  },
+  "Swashbuckler": {
+   "class": "Rogue",
+   "uuid": "f87d7b0e-bc56-4f22-b347-9ef63bfa5220",
+   "table": "0a0f8dbb-ca06-4753-ac64-7c6876deeeae",
+   "levels": {
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "FancyFootwork;RakishAudacity;SneakAttackSwitch",
+     "Selectors": "",
+     "uuid": "8a40ab89-549d-49c2-8fb5-7ba8215eeeca",
+     "subclasses": 0,
+     "PassivesRemoved": "SneakAttack_Unlock"
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(f3b319db-3e70-454e-aab0-4e5947396119,DirtyTrick,Charisma,,AlwaysPrepared);AddSpells(b492841a-8c01-4dd7-9146-33dabedb9954,DirtyTrick,Dexterity,,AlwaysPrepared)",
+     "uuid": "9ecbc170-5207-4a5b-83ae-b95fb7bc96ff",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(62b78cbc-f9df-4834-a544-d661e7571fc4,,,,AlwaysPrepared)",
+     "uuid": "290fa2cd-2555-467b-a9f7-a330ff24caae",
+     "subclasses": 0
+    }
+   }
+  },
+  "BerserkerPath": {
+   "class": "Barbarian",
+   "uuid": "32eee7d8-1b2f-4de5-b9ee-78fbd286c6ef",
+   "table": "b2a03b63-809f-4df9-a179-bf5b899082ef",
+   "levels": {
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "RageFrenzyUnlock",
+     "Selectors": "AddSpells(17803035-4762-4143-8f2f-1143d47e4f40)",
+     "uuid": "5ce67263-04f2-4ede-b30a-2eb962d828f2",
+     "subclasses": 0,
+     "PassivesRemoved": "RageUnlock"
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "MindlessRage",
+     "Selectors": "",
+     "uuid": "27a1114c-3f84-4f47-8544-865e91db8d0f",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(38191b4b-743a-4d82-800b-c0903baece24)",
+     "uuid": "ad9a37aa-bc2d-4024-9b5f-5aaf330cb25c",
+     "subclasses": 0
+    }
+   }
+  },
+  "TotemWarriorPath": {
+   "class": "Barbarian",
+   "uuid": "2e585948-d775-451d-b58b-15b75321d11e",
+   "table": "48f1760f-86e7-401c-ad52-633fffbae49e",
+   "levels": {
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(4acd9ef6-719d-4248-90ae-0cb66da87c6a);SelectPassives(7f7340a0-faf3-4122-bd3f-37a5434dd6cf,1,TotemWarriorPassive)",
+     "uuid": "42329ce3-0fb3-43a3-a0b4-79584c6877e7",
+     "subclasses": 0,
+     "PassivesRemoved": "RageUnlock"
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "ReplacePassives(7f7340a0-faf3-4122-bd3f-37a5434dd6cf,1,TotemWarriorPassiveReplace)",
+     "uuid": "6777c3c3-5f17-4d49-8da7-0f0b8b380d06",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "ReplacePassives(7f7340a0-faf3-4122-bd3f-37a5434dd6cf,1,TotemWarriorPassiveReplace)",
+     "uuid": "0fe6f4ec-8601-462d-a233-53fc0ad62513",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "ReplacePassives(7f7340a0-faf3-4122-bd3f-37a5434dd6cf,1,TotemWarriorPassiveReplace);SelectPassives(fb9ea4a2-a1ce-4242-a893-84a088ac1145,1,AspectOfTheBeast)",
+     "uuid": "0b05af61-85e4-4183-8422-6c8ced307d7a",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "ReplacePassives(7f7340a0-faf3-4122-bd3f-37a5434dd6cf,1,TotemWarriorPassiveReplace)",
+     "uuid": "bbc1564b-4688-484f-84f3-1b3b02173bab",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "LandsStride_DifficultTerrain;LandsStride_Surfaces;LandsStride_Advantage",
+     "Selectors": "ReplacePassives(7f7340a0-faf3-4122-bd3f-37a5434dd6cf,1,TotemWarriorPassiveReplace)",
+     "uuid": "6de45010-ac1e-420d-ab84-31146c14dada",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "ReplacePassives(7f7340a0-faf3-4122-bd3f-37a5434dd6cf,1,TotemWarriorPassiveReplace)",
+     "uuid": "dfb1038e-9178-475e-abdc-19f0cba244cb",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "ReplacePassives(7f7340a0-faf3-4122-bd3f-37a5434dd6cf,1,TotemWarriorPassiveReplace);SelectPassives(fb9ea4a2-a1ce-4242-a893-84a088ac1145,1,AspectOfTheBeast)",
+     "uuid": "8013e565-55a5-4847-8ebc-e2971e25151e",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "ReplacePassives(7f7340a0-faf3-4122-bd3f-37a5434dd6cf,1,TotemWarriorPassiveReplace)",
+     "uuid": "55fd65cf-928d-4ed6-b35e-76422bb0d196",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "ReplacePassives(7f7340a0-faf3-4122-bd3f-37a5434dd6cf,1,TotemWarriorPassiveReplace)",
+     "uuid": "7521f3eb-efa9-4d40-9f65-e6ff247a9ee8",
+     "subclasses": 0
+    }
+   }
+  },
+  "WildMagicPath": {
+   "class": "Barbarian",
+   "uuid": "d6bf00fc-3518-4d63-ba8b-03532c1abc4d",
+   "table": "7d5237b0-9ac6-4344-8171-43fa2f553e2f",
+   "levels": {
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "WildMagicRage",
+     "Selectors": "AddSpells(6a27ea3e-ed94-4d90-9a27-109a902dd049)",
+     "uuid": "9026e0b6-52a7-46b9-a318-d85b6a2a81c5",
+     "subclasses": 0,
+     "PassivesRemoved": "RageUnlock"
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(9e604f0f-ec60-402d-b8c8-7707a1caefd8)",
+     "uuid": "7509026b-0ea3-40cb-a106-95977a40a3b7",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(4e7b517a-2eca-4463-99a6-a5ffa5036216)",
+     "uuid": "c6894048-1489-406d-b601-e3c8c96f4e42",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "Unstable_Backlash",
+     "Selectors": "",
+     "uuid": "3782ea9f-917b-4823-ba34-b619c76a4429",
+     "subclasses": 0
+    }
+   }
+  },
+  "GiantPath": {
+   "class": "Barbarian",
+   "uuid": "07234f31-c239-4a57-aeb4-868f3e1a318e",
+   "table": "bdd02775-b9ee-480c-a260-d844580453b4",
+   "levels": {
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "RageGiantUnlock;Giants_CarryCapacity",
+     "Selectors": "AddSpells(afe6b18c-47a7-4c5f-aed5-49dfe07e5234)",
+     "uuid": "4f6cccca-2e3e-44b0-957b-842cddc353cb",
+     "subclasses": 0,
+     "PassivesRemoved": "RageUnlock"
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(12653b66-e36c-4b0b-872d-b61a1b2a3411)",
+     "uuid": "a30f6062-8e31-4fcd-976e-568275a9d56a",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(21a34b97-43ee-47d7-b7c2-f902822a6e18)",
+     "uuid": "5f6cb332-7c02-47ff-9063-daf82e65968e",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(1ae44b76-581c-4fdf-92f8-0a1049a026dc)",
+     "uuid": "ea817c5f-e257-4ca0-b890-439d4713a94d",
+     "subclasses": 0
+    }
+   }
+  },
+  "BeastMaster": {
+   "class": "Ranger",
+   "uuid": "6fd9547d-cc28-400e-bfa9-3a85baa70f24",
+   "table": "1ba04e99-e329-471d-a656-bbd5a363d7c8",
+   "levels": {
+    "1": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "ae1976c3-e7c1-4538-9b8f-f92690c58f40",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "5a7972b1-043d-4471-8609-7de9f4f95fd8",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(93ba8d5f-e25a-40d6-ab25-a19af93130c7)",
+     "uuid": "8272e6af-c9e4-433a-ac1c-9fab6e1db55c",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "df52c6f2-ae53-42e0-b4ab-1ec5b941afc1",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "CompanionsBond",
+     "Selectors": "",
+     "uuid": "7d97a63d-248e-481a-ac37-32f1f61af888",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "ExceptionalTraining",
+     "Selectors": "",
+     "uuid": "6e314b81-1f3d-4a6b-867a-5d47eabd7653",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "BestialFury",
+     "Selectors": "",
+     "uuid": "7eb63ebb-0a7d-4836-a9da-54fade479ff8",
+     "subclasses": 0
+    }
+   }
+  },
+  "Hunter": {
+   "class": "Ranger",
+   "uuid": "0aa1cff9-c45f-4d00-a95b-99a7aa96dd06",
+   "table": "b19bc1ec-d7ee-4023-9f58-5056fd99be24",
+   "levels": {
+    "1": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "98279793-d1d6-4ab4-af0f-e99faacbde89",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "37300347-8d5e-4c7a-998d-fa369d3b219c",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectPassives(26b53d40-13eb-4db6-80f4-bde7bd09c52d,1,HuntersPrey)",
+     "uuid": "c38e8775-d886-49d8-ba53-0b70a9fbe306",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "343acf32-39ca-494e-9b33-2b4d7d74093b",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectPassives(657f1f36-cd2e-4acb-817c-60ec3cac3671,1,DefensiveTactics)",
+     "uuid": "b998b7f5-335a-47d8-b026-438f0ea10b4c",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(49cfa35d-94c9-4092-a5c6-337b7f16fd3a)",
+     "uuid": "6b85e5f7-73d9-4a4b-97a6-7fd4d7df0d66",
+     "subclasses": 0
+    }
+   }
+  },
+  "GloomStalker": {
+   "class": "Ranger",
+   "uuid": "d5f10e55-84e3-409b-aa64-2098c9550319",
+   "table": "caa60bb8-8ca3-4871-b034-e10a6bc8ca29",
+   "levels": {
+    "1": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "eec15b08-4d6a-447d-aa3f-225008c6ac68",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "eb626cba-656a-4bd1-9a19-2fc9b986c86b",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "DreadAmbusher;SuperiorDarkvision",
+     "Selectors": "AddSpells(5ea6abd7-3e02-4e8d-9220-8a400e0019a4,,,,AlwaysPrepared)",
+     "uuid": "38240899-8a43-43e4-927c-9dd0d2fa0a50",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(5bb07252-9a62-465a-936f-0ee475b586d1,,,,AlwaysPrepared)",
+     "uuid": "0593eba5-10a2-42a7-a5be-260cae52b0e0",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "IronMind",
+     "Selectors": "",
+     "uuid": "c785c564-4676-4ad0-adf9-ea3d80caceb2",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(4a23c3c3-e6f7-48a4-a883-8ac2f6a2c97a,,,,AlwaysPrepared)",
+     "uuid": "ccba51a3-43e9-4c4c-83cf-f33ccbf8fb93",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "StalkersFlurry",
+     "Selectors": "",
+     "uuid": "9ef95460-d304-459a-8617-d1044fdf8695",
+     "subclasses": 0
+    }
+   }
+  },
+  "Swarmkeeper": {
+   "class": "Ranger",
+   "uuid": "29dc22b5-5e22-46d8-99f9-02e348f0b0b2",
+   "table": "54ad9a98-9656-4aa5-858e-b302f83c4577",
+   "levels": {
+    "3": {
+     "Boosts": "ActionResource(SwarmCharge,1,0)",
+     "PassivesAdded": "HuntersMark_Swarmkeeper",
+     "Selectors": "AddSpells(d26b8133-bfce-421a-9c36-1229e4d6dd86,,,,AlwaysPrepared);SelectPassives(88336457-e15e-4ca2-a587-4d0be18ef78c,1,SwamkeeperSwarmPassive)",
+     "uuid": "727fc2de-5d86-4a19-b6fe-b92cef500efe",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "ReplacePassives(88336457-e15e-4ca2-a587-4d0be18ef78c,1,SwamkeeperSwarmPassiveReplace)",
+     "uuid": "2bca334d-58df-4b7e-9490-a11f5b21df85",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(9e6f5226-fb49-4927-ad3e-e215b16ec974,,,,AlwaysPrepared);ReplacePassives(88336457-e15e-4ca2-a587-4d0be18ef78c,1,SwamkeeperSwarmPassiveReplace)",
+     "uuid": "8363e8a2-09eb-4ed8-bf22-ac1ed10d0ea8",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "ReplacePassives(88336457-e15e-4ca2-a587-4d0be18ef78c,1,SwamkeeperSwarmPassiveReplace)",
+     "uuid": "3d5a706b-b64c-41f9-8e64-7f7c13dd2378",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "ActionResource(WrithingTidePoint,3,0)",
+     "PassivesAdded": "WrithingTide;WrithingTide_Technical",
+     "Selectors": "ReplacePassives(88336457-e15e-4ca2-a587-4d0be18ef78c,1,SwamkeeperSwarmPassiveReplace)",
+     "uuid": "c6171bb9-761c-4bd3-89a3-cf92635d9d08",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "ReplacePassives(88336457-e15e-4ca2-a587-4d0be18ef78c,1,SwamkeeperSwarmPassiveReplace)",
+     "uuid": "ab529e5d-33a7-44c5-9cdd-845b70592c24",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "ActionResource(WrithingTidePoint,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(7c18f54c-2675-4762-8921-d0b9f0b1b8f4,,,,AlwaysPrepared);ReplacePassives(88336457-e15e-4ca2-a587-4d0be18ef78c,1,SwamkeeperSwarmPassiveReplace)",
+     "uuid": "287b71d2-e1f2-4d58-9a9d-b2be27a7ecb7",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "ReplacePassives(88336457-e15e-4ca2-a587-4d0be18ef78c,1,SwamkeeperSwarmPassiveReplace)",
+     "uuid": "1f34d404-6225-450b-8d7a-ba92b0eff265",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "MightySwarm",
+     "Selectors": "ReplacePassives(88336457-e15e-4ca2-a587-4d0be18ef78c,1,SwamkeeperSwarmPassiveReplace)",
+     "uuid": "d611b7ca-2610-463e-98d1-aa71b6d79a7d",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "ReplacePassives(88336457-e15e-4ca2-a587-4d0be18ef78c,1,SwamkeeperSwarmPassiveReplace)",
+     "uuid": "e7d0e312-bf63-4695-9ffb-aec123176a3a",
+     "subclasses": 0
+    }
+   }
+  },
+  "LifeDomain": {
+   "class": "Cleric",
+   "uuid": "4b5da2f5-b999-4623-8bff-a63df5560fb3",
+   "table": "9b56beb6-2a68-42a4-b81b-7a890a1b6b99",
+   "levels": {
+    "1": {
+     "Boosts": "Proficiency(HeavyArmor)",
+     "PassivesAdded": "DiscipleOfLife",
+     "Selectors": "AddSpells(26ffbe70-23c6-4918-9e6a-a3e556a9d355,ClericLifeDomainSpells,,,AlwaysPrepared)",
+     "uuid": "87f501ae-c909-4f30-852b-98bdc72c0248",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(36795b9e-f712-44a4-9c0f-eda1e78df9ab,,,,AlwaysPrepared)",
+     "uuid": "1aa8a001-f56c-4b99-800f-27fc12f8ebe8",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(bbaf0bab-b0b3-44c9-a567-304e35c063c9,ClericLifeDomainSpells,,,AlwaysPrepared)",
+     "uuid": "8355f4fe-7d7f-4132-8d57-7ca17e3c4ab4",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "5185d0d0-1c03-4595-8304-91bdbf6da836",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(a9ff6ed3-050e-4963-b37b-c083285d6214,ClericLifeDomainSpells,,,AlwaysPrepared)",
+     "uuid": "dc935315-0534-4629-a7b4-41c67dd2b246",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "BlessedHealer",
+     "Selectors": "",
+     "uuid": "101c6e81-6e76-4d3f-9f96-6640e2e62a36",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(28d41365-bc69-437a-a968-cac8f3b4b2c6,ClericLifeDomainSpells,,,AlwaysPrepared)",
+     "uuid": "13eecc52-a474-444c-b77c-52e5cd7eceb0",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "Divine_Strike_Life_Toggle",
+     "Selectors": "AddSpells(bbdd7836-8c4f-4f41-aaf7-acb16e7fc91d,,,,AlwaysPrepared)",
+     "uuid": "20ce2664-ba58-4291-be05-dca5b2c4293d",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(1b8b6282-c1f2-4095-89ab-aaefdf234317,ClericLifeDomainSpells,,,AlwaysPrepared)",
+     "uuid": "b3a95e65-8ba5-4e32-ba5a-6e2c745c237a",
+     "subclasses": 0
+    }
+   }
+  },
+  "LightDomain": {
+   "class": "Cleric",
+   "uuid": "c54d7591-b305-4f22-b2a7-1bf5c4a3470a",
+   "table": "6ec6caad-2dfa-4661-8edd-5c4eca0e044c",
+   "levels": {
+    "1": {
+     "Boosts": "",
+     "PassivesAdded": "WardingFlare",
+     "Selectors": "AddSpells(e2464518-2484-436e-9153-864c9dd05a7d,ClericLightDomainSpells,,,AlwaysPrepared)",
+     "uuid": "18b60150-3f77-4f5d-9c67-b25c3b7ce404",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(a322dbfe-69d0-421a-819a-4317b6c87a3b,,,,AlwaysPrepared)",
+     "uuid": "7f63932d-64bd-4a70-b1d0-0e6728c1888e",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(31037493-7a57-4dce-9412-4689c010199c,ClericLightDomainSpells,,,AlwaysPrepared)",
+     "uuid": "21725b6d-71f5-4df9-b828-b31bb20794cd",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "b839fdb5-e6e0-4b88-8fc3-ab133f1a2d97",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(1a50d25a-27b5-4789-b2d6-532fac4437c6,ClericLightDomainSpells,,,AlwaysPrepared)",
+     "uuid": "caf6d4b9-4233-4d67-af18-3a4ba3ea9996",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "WardingFlare_Improved",
+     "Selectors": "",
+     "uuid": "cc33557e-32ab-4cb9-82cb-d313ad38574e",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(41ded14f-d752-42c0-8405-be0e7b0f2177,ClericLightDomainSpells,,,AlwaysPrepared)",
+     "uuid": "1fe99c00-3bd1-476f-865b-c121617d7d6b",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "PotentSpellcasting",
+     "Selectors": "",
+     "uuid": "c993dc9e-df2b-4cc9-857c-49b17982b56e",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(5675d0b3-8a2c-4658-bfe3-42abbc0bdcfd,ClericLightDomainSpells,,,AlwaysPrepared)",
+     "uuid": "00479bc3-396b-4738-9ccf-f00d7087374f",
+     "subclasses": 0
+    }
+   }
+  },
+  "TrickeryDomain": {
+   "class": "Cleric",
+   "uuid": "f013d01b-3310-43f7-81bf-a51130442b5e",
+   "table": "044e4e07-6980-479f-80e5-3c4a84e691d1",
+   "levels": {
+    "1": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(98ef625f-d127-4fc3-8e37-37a4b27e6393,ClericTrickeryDomainSpells,,,AlwaysPrepared)",
+     "uuid": "97ba481e-13d2-4a8c-8503-e1b146c21b7b",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(c35cb4e6-2690-4e1f-bd89-69f4f69ae818,,,,AlwaysPrepared)",
+     "uuid": "87609f34-d8c7-4ca6-88b3-6f2692286e44",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(9f603ac8-2e51-4ce9-b924-c8093148bdf5,ClericTrickeryDomainSpells,,,AlwaysPrepared)",
+     "uuid": "90dafea8-c773-4dfa-b0c8-da4789122a0f",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "33627eb3-f6a0-4ddb-8f7c-0681d0d8cb71",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(8a9faf7a-aacf-43f4-a0dd-5ea7e72449f3,ClericTrickeryDomainSpells,,,AlwaysPrepared)",
+     "uuid": "76b362f3-11f2-47a0-949e-6147d0fde794",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(90acd47f-3475-4c85-99ea-7fd503591be4,,,,AlwaysPrepared)",
+     "uuid": "7424ee22-a365-427e-be2f-40cd8b316ac1",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(18e97e4a-d97b-4595-af80-8eb43766386e,ClericTrickeryDomainSpells,,,AlwaysPrepared)",
+     "uuid": "63a5476b-4e9e-45bd-97fd-9a88d46b9588",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "Divine_Strike_Trickery_Toggle",
+     "Selectors": "AddSpells(b5f88a1e-931f-4851-b86c-875f756b7313,,,,AlwaysPrepared)",
+     "uuid": "f39b339b-e367-403b-b33e-8191eb8363e0",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(154b461e-23c2-4147-97fd-b7892f031a50,ClericTrickeryDomainSpells,,,AlwaysPrepared)",
+     "uuid": "5eff9cd1-2376-452a-bb09-93a6aa8ee8d0",
+     "subclasses": 0
+    }
+   }
+  },
+  "KnowledgeDomain": {
+   "class": "Cleric",
+   "uuid": "ebe18794-b5e1-41c4-befa-4b9d6922b0ec",
+   "table": "4709e126-1b45-4baf-93a2-be66ed4487d2",
+   "levels": {
+    "1": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(6c7083cd-e957-449d-a652-33dfbd9785e6,ClericKnowledgeDomainSpells,,,AlwaysPrepared);SelectSkillsExpertise(b0b9bc80-8468-4a53-b9ca-6d9146f23801,2,false)",
+     "uuid": "2a780e20-d5a7-436e-9331-433ee8847db8",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(7ba90f2b-5e5f-410f-a61d-1ffdf3876790,,,,AlwaysPrepared)",
+     "uuid": "3cab05e3-fcf7-44fb-a503-73eb23fd4de3",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(2fbc1acc-ea80-4b61-9bed-e5e7dd50ad16,ClericKnowledgeDomainSpells,,,AlwaysPrepared)",
+     "uuid": "8072ab7b-1371-4acf-aaf5-9f95c7a5a51a",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(1ff2f87b-4570-4553-a5fa-f7b1cab557fc,ClericKnowledgeDomainSpells,,,AlwaysPrepared)",
+     "uuid": "0d8952a8-7ea3-4516-9b77-78d8662b6c9a",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(480101e7-1fcf-4f02-b6b5-71af428daaa4,,,,AlwaysPrepared))",
+     "uuid": "eb145ae3-d65e-4a8e-b041-4c34aa1bb199",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(46b54ac1-7add-4ef3-8610-558aee8c4dda,ClericKnowledgeDomainSpells,,,AlwaysPrepared)",
+     "uuid": "b6fe729a-a8df-4081-8121-5855bf7128e9",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "PotentSpellcasting",
+     "Selectors": "",
+     "uuid": "8424b93e-7546-4c9e-ab2d-e26fa7ccf7c5",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(db3bbbe0-01cc-4e35-8186-0c6757182ec4,ClericKnowledgeDomainSpells,,,AlwaysPrepared)",
+     "uuid": "aa87cb08-6669-4ee8-9b17-e3f977c2c3b2",
+     "subclasses": 0
+    }
+   }
+  },
+  "NatureDomain": {
+   "class": "Cleric",
+   "uuid": "6dec76d0-df22-411c-8a78-3d6fb843ae50",
+   "table": "c668b65d-2848-4feb-981f-eb54cc5ceb15",
+   "levels": {
+    "1": {
+     "Boosts": "Proficiency(HeavyArmor)",
+     "PassivesAdded": "AcolyteOfNature",
+     "Selectors": "SelectSkills(889d3b97-5975-4c1c-bcc3-925521935a65,1);SelectSpells(b8faf12f-ca42-45c0-84f8-6951b526182a,1,0,,,,AlwaysPrepared);AddSpells(cba2f112-697f-4611-ae1d-758bf25ab3fd,ClericNatureDomainSpells,,,AlwaysPrepared)",
+     "uuid": "9c544341-fc87-446d-b77d-0b6948eeb0f3",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(28a930af-d2a0-4411-8018-c1b95d5d2f23,,,,AlwaysPrepared)",
+     "uuid": "80a0e447-ec7f-45c0-af51-0002b8fd1662",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(dd2b48a8-3e62-435e-8107-0d48f51dc555,ClericNatureDomainSpells,,,AlwaysPrepared)",
+     "uuid": "3cfbe3e0-47ef-4f5d-8bd4-d7fac84903d2",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(90e89ac3-c805-4214-a73e-817c366ba8b2,ClericNatureDomainSpells,,,AlwaysPrepared)",
+     "uuid": "6d1b973f-1f6f-45e8-9e22-1b50241b8f17",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "DampenElements",
+     "Selectors": "",
+     "uuid": "72e1fb77-6745-4457-b64c-8c4686cc8999",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(cc45c1a8-ec0c-4da9-9d65-0e2ef36558d8,ClericNatureDomainSpells,,,AlwaysPrepared)",
+     "uuid": "ddba6768-5c17-4853-b241-e2020a2d18b2",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "Divine_Strike_Nature_Toggle",
+     "Selectors": "AddSpells(eee6250e-b75a-4012-a3da-e6452a53ed8b,,,,AlwaysPrepared)",
+     "uuid": "f5a8a6b4-8514-494d-bbe8-2a0196dc8efa",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(f5609f93-a17c-456c-a7bb-3b4203bb2eea,ClericNatureDomainSpells,,,AlwaysPrepared)",
+     "uuid": "82cbf414-345f-4e1c-9ebb-ba9d49f52fa2",
+     "subclasses": 0
+    }
+   }
+  },
+  "TempestDomain": {
+   "class": "Cleric",
+   "uuid": "89bacf1b-8f15-4972-ada7-bf59c7c78441",
+   "table": "0630b55b-36f4-41d2-aacc-28e99d6ae252",
+   "levels": {
+    "1": {
+     "Boosts": "Proficiency(HeavyArmor);Proficiency(MartialWeapons)",
+     "PassivesAdded": "WrathOfTheStorm",
+     "Selectors": "AddSpells(0888d55d-6382-4149-9b62-90a9579b0ec4,ClericTempestDomainSpells,,,AlwaysPrepared)",
+     "uuid": "6634d63a-07a6-4a4b-95cd-96852396dc39",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "DestructiveWrath",
+     "Selectors": "",
+     "uuid": "31ea2386-5ade-467d-9be4-33ce599ccec2",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(a05bd5e7-c815-4db7-9a21-66dc08d03e44,ClericTempestDomainSpells,,,AlwaysPrepared)",
+     "uuid": "9328822b-9140-401d-9273-cb1a4998c068",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(4bac4d53-69e6-4f7d-b935-cd38ca8c938d,ClericTempestDomainSpells,,,AlwaysPrepared)",
+     "uuid": "df047bb5-2337-4e0b-b50b-78d5b84fc6c4",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "ThunderboltStrike",
+     "Selectors": "",
+     "uuid": "8ab0f5be-f584-4877-a4f8-4fd5487c6592",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(fc1fa4ea-8294-4f3b-9df9-f5d64e528093,ClericTempestDomainSpells,,,AlwaysPrepared)",
+     "uuid": "51f4518f-5691-4fbf-8421-d2f31a0160e0",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "Divine_Strike_Tempest_Toggle",
+     "Selectors": "AddSpells(06bb8fc7-f335-4c13-82a1-0fb63ebf5c35,,,,AlwaysPrepared)",
+     "uuid": "cf1e11e2-5561-49b7-9c6a-83edffcd0f09",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(87d05f19-7198-424a-93ac-cf222ca25fc7,ClericTempestDomainSpells,,,AlwaysPrepared)",
+     "uuid": "1e4d3a2f-e712-4135-bc6a-569c169ea15f",
+     "subclasses": 0
+    }
+   }
+  },
+  "WarDomain": {
+   "class": "Cleric",
+   "uuid": "b9ccf90e-b35b-4b73-b896-8ed2d32ae8c6",
+   "table": "8f6048bc-47b8-49fa-956a-8a364807f6ec",
+   "levels": {
+    "1": {
+     "Boosts": "ActionResource(WarPriestActionPoint,3,0);Proficiency(HeavyArmor);Proficiency(MartialWeapons)",
+     "PassivesAdded": "WarPriest",
+     "Selectors": "AddSpells(e785b163-bff3-4134-978c-20b654dc7203,ClericWarDomainSpells,,,AlwaysPrepared)",
+     "uuid": "61eb9c49-e4c7-42f1-a6e6-9d059eb71669",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(4d04d97b-1bb6-4b1e-945b-be230335ede7,,,,AlwaysPrepared)",
+     "uuid": "2f5c8f13-a61c-4008-8a0e-83d51894e086",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(921a657e-e210-4657-9e65-1e9748626354,ClericWarDomainSpells,,,AlwaysPrepared)",
+     "uuid": "59fd6b2d-dcf6-4aa2-a439-22700f68b68b",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "ActionResource(WarPriestActionPoint,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(9846b998-4672-4427-821f-c3647aff5e22,ClericWarDomainSpells,,,AlwaysPrepared)",
+     "uuid": "1f223e87-1921-47d3-afeb-3a339b5d0cca",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "WarGodsBlessing",
+     "Selectors": "",
+     "uuid": "ae84bf7c-cfc4-4fcc-a736-8ef20a8b976c",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(4c779ace-7ff1-461c-abc4-13182424b89a,ClericWarDomainSpells,,,AlwaysPrepared)",
+     "uuid": "a6de4198-b729-4105-a2da-163b925508c3",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "ActionResource(WarPriestActionPoint,1,0)",
+     "PassivesAdded": "Divine_Strike_War_Toggle",
+     "Selectors": "AddSpells(4935a640-e3ec-48f7-933b-512b72268e68,,,,AlwaysPrepared)",
+     "uuid": "bb079588-93de-40de-bf1f-2718b1e08512",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(8e4db6a6-fbfd-42eb-9e76-de00c0e4517a,ClericWarDomainSpells,,,AlwaysPrepared)",
+     "uuid": "3939ff20-9ff5-43f0-bc1b-34bc4e4018db",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "53905c06-0af1-4c5d-a624-1074a7cb8d44",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "ActionResource(WarPriestActionPoint,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "247968f5-8b1a-4ff0-8ec0-a1cbea4b8aa6",
+     "subclasses": 0
+    }
+   }
+  },
+  "DeathDomain": {
+   "class": "Cleric",
+   "uuid": "b927a22a-d64b-48d6-bc7c-38c5f7f6a061",
+   "table": "b3505f8a-be78-401c-adea-bb466c14aa54",
+   "levels": {
+    "1": {
+     "Boosts": "Proficiency(MartialWeapons)",
+     "PassivesAdded": "Reaper",
+     "Selectors": "SelectSpells(86d4d2c3-56d9-4e78-ba6e-5fbbcde96438,1,0,Reaper,,,AlwaysPrepared);AddSpells(b4ef4e54-3f09-49b6-bbb4-5d1121bfb325,ClericDeathDomainSpells,,,AlwaysPrepared)",
+     "uuid": "bcdcfb06-09b9-4299-81b4-aa83e1ffd034",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "",
+     "PassivesAdded": "TouchOfDeath",
+     "Selectors": "",
+     "uuid": "6373e8bc-25ad-466a-ba28-242cce375e2c",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(070e22ed-b6f9-44ee-befa-fe611c95cfee,ClericDeathDomainSpells,,,AlwaysPrepared)",
+     "uuid": "8e6fb962-e98e-49cf-ab32-566f970f1868",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(7f94a649-35bb-4ef1-bd77-6a7ee6206db9,ClericDeathDomainSpells,,,AlwaysPrepared)",
+     "uuid": "fc46b206-c98c-4ac8-aa41-509e0fe5d742",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "InescapableDestruction",
+     "Selectors": "",
+     "uuid": "6d9bc88d-dcbe-4dc6-bce1-dbca64db3116",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(9bd92577-7ab4-43d4-bb4c-11b7a4b3dab0,ClericDeathDomainSpells,,,AlwaysPrepared)",
+     "uuid": "0d56cbcc-67b8-4052-b4ee-21cfcf4f9ccb",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "Divine_Strike_Death",
+     "Selectors": "AddSpells(0eac992a-965d-4e5d-a826-8fee46ba19aa,,,,AlwaysPrepared)",
+     "uuid": "25d9e305-146b-45cf-947f-d7840f5905fc",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(673543a9-8656-4c1d-8567-88ec32f2ca94,ClericDeathDomainSpells,,,AlwaysPrepared)",
+     "uuid": "3924bad0-cc2a-42f8-89a7-92e96b9d935f",
+     "subclasses": 0
+    }
+   }
+  },
+  "AbjurationSchool": {
+   "class": "Wizard",
+   "uuid": "e6a0eb75-7a01-4f40-8563-24ba2615e99b",
+   "table": "9f0fd3ac-7520-45fa-9f7d-08b1ca6eacf3",
+   "levels": {
+    "1": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "88984337-3c43-42c3-8589-3fa6501d43b8",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "Savant(Abjuration)",
+     "PassivesAdded": "ArcaneWard;ArcaneWard_Cast",
+     "Selectors": "SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,2,0)",
+     "uuid": "c29c6eb8-c79b-4f89-9095-cd39048043ba",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "2bc2b4ab-426b-424f-a723-0ec49a9cf25c",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "1a3aa101-ee95-4ba8-915c-5cbfb5774007",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "2bdd4509-86b0-4a78-9ca4-0f303f988f2b",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "ProjectedWard",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "8f3c7fbd-7d02-435e-89df-ed021da3bd87",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "bcfd08bd-e2ee-4054-872c-f9769f9a5cfe",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "593ba748-eaca-4907-8a55-174e43cf133e",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "2c0ffd0b-44b9-45bc-a256-0a9a645e5acc",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "ImprovedAbjuration",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "569ee015-d6e0-4521-8da6-d2d1612e5bec",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "43626994-8985-4d09-91e3-4b00a0a04271",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "ac3a0aa5-ee02-4d7f-9a2a-b026dfdeca93",
+     "subclasses": 0
+    }
+   }
+  },
+  "EvocationSchool": {
+   "class": "Wizard",
+   "uuid": "c059dca1-c17d-4dce-8260-83ede5070eac",
+   "table": "953e6528-acd2-48b5-95e7-9d54ad555d39",
+   "levels": {
+    "1": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "",
+     "uuid": "09e5d252-7a73-4378-92b5-33c658a1c937",
+     "subclasses": 0
+    },
+    "2": {
+     "Boosts": "Savant(Evocation)",
+     "PassivesAdded": "SculptSpells",
+     "Selectors": "SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,2,0)",
+     "uuid": "8c55b8f1-e340-4c35-9171-f677e80e9dc8",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "4d2c81e0-ae58-438b-9778-d1217d11e085",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "1f41893c-17b2-4a3d-b01e-714a9545f00e",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "bb3681cb-e0f1-4dd5-b1a7-ee15f61395d8",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "PotentCantrip",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "5d56c038-f48f-419a-8afa-e8898713e89c",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "57ac9d65-9f2c-4cbd-96a1-32dd7d07c5f4",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "2670784c-ccae-499c-a1a0-316bffd69945",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "deb061d4-f798-4d42-8896-17cf5b59e971",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "EmpoweredEvocation",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "b69eec79-c9ea-4637-a8d6-61c0afcff749",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "917ec099-7211-44eb-8f39-02a97d292607",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "68a85276-6b53-40c7-baf0-70b894590115",
+     "subclasses": 0
+    }
+   }
+  },
+  "ConjurationSchool": {
+   "class": "Wizard",
+   "uuid": "7a3feb8d-dda7-46ec-9029-1f302f537432",
+   "table": "91892607-d017-4a06-b904-0788fc84bf6a",
+   "levels": {
+    "2": {
+     "Boosts": "Savant(Conjuration)",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(13622b91-fb6d-4921-afb0-dc42da978511,,,,AlwaysPrepared);SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,2,0)",
+     "uuid": "f7b1bfed-d4bd-4e05-8cd9-f9cb59ccc2e0",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "e6a249d9-2c05-4530-bfbf-79c4dc8a364c",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "46f01cef-3adf-4e55-8f24-61c6f20a945a",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "b46c017f-811a-437f-a3cb-f6295acce19a",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0);AddSpells(804e3405-7758-4496-8d30-7e61794baae8,,,,AlwaysPrepared)",
+     "uuid": "455e8b56-0681-434c-9499-6506c06b5081",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "04bc1a50-1a25-4a92-9080-b95fabf514a4",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "389a366f-e28b-45b5-ab90-8aab5857a1f7",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "c7e60a04-6e9e-4107-b9cd-1a646ddc34a2",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "FocusedConjuration",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "1285d2ae-bef8-444d-baf4-23ab7d46de6a",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "c079d927-ab21-4e26-b15c-abbaf5ed7b5a",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "e713a538-8e78-4d28-89bc-d9ade4af10e2",
+     "subclasses": 0
+    }
+   }
+  },
+  "DivinationSchool": {
+   "class": "Wizard",
+   "uuid": "7577b0e1-a517-4f82-8f72-05a227dc5e88",
+   "table": "62f7418b-aeca-46e8-8dc8-dd4d4aa632c6",
+   "levels": {
+    "2": {
+     "Boosts": "Savant(Divination)",
+     "PassivesAdded": "Portent",
+     "Selectors": "SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,2,0)",
+     "uuid": "79b9e743-a551-4798-970c-60615e503b1d",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "0e0e8fe5-337e-4b6d-9656-ee09f4e95658",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "a9fc879a-0a81-4e3d-bd54-291da9ea84fe",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "8ee72b2d-d2c0-43c3-a3e5-8e5db4628b19",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "ExpertDivination",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "6a8173f1-2fb5-4966-954d-47c1924ac99e",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "46c16308-ec32-40e4-a150-a2b24aaa6755",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "889788f0-7f0e-42c3-9556-10de3759008a",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "5fc5eb5c-0fa9-4e1c-867a-758af621aa0d",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(dceec54d-fb54-4492-b466-b7a0b8b551f3,,,,AlwaysPrepared);SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "cc16de96-d5ec-4ff9-a48f-5d4be3b80cf2",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "a8aaf912-9f7d-4c53-8bda-398866d8a194",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "96dd8868-e982-4eb9-9eba-e6e03df2eefe",
+     "subclasses": 0
+    }
+   }
+  },
+  "EnchantmentSchool": {
+   "class": "Wizard",
+   "uuid": "46d31950-6917-444e-ac87-706702825215",
+   "table": "1c1d48af-42b7-4fac-a3ce-ca3525f1ccbe",
+   "levels": {
+    "2": {
+     "Boosts": "Savant(Enchantment)",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(43fb9c43-ddfa-46ff-a64f-73406dddf4eb,,,,AlwaysPrepared);SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,2,0)",
+     "uuid": "0e988b6b-43d1-4821-84e7-89703320a2c3",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "33e5bc43-c2a9-4473-8ca6-4210ff5506f9",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "564239bd-2a4e-4b54-a884-8e9a54af9001",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "c3751d51-3158-4503-8c59-ebd0b0103936",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "InstinctiveCharm",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "94de7452-526d-4cd2-836a-a5fdd7620b3c",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "fc219072-778c-46ef-a02a-7a1f0876bb21",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "d2c4a931-a7cf-4f93-9b20-d717e7f50a6c",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "11f14cc2-fb75-4d40-b381-f4ba8a9a3763",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "SplitEnchantment",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "79663a80-517b-4036-b895-4cf75bb4075c",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "edb28052-f162-4a40-a122-0920bbff8663",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "5adc3681-3841-456f-b2a9-c28d9f56df32",
+     "subclasses": 0
+    }
+   }
+  },
+  "NecromancySchool": {
+   "class": "Wizard",
+   "uuid": "fbb8347b-20e3-4846-ba91-0552cd12fc5f",
+   "table": "47c4579c-ea2c-474d-9667-62edec24e8eb",
+   "levels": {
+    "2": {
+     "Boosts": "Savant(Necromancy)",
+     "PassivesAdded": "GrimHarvest",
+     "Selectors": "SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,2,0)",
+     "uuid": "c8ddfbcf-4867-4188-8b76-78a732f6186b",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "a552baf9-d1c0-4c67-ab01-962c54ca825e",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "8c263a9e-227a-40e0-92d5-a3f194f5a212",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "07771ec1-a4e9-4197-ac83-442c82972252",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "UndeadThrall_FreeSpell;UndeadThrall_ExtraSummon;UndeadThrall_BetterSummon",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "ae1c9a70-da6c-4df3-a11a-ec1586a3e201",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "2c2f169b-d23d-4a9d-a75e-18ec0587e56d",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "b095383a-2fb9-4a48-8430-46b72db950d0",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "5b643bb9-ade1-439c-adbf-fa407f413c37",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "InuredtoUndeath",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "e5d2cf1b-4d87-41e0-accc-9a680bd9b705",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "67f77420-1eea-47a6-87eb-b738eae99aa6",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "fa281fef-e891-4ab2-bc65-8e3254d06776",
+     "subclasses": 0
+    }
+   }
+  },
+  "IllusionSchool": {
+   "class": "Wizard",
+   "uuid": "436c9e1a-3a39-48dd-b753-7cee1bd19c00",
+   "table": "a78bdb33-84e2-4943-a593-3d68f178ba32",
+   "levels": {
+    "2": {
+     "Boosts": "Savant(Illusion)",
+     "PassivesAdded": "ImprovedMinorIllusion",
+     "Selectors": "SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,2,0)",
+     "uuid": "2fd8466a-422d-4b10-8c13-50a01d29ec0a",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "4ecd1912-2215-43f1-a328-ffce7768ceea",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "fb0be9da-36e0-4d26-ac68-3c20e76f6e59",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "72831b5b-2042-4e91-be4a-703018e1d7fa",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(2a428023-b6cd-4d77-a801-d1e1f772c83e,,,,AlwaysPrepared);SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "2f194c01-ca24-47de-b6a5-e11a7c5272e5",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "1a778e03-f95c-4962-8290-2eec12e7e5d2",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "1d2856a3-7760-498a-b329-8cea964913b5",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "641e8f0f-30e9-4e35-9c70-268c662ec483",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "IllusorySelf",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "9df5a0c5-98b2-4ede-8e18-6956064d66e2",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "06f7e5d6-6b16-42c3-99d4-843e84794712",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "ec37c73f-c644-4793-abd7-0957b0746102",
+     "subclasses": 0
+    }
+   }
+  },
+  "TransmutationSchool": {
+   "class": "Wizard",
+   "uuid": "a12f2924-30b4-4185-9db9-2c5b383ff449",
+   "table": "0bf3a1fe-f4e0-4bd3-aa97-ceec14afa407",
+   "levels": {
+    "2": {
+     "Boosts": "Savant(Transmutation)",
+     "PassivesAdded": "ExperimentalAlchemy",
+     "Selectors": "SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,2,0)",
+     "uuid": "de2a9945-7c62-444b-a61d-a8e8fe09fefd",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "e09afe3e-ed6e-4bbd-b2a6-157501f14f64",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "6433e2f2-2558-43e5-a045-35bd054ed813",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "bff8ab45-108c-43e4-8ee1-75843b6f6653",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "TransmutationStone;TransmutationStone_Activation",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "e61eb8a5-b9b3-45b8-a97c-ef3767f7df7c",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "8643b32e-1e85-4e06-8a19-4bfce4988311",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "ccfd6014-d203-4ef2-8183-481ef0cc9a23",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "f7445184-3721-411c-8e27-b5448b034e55",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "Shapechanger",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "92ae1f67-47f5-4a2b-9462-98deb19da1c2",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "36de2141-de2c-4917-a8b6-404695da2b91",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "a536b75f-727b-40f7-9873-524233c34e64",
+     "subclasses": 0
+    }
+   }
+  },
+  "BladesingingSchool": {
+   "class": "Wizard",
+   "uuid": "8047cf29-2c79-4f12-a4bf-d965a023be63",
+   "table": "eb51387c-6990-4f9b-965a-3acae7ba49d1",
+   "levels": {
+    "2": {
+     "Boosts": "Proficiency(LightArmor);Proficiency(Daggers);Proficiency(Sickles);Proficiency(Shortswords);Proficiency(Rapiers);Proficiency(Scimitars);Proficiency(Longswords);ProficiencyBonus(Skill,Performance);ActionResource(Bladesong,2,0)",
+     "PassivesAdded": "TraininginWarandSong;Bladesong_Armor_Message;Bladesong_Weapon_Message;Bladesong_Shield_Message;Bladesong_Weapon;Bladesong_Shield;Bladesong_Unarmed",
+     "Selectors": "SelectEquipment(5309613d-e7cb-4176-95b6-0c8b796d47d0,1,WarAndSong);AddSpells(e97297e2-5cc9-45c9-ae8d-5a24257dd176,,,,AlwaysPrepared);SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,2,0)",
+     "uuid": "fb80a80b-d512-4ff5-89d8-b4fa6c29f96e",
+     "subclasses": 0
+    },
+    "3": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "ca3998ec-99fc-4058-ae08-587adeb9d8ec",
+     "subclasses": 0
+    },
+    "4": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(80c6b070-c3a6-4864-84ca-e78626784eb4,2,0)",
+     "uuid": "8c21951a-3922-417f-96d7-0d293206ac1d",
+     "subclasses": 0
+    },
+    "5": {
+     "Boosts": "ActionResource(Bladesong,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "2765d077-93a1-4ada-9e11-977a878f429a",
+     "subclasses": 0
+    },
+    "6": {
+     "Boosts": "",
+     "PassivesAdded": "ExtraAttack",
+     "Selectors": "SelectSpells(22755771-ca11-49f4-b772-13d8b8fecd93,2,0)",
+     "uuid": "ed500d02-ae15-434a-944e-65b845b62d74",
+     "subclasses": 0
+    },
+    "7": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "da7c97d3-6826-4ae1-ab53-67767575b7f2",
+     "subclasses": 0
+    },
+    "8": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(820b1220-0385-426d-ae15-458dc8a6f5c0,2,0)",
+     "uuid": "8c63cb2d-feba-4a08-9764-e4c07a302a46",
+     "subclasses": 0
+    },
+    "9": {
+     "Boosts": "ActionResource(Bladesong,1,0)",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "26a8f68a-cdaa-4fe0-93a6-75166992f129",
+     "subclasses": 0
+    },
+    "10": {
+     "Boosts": "",
+     "PassivesAdded": "SongOfDefense",
+     "Selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,1,0,,,,AlwaysPrepared);SelectSpells(f781a25e-d288-43b4-bf5d-3d8d98846687,2,0)",
+     "uuid": "b05b29d0-8509-4bec-8953-4feeee0f6d85",
+     "subclasses": 0
+    },
+    "11": {
+     "Boosts": "",
+     "PassivesAdded": "SongOfDefense_6",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "7038732a-6324-4af6-bb39-48086729f4fe",
+     "subclasses": 0
+    },
+    "12": {
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "SelectSpells(bc917f22-7f71-4a25-9a77-7d2f91a96a65,2,0)",
+     "uuid": "ba41e719-10fb-43f3-8ec9-8eead0df33ee",
+     "subclasses": 0
+    }
+   }
+  }
+ },
+ "items": {
+  "ARM_Barbarian": {
+   "type": "Armor",
+   "root": "f6599c3f-cfcd-4721-9cc2-1df5d8ff0154",
+   "rarity": "Common"
+  },
+  "ARM_Boots_Leather": {
+   "type": "Armor",
+   "root": "969bab00-b269-46a5-a7e9-dd4887814719",
+   "rarity": "Common"
+  },
+  "ARM_Camp_Body": {
+   "type": "Armor",
+   "root": "f369f4fa-2da7-4693-a147-16cfaf02bca5",
+   "rarity": "Common"
+  },
+  "ARM_Camp_Shoes": {
+   "type": "Armor",
+   "root": "6bb7a595-7646-48a9-9c44-d39f16c1c5cb",
+   "rarity": "Common"
+  },
+  "ARM_ChainShirt_Body": {
+   "type": "Armor",
+   "root": "921cd1e1-c39c-44c3-a090-b667322af7f8",
+   "rarity": "Common"
+  },
+  "ARM_ChainShirt_Body_1": {
+   "type": "Armor",
+   "root": "eac652ed-ecf7-4505-bf64-0fec29e7d677",
+   "rarity": "Uncommon"
+  },
+  "ARM_ChainShirt_Body_2": {
+   "type": "Armor",
+   "root": "461f1cbe-6d0d-40ee-8bf6-8a68e0570d6f",
+   "rarity": "Rare"
+  },
+  "ARM_Leather_Body": {
+   "type": "Armor",
+   "root": "02ae5d88-8044-43df-8363-02a2900776db",
+   "rarity": "Common"
+  },
+  "ARM_Leather_Body_1": {
+   "type": "Armor",
+   "root": "90a79e46-e327-41f4-a349-8e4dd70b1892",
+   "rarity": "Uncommon"
+  },
+  "ARM_Leather_Body_2": {
+   "type": "Armor",
+   "root": "ac71c753-c207-465c-b28b-c10f95ed0745",
+   "rarity": "Rare"
+  },
+  "ARM_Leather_Body_Rogue": {
+   "type": "Armor",
+   "root": "4c4396db-fa4a-4541-9b2a-23e43211dde7",
+   "rarity": "Common"
+  },
+  "ARM_Robe_Body": {
+   "type": "Armor",
+   "root": "168b9099-19f5-44e4-b55c-e64ceb60b71f",
+   "rarity": "Common"
+  },
+  "ARM_Robe_Body_1": {
+   "type": "Armor",
+   "root": "7ec40cde-4d96-4352-b93e-cdcab6383337",
+   "rarity": "Uncommon"
+  },
+  "ARM_Robe_Body_2": {
+   "type": "Armor",
+   "root": "467cca20-42bb-45cd-8eac-6ed49bbc2707",
+   "rarity": "Rare"
+  },
+  "ARM_ScaleMail_Body": {
+   "type": "Armor",
+   "root": "ca0aafad-0f1e-4d76-8e3b-925397bb436b",
+   "rarity": "Common"
+  },
+  "ARM_ScaleMail_Body_1": {
+   "type": "Armor",
+   "root": "dc748177-8590-4a99-a446-feccbd8d8eb4",
+   "rarity": "Uncommon"
+  },
+  "ARM_ScaleMail_Body_2": {
+   "type": "Armor",
+   "root": "21f0dd84-6f02-4be9-8654-4cebd00dcbaf",
+   "rarity": "Rare"
+  },
+  "ARM_Shield": {
+   "type": "Armor",
+   "root": "d2af60ea-1b72-4d25-a188-6d8bc4fe255b",
+   "rarity": "Common"
+  },
+  "ARM_Shield_1": {
+   "type": "Armor",
+   "root": "cb2d6c27-ec29-4555-adf2-41e8c1952439",
+   "rarity": "Rare"
+  },
+  "ARM_Shield_2": {
+   "type": "Armor",
+   "root": "89792dc1-221b-462e-adcb-026f2cafbb95",
+   "rarity": "VeryRare"
+  },
+  "ARM_Shoes": {
+   "type": "Armor",
+   "root": "97f37571-35e8-4cc8-8b0d-ff92d20ae0bb",
+   "rarity": "Common"
+  },
+  "ARM_Shoes_Barbarian": {
+   "type": "Armor",
+   "root": "2577a332-8ad2-4e54-b52b-f4f7cc5823a1",
+   "rarity": "Common"
+  },
+  "OBJ_ArrowOfIce": {
+   "type": "Object",
+   "root": "2e297d80-823b-4200-926e-6ca23f488090",
+   "rarity": "Common"
+  },
+  "OBJ_Backpack_CampSupplies": {
+   "type": "Object",
+   "root": "efcb70b7-868b-4214-968a-e23f6ad586bc",
+   "rarity": "Common"
+  },
+  "OBJ_Bag_AlchemyPouch": {
+   "type": "Object",
+   "root": "b7543ff4-5010-4c01-9bcd-4da1047aebfc",
+   "rarity": "Common"
+  },
+  "OBJ_GreaseBottle": {
+   "type": "Object",
+   "root": "e2968a2e-bc83-4d50-99ef-39ce78d2d630",
+   "rarity": "Common"
+  },
+  "OBJ_Keychain": {
+   "type": "Object",
+   "root": "ee329627-dbee-405f-b9a6-b260de9ad34c",
+   "rarity": "Common"
+  },
+  "OBJ_Kit_ThievesTools": {
+   "type": "Object",
+   "root": "e32a200c-5b63-414d-ae57-00e7b38f125b",
+   "rarity": "Common"
+  },
+  "OBJ_Potion_Healing": {
+   "type": "Object",
+   "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
+   "rarity": "Common"
+  },
+  "OBJ_Potion_Healing_Greater": {
+   "type": "Object",
+   "root": "e3b95c96-dc26-40fe-bfc0-baa05e1abd20",
+   "rarity": "Common"
+  },
+  "OBJ_Potion_Healing_Superior": {
+   "type": "Object",
+   "root": "df4f3495-abaf-4732-b82f-55bcccd561db",
+   "rarity": "Common"
+  },
+  "OBJ_Scroll_Revivify": {
+   "type": "Object",
+   "root": "c1c3e4fb-d68c-4e10-afdc-d4550238d50e",
+   "rarity": "Common"
+  },
+  "WPN_Greataxe": {
+   "type": "Weapon",
+   "root": "d5712e24-ce9e-42ce-8fad-6e049b62c28c",
+   "rarity": "Common"
+  },
+  "WPN_Greataxe_1": {
+   "type": "Weapon",
+   "root": "afbfaee7-e2cd-48e7-8c46-d2377c7320e3",
+   "rarity": "Uncommon"
+  },
+  "WPN_Greataxe_2": {
+   "type": "Weapon",
+   "root": "ce8a894c-3dc6-48dc-bb8f-af5390890d43",
+   "rarity": "Rare"
+  },
+  "WPN_Handaxe": {
+   "type": "Weapon",
+   "root": "46b64a36-8446-45bd-98e8-ee81e3136baa",
+   "rarity": "Common"
+  },
+  "WPN_Handaxe_1": {
+   "type": "Weapon",
+   "root": "7a05135d-b285-4186-8a32-a870f1684b60",
+   "rarity": "Uncommon"
+  },
+  "WPN_Longsword": {
+   "type": "Weapon",
+   "root": "1865323f-b428-4791-a0a9-578841e57463",
+   "rarity": "Common"
+  },
+  "WPN_Longsword_1": {
+   "type": "Weapon",
+   "root": "3fc2ba50-3070-4caa-abe8-3bf885969bde",
+   "rarity": "Uncommon"
+  },
+  "WPN_Longsword_2": {
+   "type": "Weapon",
+   "root": "e3b2adb6-7493-466e-9c65-4281fb74e83f",
+   "rarity": "Rare"
+  },
+  "WPN_Mace": {
+   "type": "Weapon",
+   "root": "3186796d-3ab3-4d49-bfc2-cba1aff0cf5a",
+   "rarity": "Common"
+  },
+  "WPN_Mace_1": {
+   "type": "Weapon",
+   "root": "5a948b12-ca43-4256-9821-0d151036dbd1",
+   "rarity": "Uncommon"
+  },
+  "WPN_Mace_2": {
+   "type": "Weapon",
+   "root": "f203a318-ea9a-4117-8d27-299dabafd1d3",
+   "rarity": "Rare"
+  },
+  "WPN_Quarterstaff": {
+   "type": "Weapon",
+   "root": "96e2abaf-78ff-4dcb-a6a3-a5f0c348bd9f",
+   "rarity": "Common"
+  },
+  "WPN_Quarterstaff_1": {
+   "type": "Weapon",
+   "root": "2fa18ee4-92df-486f-97d2-dd0a720b6fad",
+   "rarity": "Uncommon"
+  },
+  "WPN_Quarterstaff_2": {
+   "type": "Weapon",
+   "root": "e1e112b2-5465-4e37-acdc-372666ec1521",
+   "rarity": "Rare"
+  },
+  "WPN_Shortbow": {
+   "type": "Weapon",
+   "root": "c5403c1d-f372-43e1-927a-9189e9e3545d",
+   "rarity": "Common"
+  },
+  "WPN_Shortbow_1": {
+   "type": "Weapon",
+   "root": "a46173b7-afd6-48e0-9c76-817acd027574",
+   "rarity": "Uncommon"
+  },
+  "WPN_Shortbow_2": {
+   "type": "Weapon",
+   "root": "d9a98dce-1027-4324-939c-3c9cfe776731",
+   "rarity": "Rare"
+  },
+  "WPN_Shortsword": {
+   "type": "Weapon",
+   "root": "467ddb4f-6791-41fa-99f7-ee8620d63bbe",
+   "rarity": "Common"
+  },
+  "WPN_Shortsword_1": {
+   "type": "Weapon",
+   "root": "261b946f-154b-4f75-8985-cab6531034a2",
+   "rarity": "Uncommon"
+  },
+  "WPN_Shortsword_2": {
+   "type": "Weapon",
+   "root": "0839fb15-24ab-4c3a-b168-413a47ed710a",
+   "rarity": "Rare"
+  }
+ },
+ "xp": {
+  "1": 0,
+  "2": 300,
+  "3": 900,
+  "4": 2700,
+  "5": 6500,
+  "6": 13000,
+  "7": 21000,
+  "8": 30000,
+  "9": 42000,
+  "10": 56000,
+  "11": 76000,
+  "12": 100000
+ },
+ "feats": {
+  "AbilityScoreIncrease": {
+   "uuid": "d215b9ad-9753-4d74-8ff9-24bf1dce53d6",
+   "selectors": "SelectAbilities(b9149c8e-52c8-46e5-9cb6-fc39301c05fe,2,2,FeatASI)",
+   "passives": "",
+   "boosts": "",
+   "repeatable": true
+  },
+  "Actor": {
+   "uuid": "cdcbc538-883b-401c-a8ed-1373fb6d1720",
+   "selectors": "",
+   "passives": "Actor",
+   "boosts": "",
+   "repeatable": false
+  },
+  "Alert": {
+   "uuid": "f57bd72c-be64-4855-9e3a-bb7d7665e656",
+   "selectors": "",
+   "passives": "Alert",
+   "boosts": "",
+   "repeatable": false
+  },
+  "Athlete": {
+   "uuid": "d674aa33-8633-4b67-8623-b6788f0d5fc4",
+   "selectors": "SelectAbilities(499230af-5946-4680-a7ee-4d76d421f2ef,1,1,LightlyArmoredASI)",
+   "passives": "Athlete_StandUp",
+   "boosts": "",
+   "repeatable": false
+  },
+  "Charger": {
+   "uuid": "eab25714-15d6-4e26-b809-3fad832d0484",
+   "selectors": "",
+   "passives": "Charger",
+   "boosts": "",
+   "repeatable": false
+  },
+  "CrossbowExpert": {
+   "uuid": "94a78b4c-a8f2-404f-8cdc-2d454c13cb97",
+   "selectors": "",
+   "passives": "CrossbowExpert_PointBlank;CrossbowExpert_Wounding",
+   "boosts": "",
+   "repeatable": false
+  },
+  "DefensiveDuelist": {
+   "uuid": "661eee63-ff91-4f29-9f21-3a974c9d6fe5",
+   "selectors": "",
+   "passives": "DefensiveDuelist",
+   "boosts": "",
+   "repeatable": false
+  },
+  "DualWielder": {
+   "uuid": "f692f7b5-ffd5-4942-91a1-a71ebb2f5e7c",
+   "selectors": "",
+   "passives": "DualWielder_BonusAC;DualWielder_PassiveBonuses",
+   "boosts": "",
+   "repeatable": false
+  },
+  "DungeonDelver": {
+   "uuid": "71b65667-0eac-4e62-b878-fa862e88ebbf",
+   "selectors": "",
+   "passives": "DungeonDelver_Perception;DungeonDelver_ResistTraps",
+   "boosts": "",
+   "repeatable": false
+  },
+  "Durable": {
+   "uuid": "56c3c247-35cf-4ffd-86dd-7d249cc1808f",
+   "selectors": "",
+   "passives": "Durable",
+   "boosts": "",
+   "repeatable": false
+  },
+  "ElementalAdept": {
+   "uuid": "cec2d95b-451c-40f8-8e17-9e547d363e8e",
+   "selectors": "SelectPassives(f6b6e71f-79b1-4ba3-8fd8-ee38a44d3d39,1)",
+   "passives": "",
+   "boosts": "",
+   "repeatable": true
+  },
+  "GreatWeaponMaster": {
+   "uuid": "c09815f7-282b-4ccf-bd89-a51caa1b550f",
+   "selectors": "",
+   "passives": "GreatWeaponMaster_BonusAttack;GreatWeaponMaster_BonusDamage",
+   "boosts": "",
+   "repeatable": false
+  },
+  "HeavilyArmored": {
+   "uuid": "7bc235ac-7eeb-49d3-8249-c3313d87af75",
+   "selectors": "",
+   "passives": "HeavilyArmored",
+   "boosts": "",
+   "repeatable": false
+  },
+  "HeavyArmorMaster": {
+   "uuid": "0de08fff-ab18-442f-a0b1-f53e7be04c03",
+   "selectors": "",
+   "passives": "HeavyArmorMaster",
+   "boosts": "",
+   "repeatable": false
+  },
+  "LightlyArmored": {
+   "uuid": "b441c722-e4d4-4702-861a-039bfd77c124",
+   "selectors": "SelectAbilities(499230af-5946-4680-a7ee-4d76d421f2ef,1,1,LightlyArmoredASI)",
+   "passives": "LightlyArmored",
+   "boosts": "",
+   "repeatable": false
+  },
+  "Lucky": {
+   "uuid": "d84c7f36-8c5b-4b17-b95a-e1da725f9004",
+   "selectors": "",
+   "passives": "Lucky;Lucky_Unlock",
+   "boosts": "",
+   "repeatable": false
+  },
+  "MageSlayer": {
+   "uuid": "a533fde7-ee0a-46ce-92e2-9763201a54d2",
+   "selectors": "",
+   "passives": "MageSlayer_Advantage;MageSlayer_AttackCaster;MageSlayer_BreakConcentration",
+   "boosts": "",
+   "repeatable": false
+  },
+  "MagicInitiateBard": {
+   "uuid": "4f744a6e-8589-4a46-89ab-a95415a73245",
+   "selectors": "SelectSpells(61f79a30-2cac-4a7a-b5fe-50c89d307dd6,2,0,MIBardCantrips,Charisma,,AlwaysPrepared,,92cd50b6-eb1b-4824-8adb-853e90c34c90);SelectSpells(dcb45167-86bd-4297-9b9d-c295be51af5b,1,0,MIBardSpells,Charisma,None,AlwaysPrepared,UntilRest,92cd50b6-eb1b-4824-8adb-853e90c34c90)",
+   "passives": "MagicInitiate_Bard",
+   "boosts": "",
+   "repeatable": false
+  },
+  "MagicInitiateCleric": {
+   "uuid": "28e5fed3-bd41-4b74-ab48-b8e824ad3443",
+   "selectors": "SelectSpells(2f43a103-5bf1-4534-b14f-663decc0c525,2,0,MIClericCantrips,Wisdom,,AlwaysPrepared,,114e7aee-d1d4-4371-8d90-8a2080592faf);SelectSpells(269d1a3b-eed8-4131-8901-a562238f5289,1,0,MIClericSpells,Wisdom,None,AlwaysPrepared,UntilRest,114e7aee-d1d4-4371-8d90-8a2080592faf)",
+   "passives": "MagicInitiate_Cleric",
+   "boosts": "",
+   "repeatable": false
+  },
+  "MagicInitiateDruid": {
+   "uuid": "1e1a9a4d-38f4-4a05-b080-d32c2b872250",
+   "selectors": "SelectSpells(b8faf12f-ca42-45c0-84f8-6951b526182a,2,0,MIDruidCantrips,Wisdom,,AlwaysPrepared,,457d0a6e-9da8-4f95-a225-18382f0e94b5);SelectSpells(2cd54137-2fe5-4100-aad3-df64735a8145,1,0,MIDruidSpells,Wisdom,None,AlwaysPrepared,UntilRest,457d0a6e-9da8-4f95-a225-18382f0e94b5)",
+   "passives": "MagicInitiate_Druid",
+   "boosts": "",
+   "repeatable": false
+  },
+  "MagicInitiateSorcerer": {
+   "uuid": "93d41226-d7af-495c-b023-08a6af077962",
+   "selectors": "SelectSpells(485a68b4-c678-4888-be63-4a702efbe391,2,0,MISorcererCantrips,Charisma,,AlwaysPrepared,,784001e2-c96d-4153-beb6-2adbef5abc92);SelectSpells(92c4751f-6255-4f67-822c-a75d53830b27,1,0,MISorcererSpells,Charisma,None,AlwaysPrepared,UntilRest,784001e2-c96d-4153-beb6-2adbef5abc92)",
+   "passives": "MagicInitiate_Sorcerer",
+   "boosts": "",
+   "repeatable": false
+  },
+  "MagicInitiateWarlock": {
+   "uuid": "1e0ac3c4-5bb5-42d7-941c-9de58d919732",
+   "selectors": "SelectSpells(f5c4af9c-5d8d-4526-9057-94a4b243cd40,2,0,MIWarlockCantrips,Charisma,,AlwaysPrepared,,b4225a4b-4bbe-4d97-9e3c-4719dbd1487c);SelectSpells(21e1e2b9-81f7-47d2-ab69-90ba67c0c74c,1,0,MIWarlockSpells,Charisma,None,AlwaysPrepared,UntilRest,b4225a4b-4bbe-4d97-9e3c-4719dbd1487c)",
+   "passives": "MagicInitiate_Warlock",
+   "boosts": "",
+   "repeatable": false
+  },
+  "MagicInitiateWizard": {
+   "uuid": "26c6990b-d9f0-41a2-8108-209789fafc18",
+   "selectors": "SelectSpells(3cae2e56-9871-4cef-bba6-96845ea765fa,2,0,MIWizardCantrips,Intelligence,,AlwaysPrepared,,a865965f-501b-46e9-9eaa-7748e8c04d09);SelectSpells(11f331b0-e8b7-473b-9d1f-19e8e4178d7d,1,0,MIWizardSpells,Intelligence,None,AlwaysPrepared,UntilRest,a865965f-501b-46e9-9eaa-7748e8c04d09)",
+   "passives": "MagicInitiate_Wizard",
+   "boosts": "",
+   "repeatable": false
+  },
+  "MartialAdept": {
+   "uuid": "455fc2d5-1c77-40e7-a010-0b51044ae74b",
+   "selectors": "SelectPassives(e51a2ef5-3663-43f9-8e74-5e28520323f1,2,MAManeuvers)",
+   "passives": "MartialAdept",
+   "boosts": "",
+   "repeatable": false
+  },
+  "MediumArmorMaster": {
+   "uuid": "17ac3605-9a8a-41f3-9504-ffc17fffa03e",
+   "selectors": "",
+   "passives": "MediumArmorMaster",
+   "boosts": "",
+   "repeatable": false
+  },
+  "Mobile": {
+   "uuid": "0a3b07bf-a806-4c77-9c8f-6e7c0965f9dd",
+   "selectors": "",
+   "passives": "Mobile_PassiveBonuses;Mobile_CounterAttackOfOpportunity;Mobile_DashAcrossDifficultTerrain",
+   "boosts": "",
+   "repeatable": false
+  },
+  "ModeratelyArmored": {
+   "uuid": "681d5307-f0ed-4c94-8cf0-db0c51116f56",
+   "selectors": "SelectAbilities(499230af-5946-4680-a7ee-4d76d421f2ef,1,1,LightlyArmoredASI)",
+   "passives": "ModeratelyArmored",
+   "boosts": "",
+   "repeatable": false
+  },
+  "Performer": {
+   "uuid": "60dfd716-3ba8-4611-90ee-018b59775b1d",
+   "selectors": "SelectAbilities(98acdfcb-3c74-4e1a-8707-5d6da747d430,1,1,PerformerASI)",
+   "passives": "Performer",
+   "boosts": "",
+   "repeatable": false
+  },
+  "PolearmMaster": {
+   "uuid": "fdf0be80-cc1e-4501-bd2e-7a1ea737362c",
+   "selectors": "",
+   "passives": "PolearmMaster_AttackOfOpportunity;PolearmMaster_BonusAttack",
+   "boosts": "",
+   "repeatable": false
+  },
+  "Resilient": {
+   "uuid": "b13c4744-1d45-42da-b92c-e09f598ab1c3",
+   "selectors": "SelectPassives(d4b799b4-30e2-412b-b2c9-abb144df8e7d,1)",
+   "passives": "",
+   "boosts": "",
+   "repeatable": false
+  },
+  "RitualCaster": {
+   "uuid": "f3370916-6b35-4c5b-af36-19ca888cb43e",
+   "selectors": "SelectSpells(8c32c900-a8ea-4f2f-9f6f-eccd0d361a9d,2,0,,,,AlwaysPrepared)",
+   "passives": "RitualCaster_FreeSpells",
+   "boosts": "",
+   "repeatable": false
+  },
+  "SavageAttacker": {
+   "uuid": "e061a323-3430-4cff-88d3-5eae7a1779a4",
+   "selectors": "",
+   "passives": "SavageAttacker",
+   "boosts": "",
+   "repeatable": false
+  },
+  "Sentinel": {
+   "uuid": "816b1554-9384-49e9-aaa0-05dd622e60f7",
+   "selectors": "",
+   "passives": "Sentinel_Attack;Sentinel_ZeroSpeed;Sentinel_OpportunityAdvantage",
+   "boosts": "",
+   "repeatable": false
+  },
+  "Sharpshooter": {
+   "uuid": "010f717e-c6e2-45cf-bbf9-298a72db4cad",
+   "selectors": "",
+   "passives": "Sharpshooter_AllIn;Sharpshooter_Bonuses",
+   "boosts": "",
+   "repeatable": false
+  },
+  "ShieldMaster": {
+   "uuid": "3fe71254-d1b2-44c7-886c-927552fe5f2e",
+   "selectors": "",
+   "passives": "ShieldMaster_PassiveBonuses;ShieldMaster_Block",
+   "boosts": "",
+   "repeatable": false
+  },
+  "Skilled": {
+   "uuid": "019564a0-f136-4139-94ea-040f94bbaf19",
+   "selectors": "SelectSkills(f974ebd6-3725-4b90-bb5c-2b647d41615d,3,SkilledSkills)",
+   "passives": "Skilled",
+   "boosts": "",
+   "repeatable": false
+  },
+  "SpellSniper": {
+   "uuid": "c02f22c9-9a06-4001-b917-4d5cf09be399",
+   "selectors": "SelectSpells(64784e08-e31e-4850-a743-ecfb3fd434d7,1,0,,,,AlwaysPrepared)",
+   "passives": "SpellSniper_Critical",
+   "boosts": "",
+   "repeatable": false
+  },
+  "TavernBrawler": {
+   "uuid": "be0889d2-f9aa-472d-b942-592bff0f1ef3",
+   "selectors": "SelectAbilities(859878b3-9c3a-450d-a190-bc90707c9671,1,1,LightlyArmoredASI)",
+   "passives": "TavernBrawler",
+   "boosts": "",
+   "repeatable": false
+  },
+  "Tough": {
+   "uuid": "e8d1e7f6-d841-48ff-a83c-f1aaa16597ff",
+   "selectors": "",
+   "passives": "Tough",
+   "boosts": "",
+   "repeatable": false
+  },
+  "WarCaster": {
+   "uuid": "ed4e367d-d136-4285-abac-077147e84cf2",
+   "selectors": "",
+   "passives": "WarCaster_Bonuses;WarCaster_OpportunitySpell",
+   "boosts": "",
+   "repeatable": false
+  },
+  "WeaponMaster": {
+   "uuid": "b153e75c-27a2-4412-95cd-60b477121679",
+   "selectors": "SelectAbilities(499230af-5946-4680-a7ee-4d76d421f2ef,1,1,LightlyArmoredASI);SelectPassives(f21e6b94-44e8-4ae0-a6f1-0c81abac03a2,4,WeaponMasterProficiencies)",
+   "passives": "WeaponMaster",
+   "boosts": "",
+   "repeatable": false
+  }
+ },
+ "lists": {
+  "06bb8fc7-f335-4c13-82a1-0fb63ebf5c35": {
+   "kind": "spells",
+   "name": "Cleric Tempest Domain Divine Strike 8",
+   "ids": [
+    "Target_DivineStrike_Tempest_Container"
+   ]
+  },
+  "070e22ed-b6f9-44ee-befa-fe611c95cfee": {
+   "kind": "spells",
+   "name": "Cleric Death Domain 3",
+   "ids": [
+    "Target_Blindness",
+    "Projectile_RayOfEnfeeblement"
+   ]
+  },
+  "0888d55d-6382-4149-9b62-90a9579b0ec4": {
+   "kind": "spells",
+   "name": "Cleric Tempest Domain 1",
+   "ids": [
+    "Zone_Thunderwave",
+    "Target_FogCloud"
+   ]
+  },
+  "0eac992a-965d-4e5d-a826-8fee46ba19aa": {
+   "kind": "spells",
+   "name": "Cleric Death Domain Divine Strike",
+   "ids": [
+    "Target_DivineStrike_Death_Container"
+   ]
+  },
+  "11f331b0-e8b7-473b-9d1f-19e8e4178d7d": {
+   "kind": "spells",
+   "name": "Wizard SLevel 1 expanded",
+   "ids": [
+    "Zone_BurningHands",
+    "Target_CharmPerson",
+    "Projectile_ChromaticOrb",
+    "Zone_ColorSpray",
+    "Shout_DisguiseSelf",
+    "Shout_ExpeditiousRetreat",
+    "Shout_FalseLife",
+    "Shout_FeatherFall",
+    "Target_FindFamiliar",
+    "Target_FogCloud",
+    "Target_Grease",
+    "Projectile_IceKnife",
+    "Target_Jump",
+    "Target_Longstrider",
+    "Target_MageArmor",
+    "Projectile_MagicMissile",
+    "Target_ProtectionFromEvilAndGood",
+    "Projectile_RayOfSickness",
+    "Shout_Shield_Wizard",
+    "Target_Sleep",
+    "Target_HideousLaughter",
+    "Zone_Thunderwave",
+    "Projectile_WitchBolt"
+   ]
+  },
+  "12653b66-e36c-4b0b-872d-b61a1b2a3411": {
+   "kind": "spells",
+   "name": "Barbarian Giant 5",
+   "ids": [
+    "Target_BootOfTheGiants"
+   ]
+  },
+  "13622b91-fb6d-4921-afb0-dc42da978511": {
+   "kind": "spells",
+   "name": "Conjuration Wizard 2",
+   "ids": [
+    "Target_CreateWater_MinorConjuration"
+   ]
+  },
+  "154b461e-23c2-4147-97fd-b7892f031a50": {
+   "kind": "spells",
+   "name": "Cleric Trickery Domain 9",
+   "ids": [
+    "Target_DominatePerson",
+    "Target_Seeming"
+   ]
+  },
+  "17803035-4762-4143-8f2f-1143d47e4f40": {
+   "kind": "spells",
+   "name": "Berserker Barbarian level 3",
+   "ids": [
+    "Target_FrenziedStrike",
+    "Throw_FrenziedThrow"
+   ]
+  },
+  "18e97e4a-d97b-4595-af80-8eb43766386e": {
+   "kind": "spells",
+   "name": "Cleric Trickery Domain 7",
+   "ids": [
+    "Target_Polymorph",
+    "Teleportation_DimensionDoor"
+   ]
+  },
+  "1a50d25a-27b5-4789-b2d6-532fac4437c6": {
+   "kind": "spells",
+   "name": "Cleric Light Domain 5",
+   "ids": [
+    "Target_Daylight_Container",
+    "Projectile_Fireball"
+   ]
+  },
+  "1ae44b76-581c-4fdf-92f8-0a1049a026dc": {
+   "kind": "spells",
+   "name": "Barbarian Giant 10",
+   "ids": [
+    "Throw_MightyImpel"
+   ]
+  },
+  "1b8b6282-c1f2-4095-89ab-aaefdf234317": {
+   "kind": "spells",
+   "name": "Cleric Life Domain 9",
+   "ids": [
+    "Target_CureWounds_Mass",
+    "Target_GreaterRestoration"
+   ]
+  },
+  "1ff2f87b-4570-4553-a5fa-f7b1cab557fc": {
+   "kind": "spells",
+   "name": "Cleric Knowledge Domain 5",
+   "ids": [
+    "Target_SpeakWithDead",
+    "Target_Slow"
+   ]
+  },
+  "21a34b97-43ee-47d7-b7c2-f902822a6e18": {
+   "kind": "spells",
+   "name": "Barbarian Giant 6",
+   "ids": [
+    "Shout_ElementalCleaver"
+   ]
+  },
+  "21be0992-499f-4c7a-a77a-4430085e947a": {
+   "kind": "spells",
+   "name": "Cleric SLevel 3",
+   "ids": [
+    "Target_AnimateDead",
+    "Shout_BeaconOfHope",
+    "Target_BestowCurse",
+    "Target_Daylight_Container",
+    "Target_FeignDeath",
+    "Target_GlyphOfWarding",
+    "Shout_HealingWord_Mass",
+    "Target_ProtectionFromEnergy",
+    "Target_RemoveCurse",
+    "Teleportation_Revivify",
+    "Target_SpeakWithDead",
+    "Shout_SpiritGuardians"
+   ]
+  },
+  "21e1e2b9-81f7-47d2-ab69-90ba67c0c74c": {
+   "kind": "spells",
+   "name": "Magic Initiate Warlock",
+   "ids": [
+    "Shout_ArmorOfAgathys",
+    "Shout_ArmsOfHadar",
+    "Target_CharmPerson",
+    "Shout_ExpeditiousRetreat",
+    "Shout_HellishRebuke_WarlockMI",
+    "Target_Hex",
+    "Target_ProtectionFromEvilAndGood",
+    "Projectile_WitchBolt"
+   ]
+  },
+  "22755771-ca11-49f4-b772-13d8b8fecd93": {
+   "kind": "spells",
+   "name": "Wizard SLevel 3",
+   "ids": [
+    "Target_AnimateDead",
+    "Target_BestowCurse",
+    "Shout_Blink",
+    "Target_Counterspell",
+    "Zone_Fear",
+    "Target_FeignDeath",
+    "Projectile_Fireball",
+    "Target_Fly",
+    "Target_GaseousForm",
+    "Target_GlyphOfWarding",
+    "Target_Haste",
+    "Target_HypnoticPattern",
+    "Zone_LightningBolt",
+    "Target_ProtectionFromEnergy",
+    "Target_RemoveCurse",
+    "Target_SleetStorm",
+    "Target_Slow",
+    "Target_StinkingCloud",
+    "Target_VampiricTouch",
+    "Target_ArcaneLock",
+    "Target_Blindness",
+    "Shout_Blur",
+    "Target_CloudOfDaggers",
+    "Target_CrownOfMadness",
+    "Target_Darkness",
+    "Target_Darkvision",
+    "Shout_DetectThoughts",
+    "Target_EnlargeReduce",
+    "Target_FlamingSphere",
+    "Zone_GustOfWind",
+    "Target_HoldPerson",
+    "Target_Invisibility",
+    "Target_Knock",
+    "Target_MagicWeapon",
+    "Projectile_AcidArrow",
+    "Shout_MirrorImage",
+    "Target_MistyStep",
+    "Target_PhantasmalForce",
+    "Projectile_RayOfEnfeeblement",
+    "Projectile_ScorchingRay",
+    "Shout_SeeInvisibility",
+    "Shout_ShadowBlade_Class",
+    "Target_Shatter",
+    "Target_Web",
+    "Zone_BurningHands",
+    "Target_CharmPerson",
+    "Projectile_ChromaticOrb",
+    "Zone_ColorSpray",
+    "Shout_DisguiseSelf",
+    "Shout_ExpeditiousRetreat",
+    "Shout_FalseLife",
+    "Shout_FeatherFall",
+    "Target_FindFamiliar",
+    "Target_FogCloud",
+    "Target_Grease",
+    "Projectile_IceKnife",
+    "Target_Jump",
+    "Target_Longstrider",
+    "Target_MageArmor",
+    "Projectile_MagicMissile",
+    "Target_ProtectionFromEvilAndGood",
+    "Projectile_RayOfSickness",
+    "Shout_Shield_Wizard",
+    "Target_Sleep",
+    "Target_HideousLaughter",
+    "Zone_Thunderwave",
+    "Projectile_WitchBolt"
+   ]
+  },
+  "233793b3-838a-4d4e-9d68-1e0a1089aba5": {
+   "kind": "skills",
+   "name": "Barbarian Skill List",
+   "ids": [
+    "AnimalHandling",
+    "Athletics",
+    "Intimidation",
+    "Nature",
+    "Perception",
+    "Survival"
+   ]
+  },
+  "239cc7cc-f642-4ddc-b091-498d81612c51": {
+   "kind": "spells",
+   "name": "Cleric channel divinity",
+   "ids": [
+    "Shout_TurnUndead"
+   ]
+  },
+  "269d1a3b-eed8-4131-8901-a562238f5289": {
+   "kind": "spells",
+   "name": "Cleric SLevel 1",
+   "ids": [
+    "Target_CureWounds",
+    "Projectile_GuidingBolt",
+    "Target_HealingWord",
+    "Target_InflictWounds",
+    "Target_ShieldOfFaith",
+    "Target_Bane",
+    "Target_Bless",
+    "Target_Command_Container",
+    "Target_CreateDestroyWater",
+    "Target_ProtectionFromEvilAndGood",
+    "Target_Sanctuary"
+   ]
+  },
+  "26b53d40-13eb-4db6-80f4-bde7bd09c52d": {
+   "kind": "passives",
+   "name": "Hunter Hunters Prey",
+   "ids": [
+    "ColossusSlayer",
+    "GiantKiller",
+    "HordeBreaker"
+   ]
+  },
+  "26ffbe70-23c6-4918-9e6a-a3e556a9d355": {
+   "kind": "spells",
+   "name": "Cleric Life Domain ",
+   "ids": [
+    "Target_CureWounds",
+    "Target_Bless"
+   ]
+  },
+  "28a930af-d2a0-4411-8018-c1b95d5d2f23": {
+   "kind": "spells",
+   "name": "Cleric Nature Domain Channel Divinity",
+   "ids": [
+    "Shout_CharmAnimalsAndPlants"
+   ]
+  },
+  "28d41365-bc69-437a-a968-cac8f3b4b2c6": {
+   "kind": "spells",
+   "name": "Cleric Life Domain 7",
+   "ids": [
+    "Target_DeathWard",
+    "Target_GuardianOfFaith"
+   ]
+  },
+  "2968a3e6-6c8a-4c2e-882a-ad295a2ad8ac": {
+   "kind": "spells",
+   "name": "Cleric SLevel 2",
+   "ids": [
+    "Shout_Aid",
+    "Target_Blindness",
+    "Target_CalmEmotions",
+    "Target_EnhanceAbility",
+    "Target_HoldPerson",
+    "Target_LesserRestoration",
+    "Shout_PrayerOfHealing",
+    "Target_ProtectionFromPoison",
+    "Target_Silence",
+    "Target_SpiritualWeapon",
+    "Target_WardingBond"
+   ]
+  },
+  "2a428023-b6cd-4d77-a801-d1e1f772c83e": {
+   "kind": "spells",
+   "name": "Illusion Wizard 6",
+   "ids": [
+    "Shout_SeeInvisibility_TrainedEye"
+   ]
+  },
+  "2cd54137-2fe5-4100-aad3-df64735a8145": {
+   "kind": "spells",
+   "name": "Druid SLevel 1 expanded",
+   "ids": [
+    "Projectile_IceKnife",
+    "Zone_Thunderwave",
+    "Target_CureWounds",
+    "Target_HealingWord",
+    "Target_Jump",
+    "Shout_SpeakWithAnimals",
+    "Target_AnimalFriendship",
+    "Target_CharmPerson",
+    "Target_Entangle",
+    "Target_FogCloud",
+    "Target_CreateDestroyWater",
+    "Target_Longstrider",
+    "Target_FaerieFire",
+    "Target_Goodberry"
+   ]
+  },
+  "2dc120ff-903b-494b-8dc8-38721098ce38": {
+   "kind": "spells",
+   "name": "Rogue cunning actions",
+   "ids": [
+    "Shout_Hide_BonusAction",
+    "Shout_Dash_CunningAction",
+    "Shout_Disengage_CunningAction"
+   ]
+  },
+  "2f43a103-5bf1-4534-b14f-663decc0c525": {
+   "kind": "spells",
+   "name": "Cleric cantrips (Wisdom)",
+   "ids": [
+    "Shout_BladeWard",
+    "Target_BurstingSinew",
+    "Target_Guidance",
+    "Target_Light",
+    "Shout_ProduceFlame",
+    "Target_Resistance",
+    "Target_SacredFlame",
+    "Shout_Thaumaturgy",
+    "Target_TollTheDead"
+   ]
+  },
+  "2fbc1acc-ea80-4b61-9bed-e5e7dd50ad16": {
+   "kind": "spells",
+   "name": "Cleric Knowledge Domain 3",
+   "ids": [
+    "Target_CalmEmotions",
+    "Target_HoldPerson"
+   ]
+  },
+  "31037493-7a57-4dce-9412-4689c010199c": {
+   "kind": "spells",
+   "name": "Cleric Light Domain 2",
+   "ids": [
+    "Target_FlamingSphere",
+    "Projectile_ScorchingRay"
+   ]
+  },
+  "32aeba85-13bd-4a6f-8e06-cd4447b746d8": {
+   "kind": "spells",
+   "name": "Fighter (Eldritch Knight) spells level 1",
+   "ids": [
+    "Zone_BurningHands",
+    "Projectile_ChromaticOrb",
+    "Projectile_MagicMissile",
+    "Target_MageArmor",
+    "Target_ProtectionFromEvilAndGood",
+    "Shout_Shield_Wizard",
+    "Zone_Thunderwave",
+    "Projectile_WitchBolt"
+   ]
+  },
+  "34c3321d-75ab-4b50-a44d-cbac8705a360": {
+   "kind": "spells",
+   "name": "Wizard Arcane Recovery",
+   "ids": [
+    "Shout_ArcaneRecovery"
+   ]
+  },
+  "36795b9e-f712-44a4-9c0f-eda1e78df9ab": {
+   "kind": "spells",
+   "name": "Cleric Life Domain channel divinity",
+   "ids": [
+    "Shout_PreserveLife"
+   ]
+  },
+  "37e9b20b-5fd1-45c5-b1c5-159c42397c83": {
+   "kind": "spells",
+   "name": "Cleric SLevel 4",
+   "ids": [
+    "Target_Banishment",
+    "Target_DeathWard",
+    "Target_FreedomOfMovement",
+    "Target_GuardianOfFaith"
+   ]
+  },
+  "38191b4b-743a-4d82-800b-c0903baece24": {
+   "kind": "spells",
+   "name": "Berserker Barbarian level 10",
+   "ids": [
+    "Target_IntimidatingPresence"
+   ]
+  },
+  "3cae2e56-9871-4cef-bba6-96845ea765fa": {
+   "kind": "spells",
+   "name": "Wizard cantrips (Intelligence)",
+   "ids": [
+    "Projectile_AcidSplash",
+    "Target_BoomingBlade_ClassSpell",
+    "Target_BurstingSinew",
+    "Target_ChillTouch",
+    "Projectile_FireBolt",
+    "Projectile_PoisonSpray",
+    "Projectile_RayOfFrost",
+    "Target_ShockingGrasp",
+    "Shout_BladeWard",
+    "Target_Friends",
+    "Target_DancingLights",
+    "Target_Light",
+    "Target_MageHand",
+    "Target_MinorIllusion",
+    "Target_TollTheDead",
+    "Target_TrueStrike"
+   ]
+  },
+  "41ded14f-d752-42c0-8405-be0e7b0f2177": {
+   "kind": "spells",
+   "name": "Cleric Light Domain 7",
+   "ids": [
+    "Target_GuardianOfFaith",
+    "Wall_WallOfFire"
+   ]
+  },
+  "42c2f7ed-8d06-4347-a912-01172a0e318b": {
+   "kind": "spells",
+   "name": "WeaponBond for Eldritch Knight",
+   "ids": [
+    "Shout_WeaponBond"
+   ]
+  },
+  "43fb9c43-ddfa-46ff-a64f-73406dddf4eb": {
+   "kind": "spells",
+   "name": "Enchantment Wizard 2",
+   "ids": [
+    "Target_HypnoticGaze"
+   ]
+  },
+  "458be063-60d4-4548-ae7d-50117fa0226f": {
+   "kind": "spells",
+   "name": "Ranger spells level 1",
+   "ids": [
+    "Target_AnimalFriendship",
+    "Target_CureWounds",
+    "Projectile_EnsnaringStrike_Container",
+    "Target_FogCloud",
+    "Target_Goodberry",
+    "Projectile_HailOfThorns",
+    "Target_HuntersMark",
+    "Target_Jump",
+    "Target_Longstrider",
+    "Shout_SpeakWithAnimals"
+   ]
+  },
+  "46b54ac1-7add-4ef3-8610-558aee8c4dda": {
+   "kind": "spells",
+   "name": "Cleric Knowledge Domain 7",
+   "ids": [
+    "Target_Confusion",
+    "Target_ResilientSphere"
+   ]
+  },
+  "480101e7-1fcf-4f02-b6b5-71af428daaa4": {
+   "kind": "spells",
+   "name": "Cleric, Knowledge Domain 6",
+   "ids": [
+    "Shout_ReadThoughts",
+    "Shout_SpeakWithAnimals_KnowledgeCleric"
+   ]
+  },
+  "485a68b4-c678-4888-be63-4a702efbe391": {
+   "kind": "spells",
+   "name": "Sorcerer cantrips",
+   "ids": [
+    "Shout_BladeWard",
+    "Target_BoomingBlade_ClassSpell",
+    "Target_BurstingSinew",
+    "Projectile_AcidSplash",
+    "Target_MageHand",
+    "Projectile_PoisonSpray",
+    "Target_TrueStrike",
+    "Target_Friends",
+    "Target_DancingLights",
+    "Projectile_FireBolt",
+    "Target_Light",
+    "Projectile_RayOfFrost",
+    "Target_ShockingGrasp",
+    "Target_MinorIllusion",
+    "Target_ChillTouch"
+   ]
+  },
+  "4935a640-e3ec-48f7-933b-512b72268e68": {
+   "kind": "spells",
+   "name": "Cleric War Domain Divine Strike 8",
+   "ids": [
+    "Target_DivineStrike_War_Container"
+   ]
+  },
+  "49cfa35d-94c9-4092-a5c6-337b7f16fd3a": {
+   "kind": "spells",
+   "name": "Hunter Ranger 11",
+   "ids": [
+    "Target_Volley",
+    "Shout_Whirlwind"
+   ]
+  },
+  "4a23c3c3-e6f7-48a4-a883-8ac2f6a2c97a": {
+   "kind": "spells",
+   "name": "Gloom Stalker Ranger 9",
+   "ids": [
+    "Zone_Fear"
+   ]
+  },
+  "4a86443c-6a21-4b8d-b1bf-55a99e021354": {
+   "kind": "spells",
+   "name": "Fighter (Eldritch Knight) spells level 2",
+   "ids": [
+    "Projectile_AcidArrow",
+    "Target_ArcaneLock",
+    "Target_Darkness",
+    "Zone_GustOfWind",
+    "Projectile_ScorchingRay",
+    "Target_Shatter",
+    "Zone_BurningHands",
+    "Projectile_ChromaticOrb",
+    "Target_MageArmor",
+    "Target_ProtectionFromEvilAndGood",
+    "Shout_Shield_Wizard",
+    "Zone_Thunderwave",
+    "Projectile_WitchBolt"
+   ]
+  },
+  "4acd9ef6-719d-4248-90ae-0cb66da87c6a": {
+   "kind": "spells",
+   "name": "Totem Warrior level 3",
+   "ids": [
+    "Shout_SpeakWithAnimals_Barbarian"
+   ]
+  },
+  "4b629bbb-203b-4382-9786-755bf897567f": {
+   "kind": "spells",
+   "name": "Rogue (Arcane Trickster) spells",
+   "ids": [
+    "Target_CharmPerson",
+    "Zone_ColorSpray",
+    "Shout_DisguiseSelf",
+    "Target_HideousLaughter",
+    "Target_Sleep"
+   ]
+  },
+  "4bac4d53-69e6-4f7d-b935-cd38ca8c938d": {
+   "kind": "spells",
+   "name": "Cleric Tempest Domain 5",
+   "ids": [
+    "Target_CallLightning",
+    "Target_SleetStorm"
+   ]
+  },
+  "4c779ace-7ff1-461c-abc4-13182424b89a": {
+   "kind": "spells",
+   "name": "Cleric War Domain 7",
+   "ids": [
+    "Target_Stoneskin",
+    "Target_FreedomOfMovement"
+   ]
+  },
+  "4d04d97b-1bb6-4b1e-945b-be230335ede7": {
+   "kind": "spells",
+   "name": "War Cleric level 2",
+   "ids": [
+    "Shout_GuidedStrike"
+   ]
+  },
+  "4e7b517a-2eca-4463-99a6-a5ffa5036216": {
+   "kind": "spells",
+   "name": "Barbarian Wildmagic 9",
+   "ids": [
+    "Target_BolsteringMagic_SpellSlot3"
+   ]
+  },
+  "5675d0b3-8a2c-4658-bfe3-42abbc0bdcfd": {
+   "kind": "spells",
+   "name": "Cleric Light Domain 9",
+   "ids": [
+    "Target_FlameStrike",
+    "Shout_DestructiveWave"
+   ]
+  },
+  "5bb07252-9a62-465a-936f-0ee475b586d1": {
+   "kind": "spells",
+   "name": "Gloom Stalker Ranger 5",
+   "ids": [
+    "Target_MistyStep"
+   ]
+  },
+  "5ea6abd7-3e02-4e8d-9220-8a400e0019a4": {
+   "kind": "spells",
+   "name": "Gloom Stalker Ranger 3",
+   "ids": [
+    "Shout_Hide_DreadAmbusher",
+    "Shout_UmbralCloak",
+    "Shout_DisguiseSelf"
+   ]
+  },
+  "61f79a30-2cac-4a7a-b5fe-50c89d307dd6": {
+   "kind": "spells",
+   "name": "Bard cantrip",
+   "ids": [
+    "Target_ViciousMockery",
+    "Shout_BladeWard",
+    "Target_MageHand",
+    "Target_TrueStrike",
+    "Target_Friends",
+    "Target_DancingLights",
+    "Target_Light",
+    "Target_MinorIllusion"
+   ]
+  },
+  "62b78cbc-f9df-4834-a544-d661e7571fc4": {
+   "kind": "spells",
+   "name": "Panache, Swashbuckler Rogue",
+   "ids": [
+    "Target_Panache"
+   ]
+  },
+  "64784e08-e31e-4850-a743-ecfb3fd434d7": {
+   "kind": "spells",
+   "name": "SpellSniperAttackSpells",
+   "ids": [
+    "Target_ChillTouch",
+    "Projectile_EldritchBlast",
+    "Projectile_FireBolt",
+    "Projectile_RayOfFrost",
+    "Target_ShockingGrasp",
+    "Target_ThornWhip"
+   ]
+  },
+  "657f1f36-cd2e-4acb-817c-60ec3cac3671": {
+   "kind": "passives",
+   "name": "Ranger level 7",
+   "ids": [
+    "EscapeTheHorde",
+    "SteelWill",
+    "MultiattackDefense"
+   ]
+  },
+  "673543a9-8656-4c1d-8567-88ec32f2ca94": {
+   "kind": "spells",
+   "name": "Cleric Death Domain 9",
+   "ids": [
+    "Target_Cloudkill",
+    "Target_Contagion"
+   ]
+  },
+  "6a27ea3e-ed94-4d90-9a27-109a902dd049": {
+   "kind": "spells",
+   "name": "Wildmagic Barbarian level 3",
+   "ids": [
+    "Shout_MagicAwareness"
+   ]
+  },
+  "6a4f8598-3a17-42d1-beac-d7ced582bafa": {
+   "kind": "skills",
+   "name": "Fighter Skill List",
+   "ids": [
+    "Acrobatics",
+    "AnimalHandling",
+    "Athletics",
+    "History",
+    "Insight",
+    "Intimidation",
+    "Perception",
+    "Survival"
+   ]
+  },
+  "6c7083cd-e957-449d-a652-33dfbd9785e6": {
+   "kind": "spells",
+   "name": "Cleric Knowledge Domain 1",
+   "ids": [
+    "Target_Command_Container",
+    "Target_Sleep"
+   ]
+  },
+  "6cb9d731-a518-46f0-b20e-9e2bf18e6acd": {
+   "kind": "skills",
+   "name": "Cleric Skill List",
+   "ids": [
+    "History",
+    "Insight",
+    "Medicine",
+    "Persuasion",
+    "Religion"
+   ]
+  },
+  "72c63024-60af-486e-a180-c7aeee5d77c1": {
+   "kind": "passives",
+   "name": "Ranger Natural Explorer",
+   "ids": [
+    "NaturalExplorer_BeastTamer",
+    "NaturalExplorer_UrbanTracker",
+    "NaturalExplorer_WastelandWander_Cold",
+    "NaturalExplorer_WastelandWander_Fire",
+    "NaturalExplorer_WastelandWander_Poison"
+   ]
+  },
+  "7ba90f2b-5e5f-410f-a61d-1ffdf3876790": {
+   "kind": "spells",
+   "name": "Cleric Knowledge Domain Channel Divinity",
+   "ids": [
+    "Shout_KnowledgeOfTheAges"
+   ]
+  },
+  "7c18f54c-2675-4762-8921-d0b9f0b1b8f4": {
+   "kind": "spells",
+   "name": "Ranger Swarmkeeper 9",
+   "ids": [
+    "Target_GaseousForm"
+   ]
+  },
+  "7cf87f47-e2f7-4ac5-a0b2-88a3e963d29d": {
+   "kind": "spells",
+   "name": "Thief Rogue 9",
+   "ids": [
+    "Shout_SupremeSneak"
+   ]
+  },
+  "7f7340a0-faf3-4122-bd3f-37a5434dd6cf": {
+   "kind": "passives",
+   "name": "Totem Warrior lvl 3 path",
+   "ids": [
+    "TotemSpirit_Bear",
+    "TotemSpirit_Eagle",
+    "TotemSpirit_Elk",
+    "TotemSpirit_Tiger",
+    "TotemSpirit_Wolf"
+   ]
+  },
+  "7f94a649-35bb-4ef1-bd77-6a7ee6206db9": {
+   "kind": "spells",
+   "name": "Cleric Death Domain 5",
+   "ids": [
+    "Target_AnimateDead",
+    "Target_VampiricTouch"
+   ]
+  },
+  "804e3405-7758-4496-8d30-7e61794baae8": {
+   "kind": "spells",
+   "name": "Conjuration Wizard level 6 ability",
+   "ids": [
+    "Target_BenignTransposition_Teleport"
+   ]
+  },
+  "80c6b070-c3a6-4864-84ca-e78626784eb4": {
+   "kind": "spells",
+   "name": "Wizard SLevel 2 expanded",
+   "ids": [
+    "Target_ArcaneLock",
+    "Target_Blindness",
+    "Shout_Blur",
+    "Target_CloudOfDaggers",
+    "Target_CrownOfMadness",
+    "Target_Darkness",
+    "Target_Darkvision",
+    "Shout_DetectThoughts",
+    "Target_EnlargeReduce",
+    "Target_FlamingSphere",
+    "Zone_GustOfWind",
+    "Target_HoldPerson",
+    "Target_Invisibility",
+    "Target_Knock",
+    "Target_MagicWeapon",
+    "Projectile_AcidArrow",
+    "Shout_MirrorImage",
+    "Target_MistyStep",
+    "Target_PhantasmalForce",
+    "Projectile_RayOfEnfeeblement",
+    "Projectile_ScorchingRay",
+    "Shout_SeeInvisibility",
+    "Shout_ShadowBlade_Class",
+    "Target_Shatter",
+    "Target_Web",
+    "Zone_BurningHands",
+    "Target_CharmPerson",
+    "Projectile_ChromaticOrb",
+    "Zone_ColorSpray",
+    "Shout_DisguiseSelf",
+    "Shout_ExpeditiousRetreat",
+    "Shout_FalseLife",
+    "Shout_FeatherFall",
+    "Target_FindFamiliar",
+    "Target_FogCloud",
+    "Target_Grease",
+    "Projectile_IceKnife",
+    "Target_Jump",
+    "Target_Longstrider",
+    "Target_MageArmor",
+    "Projectile_MagicMissile",
+    "Target_ProtectionFromEvilAndGood",
+    "Projectile_RayOfSickness",
+    "Shout_Shield_Wizard",
+    "Target_Sleep",
+    "Target_HideousLaughter",
+    "Zone_Thunderwave",
+    "Projectile_WitchBolt"
+   ]
+  },
+  "820b1220-0385-426d-ae15-458dc8a6f5c0": {
+   "kind": "spells",
+   "name": "Wizard SLevel 4",
+   "ids": [
+    "Target_Banishment",
+    "Target_Blight",
+    "Target_Confusion",
+    "Target_ConjureElementals_Minor_Container",
+    "Teleportation_DimensionDoor",
+    "Target_BlackTentacles",
+    "Shout_FireShield",
+    "Target_Invisibility_Greater",
+    "Target_IceStorm",
+    "Target_ResilientSphere",
+    "Target_PhantasmalKiller",
+    "Target_Polymorph",
+    "Target_Stoneskin",
+    "Wall_WallOfFire",
+    "Target_AnimateDead",
+    "Target_BestowCurse",
+    "Shout_Blink",
+    "Target_Counterspell",
+    "Zone_Fear",
+    "Target_FeignDeath",
+    "Projectile_Fireball",
+    "Target_Fly",
+    "Target_GaseousForm",
+    "Target_GlyphOfWarding",
+    "Target_Haste",
+    "Target_HypnoticPattern",
+    "Zone_LightningBolt",
+    "Target_ProtectionFromEnergy",
+    "Target_RemoveCurse",
+    "Target_SleetStorm",
+    "Target_Slow",
+    "Target_StinkingCloud",
+    "Target_VampiricTouch",
+    "Target_ArcaneLock",
+    "Target_Blindness",
+    "Shout_Blur",
+    "Target_CloudOfDaggers",
+    "Target_CrownOfMadness",
+    "Target_Darkness",
+    "Target_Darkvision",
+    "Shout_DetectThoughts",
+    "Target_EnlargeReduce",
+    "Target_FlamingSphere",
+    "Zone_GustOfWind",
+    "Target_HoldPerson",
+    "Target_Invisibility",
+    "Target_Knock",
+    "Target_MagicWeapon",
+    "Projectile_AcidArrow",
+    "Shout_MirrorImage",
+    "Target_MistyStep",
+    "Target_PhantasmalForce",
+    "Projectile_RayOfEnfeeblement",
+    "Projectile_ScorchingRay",
+    "Shout_SeeInvisibility",
+    "Shout_ShadowBlade_Class",
+    "Target_Shatter",
+    "Target_Web",
+    "Zone_BurningHands",
+    "Target_CharmPerson",
+    "Projectile_ChromaticOrb",
+    "Zone_ColorSpray",
+    "Shout_DisguiseSelf",
+    "Shout_ExpeditiousRetreat",
+    "Shout_FalseLife",
+    "Shout_FeatherFall",
+    "Target_FindFamiliar",
+    "Target_FogCloud",
+    "Target_Grease",
+    "Projectile_IceKnife",
+    "Target_Jump",
+    "Target_Longstrider",
+    "Target_MageArmor",
+    "Projectile_MagicMissile",
+    "Target_ProtectionFromEvilAndGood",
+    "Projectile_RayOfSickness",
+    "Shout_Shield_Wizard",
+    "Target_Sleep",
+    "Target_HideousLaughter",
+    "Zone_Thunderwave",
+    "Projectile_WitchBolt"
+   ]
+  },
+  "86d4d2c3-56d9-4e78-ba6e-5fbbcde96438": {
+   "kind": "spells",
+   "name": "Cleric Death Domain Reaper Cantrips 1",
+   "ids": [
+    "Target_BurstingSinew",
+    "Target_ChillTouch",
+    "Target_TollTheDead"
+   ]
+  },
+  "87d05f19-7198-424a-93ac-cf222ca25fc7": {
+   "kind": "spells",
+   "name": "Cleric Tempest Domain 9",
+   "ids": [
+    "Shout_DestructiveWave",
+    "Target_InsectPlague"
+   ]
+  },
+  "88336457-e15e-4ca2-a587-4d0be18ef78c": {
+   "kind": "passives",
+   "name": "Swarmkeeper Swarm options",
+   "ids": [
+    "Swarmkeeper_Bee",
+    "Swarmkeeper_Jellyfish",
+    "Swarmkeeper_Moth"
+   ]
+  },
+  "889d3b97-5975-4c1c-bcc3-925521935a65": {
+   "kind": "skills",
+   "name": "Nature Cleric Skill List",
+   "ids": [
+    "AnimalHandling",
+    "Nature",
+    "Survival"
+   ]
+  },
+  "89384c46-b6e2-4d3c-b61e-e48b932beafb": {
+   "kind": "spells",
+   "name": "Ranger 10",
+   "ids": [
+    "Shout_HideInPlainSight"
+   ]
+  },
+  "8a9faf7a-aacf-43f4-a0dd-5ea7e72449f3": {
+   "kind": "spells",
+   "name": "Cleric Trickery Domain 5",
+   "ids": [
+    "Target_BestowCurse",
+    "Zone_Fear"
+   ]
+  },
+  "8c32c900-a8ea-4f2f-9f6f-eccd0d361a9d": {
+   "kind": "spells",
+   "name": "Ritual Caster Feat",
+   "ids": [
+    "Target_SpeakWithDead",
+    "Target_FindFamiliar",
+    "Target_Longstrider",
+    "Target_Jump",
+    "Shout_DisguiseSelf",
+    "Shout_SpeakWithAnimals"
+   ]
+  },
+  "8e4db6a6-fbfd-42eb-9e76-de00c0e4517a": {
+   "kind": "spells",
+   "name": "Cleric War Domain 9",
+   "ids": [
+    "Target_FlameStrike",
+    "Target_HoldMonster"
+   ]
+  },
+  "90acd47f-3475-4c85-99ea-7fd503591be4": {
+   "kind": "spells",
+   "name": "Cleric, Trickery Domain Cloak of Shadows 6",
+   "ids": [
+    "Shout_CloakOfShadows"
+   ]
+  },
+  "90e89ac3-c805-4214-a73e-817c366ba8b2": {
+   "kind": "spells",
+   "name": "Cleric Nature Domain 5",
+   "ids": [
+    "Target_PlantGrowth",
+    "Target_SleetStorm"
+   ]
+  },
+  "921a657e-e210-4657-9e65-1e9748626354": {
+   "kind": "spells",
+   "name": "Cleric War Domain 3",
+   "ids": [
+    "Target_MagicWeapon",
+    "Target_SpiritualWeapon"
+   ]
+  },
+  "92c4751f-6255-4f67-822c-a75d53830b27": {
+   "kind": "spells",
+   "name": "Sorcerer SLevel 1 expanded",
+   "ids": [
+    "Zone_BurningHands",
+    "Target_CharmPerson",
+    "Projectile_ChromaticOrb",
+    "Zone_ColorSpray",
+    "Shout_DisguiseSelf",
+    "Shout_ExpeditiousRetreat",
+    "Shout_FalseLife",
+    "Shout_FeatherFall",
+    "Target_FogCloud",
+    "Projectile_IceKnife",
+    "Target_Jump",
+    "Target_MageArmor",
+    "Projectile_MagicMissile",
+    "Projectile_RayOfSickness",
+    "Shout_Shield_Sorcerer",
+    "Target_Sleep",
+    "Zone_Thunderwave",
+    "Projectile_WitchBolt"
+   ]
+  },
+  "93ba8d5f-e25a-40d6-ab25-a19af93130c7": {
+   "kind": "spells",
+   "name": "Beast Master companions",
+   "ids": [
+    "Target_RangersCompanion"
+   ]
+  },
+  "964e765d-5881-463e-b1b0-4fc6b8035aa8": {
+   "kind": "spells",
+   "name": "Fighter Action Surge",
+   "ids": [
+    "Shout_ActionSurge"
+   ]
+  },
+  "9846b998-4672-4427-821f-c3647aff5e22": {
+   "kind": "spells",
+   "name": "Cleric War Domain 5",
+   "ids": [
+    "Shout_SpiritGuardians",
+    "Shout_CrusadersMantle"
+   ]
+  },
+  "98ef625f-d127-4fc3-8e37-37a4b27e6393": {
+   "kind": "spells",
+   "name": "Cleric Trickery Domain",
+   "ids": [
+    "Target_BlessingOfTheTrickster",
+    "Target_CharmPerson",
+    "Shout_DisguiseSelf"
+   ]
+  },
+  "9a60f649-7f82-4152-90b1-0499c5c9f3e2": {
+   "kind": "spells",
+   "name": "Ranger SLevel 3",
+   "ids": [
+    "Zone_ConjureBarrage",
+    "Target_Daylight_Container",
+    "Projectile_LightningArrow",
+    "Target_PlantGrowth",
+    "Target_ProtectionFromEnergy",
+    "Target_Barkskin",
+    "Target_Darkvision",
+    "Target_LesserRestoration",
+    "Shout_PassWithoutTrace",
+    "Target_ProtectionFromPoison",
+    "Target_Silence",
+    "Target_SpikeGrowth",
+    "Target_AnimalFriendship",
+    "Target_CureWounds",
+    "Projectile_EnsnaringStrike_Container",
+    "Target_FogCloud",
+    "Target_Goodberry",
+    "Projectile_HailOfThorns",
+    "Target_HuntersMark",
+    "Target_Jump",
+    "Target_Longstrider",
+    "Shout_SpeakWithAnimals"
+   ]
+  },
+  "9bd92577-7ab4-43d4-bb4c-11b7a4b3dab0": {
+   "kind": "spells",
+   "name": "Cleric Death Domain 7",
+   "ids": [
+    "Target_Blight",
+    "Target_DeathWard"
+   ]
+  },
+  "9e31661e-4c14-499d-98ca-9e00b20faf07": {
+   "kind": "skills",
+   "name": "Ranger Skill List",
+   "ids": [
+    "AnimalHandling",
+    "Athletics",
+    "Insight",
+    "Investigation",
+    "Nature",
+    "Perception",
+    "Stealth",
+    "Survival"
+   ]
+  },
+  "9e32fc2b-ce4f-47aa-b113-25cbdc025123": {
+   "kind": "spells",
+   "name": "Fighter Second Wind",
+   "ids": [
+    "Shout_SecondWind"
+   ]
+  },
+  "9e604f0f-ec60-402d-b8c8-7707a1caefd8": {
+   "kind": "spells",
+   "name": "Barbarian Wildmagic 6",
+   "ids": [
+    "Target_BolsteringMagic_Boost",
+    "Target_BolsteringMagic_SpellSlot1",
+    "Target_BolsteringMagic_SpellSlot2"
+   ]
+  },
+  "9e6f5226-fb49-4927-ad3e-e215b16ec974": {
+   "kind": "spells",
+   "name": "Ranger Swarmkeeper 5",
+   "ids": [
+    "Target_Web"
+   ]
+  },
+  "9f3a9f8d-f645-40b5-b36f-fb079b7b805e": {
+   "kind": "skills",
+   "name": "Wizard Skill List",
+   "ids": [
+    "Arcana",
+    "History",
+    "Insight",
+    "Investigation",
+    "Medicine",
+    "Religion"
+   ]
+  },
+  "9f603ac8-2e51-4ce9-b924-c8093148bdf5": {
+   "kind": "spells",
+   "name": "Cleric Trickery Domain 2",
+   "ids": [
+    "Shout_MirrorImage",
+    "Shout_PassWithoutTrace"
+   ]
+  },
+  "a05bd5e7-c815-4db7-9a21-66dc08d03e44": {
+   "kind": "spells",
+   "name": "Cleric Tempest Domain 3",
+   "ids": [
+    "Target_Shatter",
+    "Zone_GustOfWind"
+   ]
+  },
+  "a0bdb113-1cce-45ac-94fb-72d4c3f207e9": {
+   "kind": "passives",
+   "name": "Ranger fighting style",
+   "ids": [
+    "FightingStyle_Archery",
+    "FightingStyle_Defense",
+    "FightingStyle_Dueling",
+    "FightingStyle_TwoWeaponFighting"
+   ]
+  },
+  "a1c2b712-2ed6-4e5b-820f-c5db654fe006": {
+   "kind": "skills",
+   "name": "Rogue Skill List",
+   "ids": [
+    "Acrobatics",
+    "Athletics",
+    "Deception",
+    "Insight",
+    "Intimidation",
+    "Investigation",
+    "Perception",
+    "Performance",
+    "Persuasion",
+    "SleightOfHand",
+    "Stealth"
+   ]
+  },
+  "a322dbfe-69d0-421a-819a-4317b6c87a3b": {
+   "kind": "spells",
+   "name": "Cleric Light Domain channel divinity",
+   "ids": [
+    "Shout_RadianceOfTheDawn"
+   ]
+  },
+  "a8a358c4-d5d5-4cf8-baa1-0ac682aebd0a": {
+   "kind": "spells",
+   "name": "Fighter, Arcane Archer Cantrip",
+   "ids": [
+    "Target_Guidance",
+    "Target_Light",
+    "Target_TrueStrike"
+   ]
+  },
+  "a9ff6ed3-050e-4963-b37b-c083285d6214": {
+   "kind": "spells",
+   "name": "Cleric Life Domain 5",
+   "ids": [
+    "Teleportation_Revivify",
+    "Shout_BeaconOfHope"
+   ]
+  },
+  "afe6b18c-47a7-4c5f-aed5-49dfe07e5234": {
+   "kind": "spells",
+   "name": "Barbarian Giant 3",
+   "ids": [
+    "Shout_Thaumaturgy"
+   ]
+  },
+  "b0b9bc80-8468-4a53-b9ca-6d9146f23801": {
+   "kind": "skills",
+   "name": "Blessing of Knowledge, Knowledge Cleric List",
+   "ids": [
+    "Arcana",
+    "History",
+    "Nature",
+    "Religion"
+   ]
+  },
+  "b492841a-8c01-4dd7-9146-33dabedb9954": {
+   "kind": "spells",
+   "name": "Swashbuckler Rogue, Dirty Trick Blind",
+   "ids": [
+    "Target_DirtyTrick_Blind"
+   ]
+  },
+  "b4ef4e54-3f09-49b6-bbb4-5d1121bfb325": {
+   "kind": "spells",
+   "name": "Cleric Death Domain 1",
+   "ids": [
+    "Shout_FalseLife",
+    "Projectile_RayOfSickness"
+   ]
+  },
+  "b5f88a1e-931f-4851-b86c-875f756b7313": {
+   "kind": "spells",
+   "name": "Cleric Trickery Domain Divine Strike 8",
+   "ids": [
+    "Target_DivineStrike_Trickery_Container"
+   ]
+  },
+  "b73aeea5-1ff9-4cac-b61d-b5aa6dfe31c2": {
+   "kind": "spells",
+   "name": "Cleric SLevel 5",
+   "ids": [
+    "Target_Contagion",
+    "Shout_DispelEvilAndGood",
+    "Target_FlameStrike",
+    "Target_GreaterRestoration",
+    "Target_InsectPlague",
+    "Target_CureWounds_Mass",
+    "Target_PlanarBinding"
+   ]
+  },
+  "b8faf12f-ca42-45c0-84f8-6951b526182a": {
+   "kind": "spells",
+   "name": "Druid Cantrips",
+   "ids": [
+    "Target_Guidance",
+    "Projectile_PoisonSpray",
+    "Shout_ProduceFlame",
+    "Target_Resistance",
+    "Shout_Shillelagh",
+    "Target_ThornWhip"
+   ]
+  },
+  "bbaf0bab-b0b3-44c9-a567-304e35c063c9": {
+   "kind": "spells",
+   "name": "Cleric Life Domain 2",
+   "ids": [
+    "Shout_Aid",
+    "Target_LesserRestoration"
+   ]
+  },
+  "bbdd7836-8c4f-4f41-aaf7-acb16e7fc91d": {
+   "kind": "spells",
+   "name": "Cleric Life Domain Divine Strike 8",
+   "ids": [
+    "Target_DivineStrike_Life_Container"
+   ]
+  },
+  "bc917f22-7f71-4a25-9a77-7d2f91a96a65": {
+   "kind": "spells",
+   "name": "Wizard SLevel 6",
+   "ids": [
+    "Teleportation_ArcaneGate",
+    "Projectile_ChainLightning",
+    "Target_CircleOfDeath",
+    "Target_CreateUndead",
+    "Projectile_Disintegrate",
+    "Target_Eyebite",
+    "Target_FleshToStone",
+    "Target_GlobeOfInvulnerability",
+    "Target_FreezingSphere",
+    "Target_IrresistibleDance",
+    "Zone_Sunbeam",
+    "Wall_WallOfIce",
+    "Target_Cloudkill",
+    "Zone_ConeOfCold",
+    "Target_ConjureElemental_Container",
+    "Target_DominatePerson",
+    "Target_HoldMonster",
+    "Target_PlanarBinding",
+    "Target_Seeming",
+    "Throw_Telekinesis",
+    "Wall_WallOfStone",
+    "Target_Banishment",
+    "Target_Blight",
+    "Target_Confusion",
+    "Target_ConjureElementals_Minor_Container",
+    "Teleportation_DimensionDoor",
+    "Target_BlackTentacles",
+    "Shout_FireShield",
+    "Target_Invisibility_Greater",
+    "Target_IceStorm",
+    "Target_ResilientSphere",
+    "Target_PhantasmalKiller",
+    "Target_Polymorph",
+    "Target_Stoneskin",
+    "Wall_WallOfFire",
+    "Target_AnimateDead",
+    "Target_BestowCurse",
+    "Shout_Blink",
+    "Target_Counterspell",
+    "Zone_Fear",
+    "Target_FeignDeath",
+    "Projectile_Fireball",
+    "Target_Fly",
+    "Target_GaseousForm",
+    "Target_GlyphOfWarding",
+    "Target_Haste",
+    "Target_HypnoticPattern",
+    "Zone_LightningBolt",
+    "Target_ProtectionFromEnergy",
+    "Target_RemoveCurse",
+    "Target_SleetStorm",
+    "Target_Slow",
+    "Target_StinkingCloud",
+    "Target_VampiricTouch",
+    "Target_ArcaneLock",
+    "Target_Blindness",
+    "Shout_Blur",
+    "Target_CloudOfDaggers",
+    "Target_CrownOfMadness",
+    "Target_Darkness",
+    "Target_Darkvision",
+    "Shout_DetectThoughts",
+    "Target_EnlargeReduce",
+    "Target_FlamingSphere",
+    "Zone_GustOfWind",
+    "Target_HoldPerson",
+    "Target_Invisibility",
+    "Target_Knock",
+    "Target_MagicWeapon",
+    "Projectile_AcidArrow",
+    "Shout_MirrorImage",
+    "Target_MistyStep",
+    "Target_PhantasmalForce",
+    "Projectile_RayOfEnfeeblement",
+    "Projectile_ScorchingRay",
+    "Shout_SeeInvisibility",
+    "Shout_ShadowBlade_Class",
+    "Target_Shatter",
+    "Target_Web",
+    "Zone_BurningHands",
+    "Target_CharmPerson",
+    "Projectile_ChromaticOrb",
+    "Zone_ColorSpray",
+    "Shout_DisguiseSelf",
+    "Shout_ExpeditiousRetreat",
+    "Shout_FalseLife",
+    "Shout_FeatherFall",
+    "Target_FindFamiliar",
+    "Target_FogCloud",
+    "Target_Grease",
+    "Projectile_IceKnife",
+    "Target_Jump",
+    "Target_Longstrider",
+    "Target_MageArmor",
+    "Projectile_MagicMissile",
+    "Target_ProtectionFromEvilAndGood",
+    "Projectile_RayOfSickness",
+    "Shout_Shield_Wizard",
+    "Target_Sleep",
+    "Target_HideousLaughter",
+    "Zone_Thunderwave",
+    "Projectile_WitchBolt"
+   ]
+  },
+  "c35cb4e6-2690-4e1f-bd89-69f4f69ae818": {
+   "kind": "spells",
+   "name": "Cleric Trickery Domain channel divinity",
+   "ids": [
+    "Target_InvokeDuplicity"
+   ]
+  },
+  "ca17da37-65bc-4d00-96d1-61e48fcfb51d": {
+   "kind": "spells",
+   "name": "Fighter, Arcane Archer 3",
+   "ids": [
+    "Projectile_ArcaneShot_BanishingArrow",
+    "Projectile_ArcaneShot_BeguilingArrow",
+    "Projectile_ArcaneShot_BurstingArrow",
+    "Projectile_ArcaneShot_EnfeeblingArrow",
+    "Projectile_ArcaneShot_GraspingArrow",
+    "Projectile_ArcaneShot_SeekingArrow",
+    "Projectile_ArcaneShot_ShadowArrow",
+    "Zone_ArcaneShot_PiercingArrow"
+   ]
+  },
+  "cba2f112-697f-4611-ae1d-758bf25ab3fd": {
+   "kind": "spells",
+   "name": "Cleric Nature Domain 1",
+   "ids": [
+    "Shout_SpeakWithAnimals",
+    "Target_AnimalFriendship"
+   ]
+  },
+  "cc45c1a8-ec0c-4da9-9d65-0e2ef36558d8": {
+   "kind": "spells",
+   "name": "Cleric Nature Domain 7",
+   "ids": [
+    "Target_DominateBeast",
+    "Target_GraspingVine"
+   ]
+  },
+  "d0f13dda-eb37-41f5-aea5-2683f0229e2e": {
+   "kind": "passives",
+   "name": "Ranger Favored Enemy",
+   "ids": [
+    "FavoredEnemy_BountyHunter",
+    "FavoredEnemy_KeeperOfTheVeil",
+    "FavoredEnemy_MageBreaker",
+    "FavoredEnemy_RangerKnight",
+    "FavoredEnemy_SanctifiedStalker"
+   ]
+  },
+  "d26b8133-bfce-421a-9c36-1229e4d6dd86": {
+   "kind": "spells",
+   "name": "Ranger Swarmkeeper 3",
+   "ids": [
+    "Target_MageHand",
+    "Target_FaerieFire"
+   ]
+  },
+  "d4b799b4-30e2-412b-b2c9-abb144df8e7d": {
+   "kind": "passives",
+   "name": "Resilient",
+   "ids": [
+    "Resilient_Strength",
+    "Resilient_Dexterity",
+    "Resilient_Constitution",
+    "Resilient_Intelligence",
+    "Resilient_Wisdom",
+    "Resilient_Charisma"
+   ]
+  },
+  "d707ec70-da8a-457b-9b69-7cf5205eef0e": {
+   "kind": "spells",
+   "name": "Drow cantrip",
+   "ids": [
+    "Target_DancingLights"
+   ]
+  },
+  "da3203d8-750a-4de1-b8eb-1eccfccddf46": {
+   "kind": "passives",
+   "name": "Fighter fighting style",
+   "ids": [
+    "FightingStyle_Archery",
+    "FightingStyle_Defense",
+    "FightingStyle_Dueling",
+    "FightingStyle_GreatWeaponFighting",
+    "FightingStyle_Protection",
+    "FightingStyle_TwoWeaponFighting"
+   ]
+  },
+  "db3bbbe0-01cc-4e35-8186-0c6757182ec4": {
+   "kind": "spells",
+   "name": "Cleric Knowledge Domain 9",
+   "ids": [
+    "Target_DominatePerson",
+    "Throw_Telekinesis"
+   ]
+  },
+  "dcb45167-86bd-4297-9b9d-c295be51af5b": {
+   "kind": "spells",
+   "name": "Bard spells level 1",
+   "ids": [
+    "Target_AnimalFriendship",
+    "Target_Bane",
+    "Target_CharmPerson",
+    "Target_CureWounds",
+    "Shout_DisguiseSelf",
+    "Target_DissonantWhispers",
+    "Target_FaerieFire",
+    "Shout_FeatherFall",
+    "Target_HealingWord",
+    "Target_Heroism",
+    "Target_Longstrider",
+    "Target_Sleep",
+    "Shout_SpeakWithAnimals",
+    "Target_HideousLaughter",
+    "Zone_Thunderwave"
+   ]
+  },
+  "dceec54d-fb54-4492-b466-b7a0b8b551f3": {
+   "kind": "spells",
+   "name": "Divination Wizard 10",
+   "ids": [
+    "Shout_Darkvision_ThirdEye",
+    "Shout_SeeInvisibility_ThirdEye"
+   ]
+  },
+  "dd2b48a8-3e62-435e-8107-0d48f51dc555": {
+   "kind": "spells",
+   "name": "Cleric Nature Domain 3",
+   "ids": [
+    "Target_SpikeGrowth",
+    "Target_Barkskin"
+   ]
+  },
+  "e1407db3-e476-4d8f-a687-d3c795ad8c04": {
+   "kind": "spells",
+   "name": "Mage Hand Cantrip",
+   "ids": [
+    "Target_MageHand"
+   ]
+  },
+  "e2464518-2484-436e-9153-864c9dd05a7d": {
+   "kind": "spells",
+   "name": "Cleric Light Domain",
+   "ids": [
+    "Zone_BurningHands",
+    "Target_FaerieFire",
+    "Target_Light"
+   ]
+  },
+  "e51a2ef5-3663-43f9-8e74-5e28520323f1": {
+   "kind": "passives",
+   "name": "Battlemaster Maneuvers",
+   "ids": [
+    "CommanderStrike_Maneuver",
+    "DisarmingAttack",
+    "DistractingStrike",
+    "EvasiveFootwork",
+    "FeintingAttack",
+    "GoadingAttack",
+    "ManeuveringAttack",
+    "MenacingAttack",
+    "PrecisionAttack",
+    "PushingAttack",
+    "Rally",
+    "Riposte",
+    "SweepingAttack",
+    "TripAttack"
+   ]
+  },
+  "e785b163-bff3-4134-978c-20b654dc7203": {
+   "kind": "spells",
+   "name": "Cleric War Domain 1",
+   "ids": [
+    "Shout_DivineFavor",
+    "Target_ShieldOfFaith"
+   ]
+  },
+  "e7cfb80a-f5c2-4304-8446-9b00ea6a9814": {
+   "kind": "spells",
+   "name": "Ranger SLevel 2",
+   "ids": [
+    "Target_Barkskin",
+    "Target_Darkvision",
+    "Target_LesserRestoration",
+    "Shout_PassWithoutTrace",
+    "Target_ProtectionFromPoison",
+    "Target_Silence",
+    "Target_SpikeGrowth",
+    "Target_AnimalFriendship",
+    "Target_CureWounds",
+    "Projectile_EnsnaringStrike_Container",
+    "Target_FogCloud",
+    "Target_Goodberry",
+    "Projectile_HailOfThorns",
+    "Target_HuntersMark",
+    "Target_Jump",
+    "Target_Longstrider",
+    "Shout_SpeakWithAnimals"
+   ]
+  },
+  "e97297e2-5cc9-45c9-ae8d-5a24257dd176": {
+   "kind": "spells",
+   "name": "Bladesinging Wizard, Bladesong",
+   "ids": [
+    "Shout_Bladesong"
+   ]
+  },
+  "eee6250e-b75a-4012-a3da-e6452a53ed8b": {
+   "kind": "spells",
+   "name": "Cleric Nature Domain Divine Strike 8",
+   "ids": [
+    "Target_DivineStrike_Nature_Container"
+   ]
+  },
+  "f21e6b94-44e8-4ae0-a6f1-0c81abac03a2": {
+   "kind": "passives",
+   "name": "Weapon Master Proficiency",
+   "ids": [
+    "Proficiency_Battleaxes",
+    "Proficiency_Clubs",
+    "Proficiency_Daggers",
+    "Proficiency_Flails",
+    "Proficiency_Glaives",
+    "Proficiency_Greataxe",
+    "Proficiency_Greatclub",
+    "Proficiency_Greatswords",
+    "Proficiency_Halberds",
+    "Proficiency_HandCrossbows",
+    "Proficiency_Handaxes",
+    "Proficiency_HeavyCrossbows",
+    "Proficiency_Javelins",
+    "Proficiency_LightCrossbows",
+    "Proficiency_LightHammers",
+    "Proficiency_Longbows",
+    "Proficiency_Longswords",
+    "Proficiency_Maces",
+    "Proficiency_Mauls",
+    "Proficiency_Morningstars",
+    "Proficiency_Pikes",
+    "Proficiency_Quarterstaffs",
+    "Proficiency_Rapiers",
+    "Proficiency_Scimitars",
+    "Proficiency_Shortbows",
+    "Proficiency_Shortswords",
+    "Proficiency_Sickles",
+    "Proficiency_Spears",
+    "Proficiency_Tridents",
+    "Proficiency_Warhammers",
+    "Proficiency_Warpicks"
+   ]
+  },
+  "f3b319db-3e70-454e-aab0-4e5947396119": {
+   "kind": "spells",
+   "name": "Swashbuckler Rogue, Dirty Trick list",
+   "ids": [
+    "Target_DirtyTrick_Disarm",
+    "Target_DirtyTrick_Vicious"
+   ]
+  },
+  "f5609f93-a17c-456c-a7bb-3b4203bb2eea": {
+   "kind": "spells",
+   "name": "Cleric Nature Domain 9",
+   "ids": [
+    "Target_InsectPlague",
+    "Wall_WallOfStone"
+   ]
+  },
+  "f5c4af9c-5d8d-4526-9057-94a4b243cd40": {
+   "kind": "spells",
+   "name": "Warlock cantrips (Charisma)",
+   "ids": [
+    "Shout_BladeWard",
+    "Target_BoomingBlade_ClassSpell",
+    "Target_ChillTouch",
+    "Projectile_EldritchBlast",
+    "Target_Friends",
+    "Target_MageHand",
+    "Target_MinorIllusion",
+    "Projectile_PoisonSpray",
+    "Target_TollTheDead",
+    "Target_TrueStrike"
+   ]
+  },
+  "f6b6e71f-79b1-4ba3-8fd8-ee38a44d3d39": {
+   "kind": "passives",
+   "name": "Elemental Adept",
+   "ids": [
+    "ElementalAdept_Acid",
+    "ElementalAdept_Cold",
+    "ElementalAdept_Fire",
+    "ElementalAdept_Lightning",
+    "ElementalAdept_Thunder"
+   ]
+  },
+  "f781a25e-d288-43b4-bf5d-3d8d98846687": {
+   "kind": "spells",
+   "name": "Wizard SLevel 5",
+   "ids": [
+    "Target_Cloudkill",
+    "Zone_ConeOfCold",
+    "Target_ConjureElemental_Container",
+    "Target_DominatePerson",
+    "Target_HoldMonster",
+    "Target_PlanarBinding",
+    "Target_Seeming",
+    "Throw_Telekinesis",
+    "Wall_WallOfStone",
+    "Target_Banishment",
+    "Target_Blight",
+    "Target_Confusion",
+    "Target_ConjureElementals_Minor_Container",
+    "Teleportation_DimensionDoor",
+    "Target_BlackTentacles",
+    "Shout_FireShield",
+    "Target_Invisibility_Greater",
+    "Target_IceStorm",
+    "Target_ResilientSphere",
+    "Target_PhantasmalKiller",
+    "Target_Polymorph",
+    "Target_Stoneskin",
+    "Wall_WallOfFire",
+    "Target_AnimateDead",
+    "Target_BestowCurse",
+    "Shout_Blink",
+    "Target_Counterspell",
+    "Zone_Fear",
+    "Target_FeignDeath",
+    "Projectile_Fireball",
+    "Target_Fly",
+    "Target_GaseousForm",
+    "Target_GlyphOfWarding",
+    "Target_Haste",
+    "Target_HypnoticPattern",
+    "Zone_LightningBolt",
+    "Target_ProtectionFromEnergy",
+    "Target_RemoveCurse",
+    "Target_SleetStorm",
+    "Target_Slow",
+    "Target_StinkingCloud",
+    "Target_VampiricTouch",
+    "Target_ArcaneLock",
+    "Target_Blindness",
+    "Shout_Blur",
+    "Target_CloudOfDaggers",
+    "Target_CrownOfMadness",
+    "Target_Darkness",
+    "Target_Darkvision",
+    "Shout_DetectThoughts",
+    "Target_EnlargeReduce",
+    "Target_FlamingSphere",
+    "Zone_GustOfWind",
+    "Target_HoldPerson",
+    "Target_Invisibility",
+    "Target_Knock",
+    "Target_MagicWeapon",
+    "Projectile_AcidArrow",
+    "Shout_MirrorImage",
+    "Target_MistyStep",
+    "Target_PhantasmalForce",
+    "Projectile_RayOfEnfeeblement",
+    "Projectile_ScorchingRay",
+    "Shout_SeeInvisibility",
+    "Shout_ShadowBlade_Class",
+    "Target_Shatter",
+    "Target_Web",
+    "Zone_BurningHands",
+    "Target_CharmPerson",
+    "Projectile_ChromaticOrb",
+    "Zone_ColorSpray",
+    "Shout_DisguiseSelf",
+    "Shout_ExpeditiousRetreat",
+    "Shout_FalseLife",
+    "Shout_FeatherFall",
+    "Target_FindFamiliar",
+    "Target_FogCloud",
+    "Target_Grease",
+    "Projectile_IceKnife",
+    "Target_Jump",
+    "Target_Longstrider",
+    "Target_MageArmor",
+    "Projectile_MagicMissile",
+    "Target_ProtectionFromEvilAndGood",
+    "Projectile_RayOfSickness",
+    "Shout_Shield_Wizard",
+    "Target_Sleep",
+    "Target_HideousLaughter",
+    "Zone_Thunderwave",
+    "Projectile_WitchBolt"
+   ]
+  },
+  "f8ba7b05-1237-4eaa-97fa-1d3623d5862b": {
+   "kind": "spells",
+   "name": "Cleric SLevel 6",
+   "ids": [
+    "Wall_BladeBarrier",
+    "Target_CreateUndead",
+    "Target_Harm",
+    "Target_Heal",
+    "Shout_HeroesFeast",
+    "Target_PlanarAlly_Container"
+   ]
+  },
+  "f974ebd6-3725-4b90-bb5c-2b647d41615d": {
+   "kind": "skills",
+   "name": "All Skills",
+   "ids": [
+    "Acrobatics",
+    "AnimalHandling",
+    "Arcana",
+    "Athletics",
+    "Deception",
+    "History",
+    "Insight",
+    "Intimidation",
+    "Investigation",
+    "Medicine",
+    "Nature",
+    "Perception",
+    "Performance",
+    "Persuasion",
+    "Religion",
+    "SleightOfHand",
+    "Stealth",
+    "Survival"
+   ]
+  },
+  "f9fd64f1-f417-4544-94a9-51d8876d68df": {
+   "kind": "spells",
+   "name": "Rogue Arcane Trickster SLevel 2",
+   "ids": [
+    "Shout_Blur",
+    "Target_CrownOfMadness",
+    "Target_HoldPerson",
+    "Target_Invisibility",
+    "Shout_MirrorImage",
+    "Target_PhantasmalForce",
+    "Target_HideousLaughter",
+    "Target_CharmPerson",
+    "Zone_ColorSpray",
+    "Shout_DisguiseSelf",
+    "Target_Sleep"
+   ]
+  },
+  "fab9f457-4570-472e-95be-ffe5b5aa863d": {
+   "kind": "spells",
+   "name": "Rogue Assassin 9",
+   "ids": [
+    "Shout_InfiltrationExpertise"
+   ]
+  },
+  "fb9ea4a2-a1ce-4242-a893-84a088ac1145": {
+   "kind": "passives",
+   "name": "Barbarian Wildheart level 6",
+   "ids": [
+    "AspectOfTheBeast_Bear",
+    "AspectOfTheBeast_Chimpanzee",
+    "AspectOfTheBeast_Crocodile",
+    "AspectOfTheBeast_Eagle",
+    "AspectOfTheBeast_Elk",
+    "AspectOfTheBeast_HoneyBadger",
+    "AspectOfTheBeast_Stallion",
+    "AspectOfTheBeast_Tiger",
+    "AspectOfTheBeast_Wolf",
+    "AspectOfTheBeast_Wolverine"
+   ]
+  },
+  "fc1fa4ea-8294-4f3b-9df9-f5d64e528093": {
+   "kind": "spells",
+   "name": "Cleric Tempest Domain 7",
+   "ids": [
+    "Target_IceStorm",
+    "Target_FreedomOfMovement"
+   ]
+  }
+ }
+}

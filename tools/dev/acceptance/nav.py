@@ -8,6 +8,11 @@ import time
 from .core import BASE, S, call, far_walk_target, first_line, grab, item, load_verified, need, route_brief, status, took
 
 
+def entrance_named(ref: str) -> bool:
+    """travel_to's refusal of a goal on another floor names the way in (#102 took its next-step text out on purpose)."""
+    return "REFUSED" in ref and "Mausoleum Entrance" in ref
+
+
 def sec_nav() -> None:
     if not load_verified(BASE):
         return
@@ -96,7 +101,7 @@ def sec_nav() -> None:
     ref = call("travel_to", x=-286.0, y=-31.0, z=-847.5)
     rdt = time.monotonic() - t
     m = re.search(r"(e\d+)[^\n]{0,30}Mausoleum Entrance", ref + "\n" + call("get_frontier"))
-    ok = "REFUSED" in ref and "interact" in ref
+    ok = entrance_named(ref)
     item("travel_to other floor → entrance named", "PASS" if ok else "FAIL", f"{rdt:.2f}s; {first_line(ref)}")
     if need(bool(m), "travel_to into an interior via entrance", "no Mausoleum Entrance handle near the gate"):
         out, dt = took("interact", target=m.group(1))

@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import busywait, jobpush, rpc_record
+from . import busywait, jobpush, rpc_record, sideview
 from .luadebug import LuaDebugClient, LuaDebugError
 
 RPC_EXPR = "return Mods.BG3AI.BG3AI.rpc([{eq}[{payload}]{eq}])"
@@ -93,8 +93,11 @@ class Game:
     """
 
     def __init__(self, host: str = "127.0.0.1", port: int = 9998, pool_max: int | None = None,
-                 job_push: bool = True):
+                 job_push: bool = True, side: str | None = None):
         self.host = host
+        # The team this server plays in a two-team match (settings.side, $BG3AI_SIDE): sent with every op (envelope).
+        self.side = side
+        self._team: set[str] | None = None  # its characters' names, read once per match (_team_names)
         self.port = port
         self.pool_max = self.pool_cap = pool_max or POOL_MAX
         self._shrunk_at: float | None = None  # when a refused connect lowered pool_max below pool_cap
@@ -276,6 +279,32 @@ class Game:
     _busy_clock = staticmethod(time.monotonic)
     _busy_sleep = staticmethod(time.sleep)
 
+    def envelope(self, op: str, args: dict | None) -> str:
+        """The JSON request for one mod op: {"op", "args"}, plus "side" when this server plays a side (the mod then
+        answers from that team's view and refuses acting out of its turn or with the other team's characters)."""
+        req: dict[str, Any] = {"op": op, "args": args or {}}
+        if self.side:
+            req["side"] = self.side
+        return json.dumps(req, separators=(",", ":"))
+
+    def _view(self, op: str, result: Any) -> Any:
+        """A reply as this server's side sees it: with a side, ui.state leaves out the other side's reaction prompt
+        (sideview.py); without one, the reply as it came."""
+        if self.side and op == "ui.state":
+            return sideview.ui_view(result, self._team_names)
+        return result
+
+    def _team_names(self, fresh: bool = False) -> set[str]:
+        """This side's character names: read once (a team doesn't change in a match), again only when `fresh` (a
+        name the cached set misses)."""
+        if self._team is None or fresh:
+            st = self.try_rpc("state.status") or {}
+            names = {r["name"] for r in st.get("party") or [] if isinstance(r, dict) and isinstance(r.get("name"), str)}
+            if names:
+                self._team = names
+            return names
+        return self._team
+
     def rpc(self, op: str, args: dict[str, Any] | None = None, context: str = "server", timeout: float = 12.0) -> Any:
         if context != "client":
             return self._rpc_once(op, args, context, timeout)
@@ -290,7 +319,7 @@ class Game:
         return getattr(self._tl, "busy_s", 0.0)
 
     def _rpc_once(self, op: str, args: dict | None, context: str, timeout: float) -> Any:
-        payload = json.dumps({"op": op, "args": args or {}}, separators=(",", ":"))
+        payload = self.envelope(op, args)
         t0 = time.time()
         try:
             raw = self.eval(_long_bracket(payload), context=context, timeout=timeout)
@@ -305,7 +334,7 @@ class Game:
             raise GameError(f"bad reply from mod: {raw[:200]}") from e
         if not reply.get("ok"):
             raise GameError(reply.get("error") or "unknown error")
-        return reply.get("result")
+        return self._view(op, reply.get("result"))
 
     def try_rpc(self, op: str, args: dict | None = None, context: str = "server", default: Any = None) -> Any:
         try:
@@ -452,8 +481,7 @@ class Game:
         try:
             if not calls:
                 return [], [], False
-            parts = [_long_bracket(json.dumps({"op": op, "args": args or {}}, separators=(",", ":")), "R")
-                     for op, args in calls]
+            parts = [_long_bracket(self.envelope(op, args), "R") for op, args in calls]
             code = "local R=Mods.BG3AI.BG3AI.rpc return '['.." + "..','..".join(parts) + "..']'"
             t0 = time.time()
             try:
@@ -467,7 +495,9 @@ class Game:
                 replies = json.loads(raw)
             except json.JSONDecodeError as e:
                 raise GameError(f"bad reply from mod: {raw[:200]}") from e
-            out = [r.get("result") if isinstance(r, dict) and r.get("ok") else None for r in replies]
+            ops = [op for op, _ in calls]
+            out = [self._view(ops[i] if i < len(ops) else "", r.get("result")) if isinstance(r, dict) and r.get("ok")
+                   else None for i, r in enumerate(replies)]
             errs = [None if isinstance(r, dict) and r.get("ok") else
                     ((r.get("error") if isinstance(r, dict) else None) or "unknown error") for r in replies]
             complete = False
@@ -617,11 +647,14 @@ class Game:
     SELECT_FOLLOW_S = 1.0  # a real selection change reaches the client a frame or two later
 
     def hud_selected(self) -> str | None:
-        """The character the HUD has selected (the client's ClientControl), or None when it can't be read."""
+        """The character the HUD has selected (the client's ClientControl), or None when it can't be read. With a
+        side, a reply without a uuid is the other side's character holding the HUD: sideview.HUD_OTHER_SIDE."""
         try:
             got = self.rpc("ui.selected", context="client")
         except GameError:
             return None
+        if self.side and isinstance(got, dict) and not got.get("uuid"):
+            return sideview.HUD_OTHER_SIDE
         return got.get("uuid") if isinstance(got, dict) else None
 
     def _hud_follows(self, char: str) -> bool:
@@ -657,7 +690,8 @@ class Game:
         if r.status != "done":
             return r
         holder = self.hud_selected()
-        return JobResult("failed", {"holder": holder, "via": via}, "the HUD kept another member selected (act.select "
+        kept = "the other side's character" if holder == sideview.HUD_OTHER_SIDE else "another member"
+        return JobResult("failed", {"holder": holder, "via": via}, f"the HUD kept {kept} selected (act.select "
                          "was done on the server" + ("; selecting another member and back didn't move it either)"
                                                      if via_ok else ")"), r.events, r.elapsed_ms)
 

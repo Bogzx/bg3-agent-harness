@@ -96,7 +96,8 @@ class Options:
     judge: bool = False                # run --judge (default with --runs): score the run's persona after its record
     judge_model: str | None = None     # the judge's model (series.json "judge_model" for a series)
     judge_change: str | None = None    # --allow-judge-change: the judge model differs from series.json's
-    client: str = "claude"             # run --client: the CLI that plays (runner/clients.py; frozen in series.json)
+    client: str | None = "claude"      # run --client: the CLI that plays (runner/clients.py; frozen in series.json);
+                                       # None: the runner plays no client (a match: its sides' clients, bg3harness.arena)
     client_change: str | None = None   # --allow-client-change: the client differs from series.json's
     sandbox_change: str | None = None  # --allow-sandbox-change: the sandbox mode differs from series.json's
     sandbox: str = "none"              # run --sandbox: none | container (runner/sandbox.py)
@@ -112,6 +113,7 @@ class Options:
     pace: str | None = None            # the kickoff's pace pre-flight: client_setup.kickoff_pace ("": none); None: claude's
     seed: int | None = None            # run --seed (scenario game_settings.seed, D9): scn.seed once per run
     scenario_settings: dict[str, Any] | None = None  # {difficulty, karmic_dice, timing, avatar_name?} (check_settings)
+    arena: bool = False                # a two-team match (bg3harness.arena): the game gets BG3AI_ARENA=1
 
 
 # claude --autocompact accepts 100k-1M tokens. Context-cost model (tools/logs/context_model.py, S021-S026): a
@@ -122,7 +124,9 @@ AUTOCOMPACT_MIN, AUTOCOMPACT_MAX = 100_000, 1_000_000
 
 def make_client(opt: Options) -> clients.Client:
     """The play client: the bg3 stdio server of play/.mcp.json, or with --sandbox container the http one on the
-    sandbox network's gateway (the client runs in the container)."""
+    sandbox network's gateway (the client runs in the container). A run with no client (a match) has none."""
+    if opt.client is None:
+        raise ValueError("this run plays no client of its own: a match's clients are its sides' (bg3harness.arena)")
     kw = {"profile": opt.profile, "system_file": opt.system_file} if opt.client == "pi" else {}
     if opt.sandbox == "container":
         return clients.make_http(opt.client, sandbox.URL, **kw)

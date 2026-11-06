@@ -71,7 +71,7 @@ local function decode(s) return copy(stored[s]) end
 local function boot()
     listeners, ops = {}, {}
     BG3AI = {
-        RPC = { register = function(name, fn) ops[name] = fn end, QUIET_OPS = {}, BOOT = "b" },
+        RPC = { register = function(name, fn) ops[name] = fn end, QUIET_OPS = {}, BOOT = "b", Ctx = {} },
     }
     dofile(LUA .. "/Server/Scenario.lua")
     return BG3AI.Scenario
@@ -145,6 +145,17 @@ do
 end
 
 env.BG3AI_SCENARIO_SETUP = "1"
+
+-- A side's request (an arena match's game runs with the switch): every op refused, nothing changes (REVIEW-18c).
+for _, name in ipairs({ "scn.seed", "scn.karmic", "scn.rename", "scn.undo", "scn.status", "scn.difficulty",
+    "scn.rename_avatar" }) do
+    BG3AI.RPC.Ctx.side = "A"
+    local ok, err = call(name, { seed = 1, renames = { { uuid = MATTIS, name = "X" } }, set = true, name = "Tav" })
+    BG3AI.RPC.Ctx.side = nil
+    check("side refused " .. name, not ok and tostring(err):find("is the harness's (no side)", 1, true), err)
+end
+check("side refused: nothing changed", RS.BaseSeed == 1792610389 and loca.hMattis == "Mattis"
+    and files[S.RECORD] == nil and systemMode == "Random" and avatar.CustomName.Name == "Claude")
 
 -- Karmic read: the system copy decides.
 do

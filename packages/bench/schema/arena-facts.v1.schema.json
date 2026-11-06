@@ -1,0 +1,957 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/arena-facts.v1.schema.json",
+  "title": "The arena referee's facts.jsonl events, a facts v1 extension",
+  "description": "The events the harness writes from the referee (harness-only, never seen by either agent) into a match's one facts.jsonl, next to the facts v1 records (packages/harness/schemas/facts.v1.schema.json: v, kind, t, game_t, at). bg3bench.arena.grade reads them. Sides are A and B; a player is the model a side's client plays (\"<client>/<model slug>\", as the pairing planner names it).",
+  "type": "object",
+  "required": [
+    "v",
+    "kind",
+    "t",
+    "ev"
+  ],
+  "$defs": {
+    "side": {
+      "enum": [
+        "A",
+        "B"
+      ]
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "fraction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  },
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "kind": {
+      "const": "event"
+    },
+    "t": {
+      "type": "number"
+    },
+    "game_t": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "at": {
+      "type": "number"
+    },
+    "ev": {
+      "enum": [
+        "arena_start",
+        "arena_turn",
+        "arena_turn_forced",
+        "arena_end",
+        "arena_reaction_unowned",
+        "arena_turn_passed",
+        "arena_stall",
+        "arena_end_written",
+        "arena_group_end_written",
+        "arena_turn_readmitted",
+        "arena_round",
+        "arena_surfaces",
+        "arena_stood_up"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_start"
+          }
+        }
+      },
+      "then": {
+        "description": "The match began: once, after the arena setup and before the first turn.",
+        "required": [
+          "arena",
+          "seed",
+          "teams",
+          "sides"
+        ],
+        "properties": {
+          "arena": {
+            "type": "string",
+            "minLength": 1,
+            "description": "the arena file's name"
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the dice seed the mod applied"
+          },
+          "teams": {
+            "type": "object",
+            "required": [
+              "A",
+              "B"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "A": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/name"
+                }
+              },
+              "B": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/name"
+                }
+              }
+            },
+            "description": "each side's characters, in the arena file's order"
+          },
+          "sides": {
+            "type": "object",
+            "required": [
+              "A",
+              "B"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "A": {
+                "$ref": "#/$defs/name"
+              },
+              "B": {
+                "$ref": "#/$defs/name"
+              }
+            },
+            "description": "the player of each side"
+          },
+          "uuids": {
+            "type": "object",
+            "required": [
+              "A",
+              "B"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "A": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/name"
+                }
+              },
+              "B": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/name"
+                }
+              }
+            },
+            "description": "each side's character uuids (arena.status teams): the luck covariate attributes rolls.jsonl rows by their roller"
+          },
+          "surfaces": {
+            "type": "object",
+            "required": [
+              "tiles_total",
+              "tiles_read"
+            ],
+            "description": "a mirror arena's setup surface check: tiles_total, tiles_read (pairs both read; setup fails under half), radius m, off (mismatches; setup fails on any), wide (report-only, out to the clear's reach)",
+            "properties": {
+              "tiles_total": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "tiles_read": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "turn_order": {
+            "enum": [
+              "alternate",
+              "snake"
+            ],
+            "description": "the arena's turn order (added 2026-11-04): inside a shared group the sides alternate one character a phase; alternate opens each round with the side of its first living member in the rolled order, snake swaps the opening side every round"
+          },
+          "field": {
+            "type": "object",
+            "required": [
+              "radius",
+              "items",
+              "removed",
+              "disabled",
+              "disarmed",
+              "unlocked",
+              "opened",
+              "invulnerable",
+              "errors",
+              "left"
+            ],
+            "description": "a mirror arena's field clean (ArenaField.lua): loose items within radius m (the surface clear's reach) made inert before any twin spawns; items seen, removed (pickables deleted), disabled (no pick-up or use), disarmed, unlocked, opened, invulnerable, errors (calls the game refused); left {A, B}: items still active on each half (setup fails unless both halves keep the same set)",
+            "properties": {
+              "radius": {
+                "type": "number",
+                "minimum": 0
+              },
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "removed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "disabled": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "disarmed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "unlocked": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "opened": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "invulnerable": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "errors": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "left": {
+                "type": "object",
+                "required": [
+                  "A",
+                  "B"
+                ],
+                "properties": {
+                  "A": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "B": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_turn"
+          }
+        }
+      },
+      "then": {
+        "description": "A side's phase began: one character of a turn group, the sides alternating by the arena's turn_order (the game puts adjacent player characters of both teams into one shared group; the mod serialises it; before 2026-11-04 a phase was one same-side run of the rolled order). A phase is the match's turn, a summon's too.",
+        "required": [
+          "side",
+          "character",
+          "members",
+          "names",
+          "round",
+          "phase",
+          "shared"
+        ],
+        "properties": {
+          "side": {
+            "$ref": "#/$defs/side"
+          },
+          "character": {
+            "$ref": "#/$defs/name",
+            "description": "the phase's first open member (members[0])"
+          },
+          "members": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/name"
+            },
+            "description": "the side's open members of the group at the phase's start, in turn order, summons included: a team member's name as in arena_start, a summon's display name"
+          },
+          "names": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            },
+            "description": "the members' display names as the game gave them"
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "the combat round (CombatRoundStarted)"
+          },
+          "phase": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "the phase's 1-based index within its turn group"
+          },
+          "group": {
+            "type": "string",
+            "description": "the turn group's id (its team guid, else its first member's uuid); absent when the mod can't read the turn order"
+          },
+          "shared": {
+            "type": "boolean",
+            "description": "the group holds members of both sides"
+          },
+          "order": {
+            "enum": [
+              "alternate",
+              "snake"
+            ],
+            "description": "the arena's turn_order (added 2026-11-04; absent before)"
+          },
+          "opening": {
+            "$ref": "#/$defs/side",
+            "description": "the round's opening side in this group (turn_order's)"
+          },
+          "rule": {
+            "enum": [
+              "opening",
+              "alternate",
+              "only_side_left"
+            ],
+            "description": "why this side: the round's opening side (the group's first phase), the other side after the last phase, or the only side with anyone open"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_turn_forced"
+          }
+        }
+      },
+      "then": {
+        "description": "The harness ended the phase in progress at its model-time cap (turn_cap_s times its member count) or at a held stall (arena_stall stall held), with act.end_turn for each member; it names that phase's side and character.",
+        "required": [
+          "side",
+          "character"
+        ],
+        "properties": {
+          "side": {
+            "$ref": "#/$defs/side"
+          },
+          "character": {
+            "$ref": "#/$defs/name"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_end"
+          }
+        }
+      },
+      "then": {
+        "description": "The match ended: once, at a turn boundary. wipe: every character of the loser is down or dead; forfeit: the side in `forfeit` lost (cause forced_turns: three of its turns in a row forced to an end; client_exit: its model ended its session again after three resumes; context_overflow: its conversation outgrew its model's context after its first tool call); round_cap, wall_cap: a draw (winner null, HP recorded, never a tiebreak); abort: the harness ended it; fault: the game crashed or hung; client_fault: the client of the side in `failed` failed again after one resume (an API or provider error, the bg3 MCP server, a hang, a crash: its infrastructure, not its play; `cause` names it); over_budget: a side's cost reached its cap, or both sides' the match's max_cost; `capped` names the sides (all four invalid, winner null).",
+        "required": [
+          "winner",
+          "rounds",
+          "hp_left_A",
+          "hp_left_B",
+          "reason"
+        ],
+        "properties": {
+          "winner": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/side"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rounds": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "rounds begun"
+          },
+          "hp_left_A": {
+            "$ref": "#/$defs/fraction",
+            "description": "side A's summed current HP over its summed max HP"
+          },
+          "hp_left_B": {
+            "$ref": "#/$defs/fraction",
+            "description": "side B's summed current HP over its summed max HP"
+          },
+          "reason": {
+            "enum": [
+              "wipe",
+              "forfeit",
+              "round_cap",
+              "wall_cap",
+              "abort",
+              "fault",
+              "client_fault",
+              "over_budget"
+            ]
+          },
+          "forfeit": {
+            "$ref": "#/$defs/side",
+            "description": "the side that forfeited (reason forfeit)"
+          },
+          "failed": {
+            "$ref": "#/$defs/side",
+            "description": "the side whose client failed (reason client_fault)"
+          },
+          "capped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/side"
+            },
+            "minItems": 1,
+            "description": "the sides that reached their own cap, both at the match's max_cost (reason over_budget)"
+          },
+          "cause": {
+            "type": "string",
+            "minLength": 1,
+            "description": "why it forfeited (reason forfeit: forced_turns, client_exit or context_overflow) or why the client failed (reason client_fault: api_error, kickoff_overflow, mcp_failed, agent_hang, killed, crash, ...)"
+          },
+          "detail": {
+            "type": "string",
+            "description": "the runner's own end, when the mod's end came before it"
+          },
+          "invalid": {
+            "const": "scripted",
+            "description": "a side was the harness's scripted no-model client: a live check, never graded"
+          },
+          "cost": {
+            "type": "object",
+            "required": [
+              "A",
+              "B"
+            ],
+            "description": "each side's cost so far at the end, USD (the charged totals are arena.json's)",
+            "properties": {
+              "A": {
+                "type": "number",
+                "minimum": 0
+              },
+              "B": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          },
+          "max_cost": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "exclusiveMinimum": 0,
+            "description": "the match's money cap, both sides together (the match ends over_budget at it); null without one"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "reason": {
+                  "const": "forfeit"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "forfeit",
+                "cause"
+              ],
+              "properties": {
+                "cause": {
+                  "enum": [
+                    "forced_turns",
+                    "client_exit",
+                    "context_overflow"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "reason": {
+                  "enum": [
+                    "round_cap",
+                    "wall_cap"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "winner": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "reason": {
+                  "const": "client_fault"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "failed",
+                "cause"
+              ],
+              "properties": {
+                "winner": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_reaction_unowned"
+          }
+        }
+      },
+      "then": {
+        "description": "The harness declined a reaction prompt no team owns (neither side's to answer).",
+        "required": [
+          "round",
+          "detail"
+        ],
+        "properties": {
+          "round": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the round it came up in"
+          },
+          "detail": {
+            "type": "string",
+            "description": "the prompt's text"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_turn_passed"
+          }
+        }
+      },
+      "then": {
+        "description": "The mod ended the turn of a phase's member who can't act (why: downed or dead) so the next phase starts; character is named as in arena_turn, name is the display name, error is set when the game's EndTurn failed. Not a turn: results ignore it.",
+        "required": [
+          "side",
+          "character",
+          "why",
+          "round"
+        ],
+        "properties": {
+          "side": {
+            "$ref": "#/$defs/side"
+          },
+          "character": {
+            "$ref": "#/$defs/name"
+          },
+          "name": {
+            "type": "string"
+          },
+          "why": {
+            "enum": [
+              "downed",
+              "dead",
+              "zero_hp"
+            ]
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "error": {
+            "type": "string"
+          },
+          "death_save": {
+            "description": "downed only: the turn's death save was in the roll log before the pass, or not within the mod's wait",
+            "enum": [
+              "rolled",
+              "none in time"
+            ]
+          },
+          "order": {
+            "enum": [
+              "alternate",
+              "snake"
+            ],
+            "description": "the arena's turn_order (added 2026-11-04; absent before)"
+          },
+          "opening": {
+            "$ref": "#/$defs/side",
+            "description": "the round's opening side in this group (turn_order's)"
+          },
+          "rule": {
+            "enum": [
+              "opening",
+              "alternate",
+              "only_side_left"
+            ],
+            "description": "why this side: the round's opening side (the group's first phase), the other side after the last phase, or the only side with anyone open"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_turn_readmitted"
+          }
+        }
+      },
+      "then": {
+        "description": "A member the mod passed this round stood up (a third death save success) with its turn open again: the pass is withdrawn and it acts in its phase. character is named as in arena_turn. Not a turn: results ignore it.",
+        "required": [
+          "side",
+          "character",
+          "round"
+        ],
+        "properties": {
+          "side": {
+            "$ref": "#/$defs/side"
+          },
+          "character": {
+            "$ref": "#/$defs/name"
+          },
+          "name": {
+            "type": "string"
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "why": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_stall"
+          }
+        }
+      },
+      "then": {
+        "description": "A phase (or the match before its first one: no side, character or members, round 0) made no progress for its stall time (idle_s: wall time less model time). stall held: its side still held a member, and the phase is capped (an arena_turn_forced follows, counted toward the forfeit). stall game: the game held the turn, and the match ends as a fault. status is the last arena.status, last each side's last tool calls. Results ignore it.",
+        "required": [
+          "stall",
+          "round",
+          "idle_s",
+          "status",
+          "last"
+        ],
+        "properties": {
+          "stall": {
+            "enum": [
+              "held",
+              "game"
+            ]
+          },
+          "side": {
+            "$ref": "#/$defs/side"
+          },
+          "character": {
+            "$ref": "#/$defs/name"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            },
+            "minItems": 1
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "idle_s": {
+            "type": "number",
+            "minimum": 0
+          },
+          "status": {
+            "type": "object"
+          },
+          "last": {
+            "type": "object"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "stall": {
+                  "const": "held"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "side",
+                "character",
+                "members"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "enum": [
+              "arena_group_end_written",
+              "arena_end_written"
+            ]
+          }
+        }
+      },
+      "then": {
+        "description": "A turn group's end, not the match's (arena_end_written before 2026-11-03, still valid): the mod wrote RequestedEndTurn on a shared turn group's members, in every round where the game kept the group open after the last end: every one had ended and the game kept the group open. character and members are named as in arena_turn, names are the display names, errors (by uuid) where a write failed. Not a turn: results ignore it.",
+        "required": [
+          "character",
+          "members",
+          "how"
+        ],
+        "properties": {
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "group": {
+            "type": "string"
+          },
+          "character": {
+            "$ref": "#/$defs/name"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            },
+            "minItems": 1
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "errors": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "how": {
+            "const": "requested_end_write"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_round"
+          }
+        }
+      },
+      "then": {
+        "description": "A round's first phase, once per round (the seat audit for a turn-order rule that sets who moves first, ops/briefs/arena/seat-fix.md): first is the round's opening side (turn_order's: that phase's side unless the opening side had nobody open); how is turn when that phase was recorded as an arena_turn, passed when every member of it couldn't act and was passed. Not a turn: results read it as round_first.",
+        "required": [
+          "round",
+          "first",
+          "how"
+        ],
+        "properties": {
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "first": {
+            "enum": [
+              "A",
+              "B"
+            ]
+          },
+          "how": {
+            "enum": [
+              "turn",
+              "passed"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_surfaces"
+          }
+        }
+      },
+      "then": {
+        "description": "A mirror arena's surfaces read again, report-only, at round 2's start and at the match's end: off/tiles = mismatches setup already read (outside its checked radius), appeared/appeared_tiles = tiles unmirrored only since setup (made in the fight, or come back), not a setup mismatch. Not a turn: results ignore it.",
+        "required": [
+          "when"
+        ],
+        "properties": {
+          "round": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "radius": {
+            "type": "number"
+          },
+          "off": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string"
+          },
+          "when": {
+            "enum": [
+              "round 2",
+              "end"
+            ]
+          },
+          "tiles_total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tiles_read": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "appeared": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "appeared_tiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_stood_up"
+          }
+        }
+      },
+      "then": {
+        "description": "A prone member stood up at its own phase start (the mod's, REVIEW-12 (a): in a shared group the game's turn-start stand-up comes before the phase), for half its movement: movement_before/after/max in metres, deducted what the mod took itself (0 when the status removal already took it, game_took true, or the mod's switch is off). character is named as in arena_turn. Not a turn: results ignore it.",
+        "required": [
+          "side",
+          "character",
+          "round",
+          "movement_before",
+          "deducted",
+          "game_took"
+        ],
+        "properties": {
+          "side": {
+            "$ref": "#/$defs/side"
+          },
+          "character": {
+            "$ref": "#/$defs/name"
+          },
+          "name": {
+            "type": "string"
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string"
+          },
+          "movement_before": {
+            "type": "number",
+            "minimum": 0
+          },
+          "movement_after": {
+            "type": "number",
+            "minimum": 0
+          },
+          "movement_max": {
+            "type": "number",
+            "minimum": 0
+          },
+          "deducted": {
+            "type": "number",
+            "minimum": 0
+          },
+          "game_took": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  ]
+}

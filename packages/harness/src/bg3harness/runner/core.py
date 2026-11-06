@@ -41,7 +41,8 @@ class SessionRunner(rgame.GameSide, ragent.AgentSide, rchecks.ChecksSide):
 
     def __init__(self, opt: rstate.Options):
         self.opt = opt
-        self._client = rstate.make_client(opt)   # the CLI every play, resume and fix-notes process runs
+        # the CLI every play, resume and fix-notes process runs; a match's runner has none (its sides' clients play)
+        self._client = rstate.make_client(opt) if opt.client is not None else None
         self.mem = renv.PLAYTHROUGHS / opt.playthrough / "memory"
         self.state = rstate.RunnerState(opt.playthrough)
         # --sandbox container: this playthrough's HOME for the client in the container (its sessions to resume)

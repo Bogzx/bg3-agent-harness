@@ -70,6 +70,46 @@ class Fields(unittest.TestCase):
             f = run_manifest.manifest_fields("pi", None, "rules", tools, None, files["instructions"].read_text())
             self.assertEqual(f["prompt"]["sha256"], sha(files["system"].read_text()))
 
+    def test_a_sides_hash_is_its_system_text_with_the_match_rules(self) -> None:
+        # a side of a two-team match (BG3AI_SIDE) is served rules/arena.md with its arena's cap: the manifest's hash
+        # is of that text, not of the rules without the match's
+        with tempfile.TemporaryDirectory() as d:
+            env = {
+                **os.environ,
+                "BG3AI_SIDE": "A",
+                "BG3AI_TOOLS_OFF": "arena-v1",
+                "BG3AI_ARENA_TURN_CAP_S": "60",
+                "BG3AI_ARENA_TURN_ORDER": "snake",
+                "BG3AI_PROMPT_CONDITION": "rules",
+            }
+            files = {k: Path(d) / k for k in ("system", "tools", "instructions")}
+            subprocess.run(
+                [
+                    "uv",
+                    "run",
+                    "--project",
+                    str(REPO / "bridge"),
+                    "python",
+                    str(REPO / "tools/pi/dump_server.py"),
+                    *[x for k, f in files.items() for x in (f"--{k}", str(f))],
+                ],
+                check=True,
+                capture_output=True,
+                timeout=300,
+                env=env,
+            )
+            system = files["system"].read_text()
+            self.assertIn("60 s of model time per character", " ".join(system.split()))
+            tools = [t["name"] for t in json.loads(files["tools"].read_text())]
+            instr = files["instructions"].read_text()
+            cap, order = run_manifest.arena_cap(env), run_manifest.arena_turn_order(env)
+            f = run_manifest.manifest_fields("pi", None, "rules", tools, None, instr, cap, order)
+            self.assertEqual(f["prompt"]["sha256"], sha(system))
+            self.assertIn("rules/arena.md", [p["file"] for p in f["prompt"]["parts"]])
+        with self.assertRaisesRegex(ValueError, "BG3AI_ARENA_TURN_CAP_S"):
+            run_manifest.arena_cap({"BG3AI_SIDE": "B"})
+        self.assertIsNone(run_manifest.arena_cap({}))
+
     def test_tools_off_change_the_prompt_and_the_hash(self) -> None:
         wiki = set(bg3harness.prompts().CAPABILITIES["wiki"])
         less = [t for t in REGISTRY if t not in wiki]

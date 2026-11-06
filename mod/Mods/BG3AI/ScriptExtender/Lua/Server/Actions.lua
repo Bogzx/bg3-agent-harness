@@ -44,6 +44,14 @@ A.MOVE_REACH = 2.2   -- move_to {target}: stop at most this far (centres); neare
 A.END_REQUEST_AFTER_MS = 400
 A.END_IGNORED_MS = 3000 -- end_turn: the game ignored EndTurn (no group pending) this long: failed (bridge: HUD button)
 A.END_IGNORED = "the game ignored the end-turn order"
+A.END_LAST_WAIT_MS = 20000 -- arena: a turn group's last end waits this long for the game to close it (S087: 18 s)
+-- arena: a shared group's last end the game hasn't closed this long gets the group's ends written once
+-- (Arena.write_group_end: only when every other member's end is the mod's), inside END_LAST_WAIT_MS (the bridge
+-- waits 22 s). After the write the group closed within ~40 ms (live 14). Until 2026-11-03 this was 18 s, past the
+-- slowest close the game made on its own (phases4, companions in a group of 8: one member every ~2.1 s, 16.88-17.00 s
+-- after the last end); the live smoke (2026-11-03, L4) showed the twins' group never closes on its own, so every
+-- round waited 18 s for the write. 1 s leaves a group the game closes at once (TurnEnded) to it.
+A.END_WRITE_AFTER_MS = 1000
 -- S035 19:28-19:30: three jump_to calls each ran 25 s "still running" while Shadowheart never moved: the engine
 -- dropped UseSpellAtPosition without CastSpellFailed. No CastSpell and no step this long after the order: fail.
 A.CAST_NO_START_MS = 8000
@@ -177,7 +185,8 @@ local registered = {}
 local function each_running(fn)
     for _, job in pairs(RPC.jobs) do
         if job.status == "running" and job.act and not job.call then -- parked for a stand-up: nothing of its own
-            local ok, err = pcall(fn, job)
+            local ok, err
+            if job.side then ok, err = pcall(U.with_side, job.side, fn, job) else ok, err = pcall(fn, job) end
             if not ok then RPC.finish_job(job, "failed", nil, tostring(err)) end
         end
     end
@@ -312,7 +321,10 @@ function A.loop_watch(char, item)
     if job and job.status == "running" and job.walk and not job.walk.done and job.climbs and job.climbs[item]
         and s.n < 2 * A.LOOP_USES then return end
     A.use_streak[char] = nil
-    RPC.push("loop_stopped", { uuid = char, item = item, uses = s.n, job = job and job.id or nil })
+    -- an arena: the stuck character's side hears it (nil for anyone else: the harness)
+    local Ar = BG3AI.Arena
+    U.with_side(Ar and Ar.active() and Ar.side_of(char) or nil, RPC.push, "loop_stopped",
+        { uuid = char, item = item, uses = s.n, job = job and job.id or nil })
     if job and job.status == "running" then
         interrupt(job, "stuck: the character kept using the same item (" .. s.n
             .. " times, e.g. re-climbing a ladder)")
@@ -324,11 +336,16 @@ end
 function A.stirred(u, why)
     local g = G.guid(u)
     if not g then return end
-    if not A.hit_ms[g] then
-        A.hit_n = (A.hit_n or 0) + 1
-        if A.hit_n > 500 then A.hit_ms, A.hit_n = {}, 1 end
+    local hits = U.sided(A, "hit_ms") -- each side's own (an arena: A.dispatch runs it per side)
+    if not hits[g] then
+        local n = (U.sget(A, "hit_n") or 0) + 1
+        if n > 500 then
+            hits, n = {}, 1
+            U.sset(A, "hit_ms", hits)
+        end
+        U.sset(A, "hit_n", n)
     end
-    A.hit_ms[g] = { t = G.now_ms(), why = why }
+    hits[g] = { t = G.now_ms(), why = why }
 end
 
 -- Every cast's start and end (A.casts) and every hit's damage (A.hits), for a move's reactions (A.reaction_hold).
@@ -472,11 +489,12 @@ end
 function A.foe_cast(event, caster, spell)
     local g = G.guid(caster)
     if not g or G.is_party(g) then return end
-    local now, r = G.now_ms(), A.react_seen
+    local now, r = G.now_ms(), U.sget(A, "react_seen")
     if event == "CastedSpell" and r and r.caster == g and not r.done then
         r.done = now
     else
-        A.react_seen = { t = now, done = event == "CastedSpell" and now or nil, caster = g, spell = tostring(spell) }
+        U.sset(A, "react_seen", { t = now, done = event == "CastedSpell" and now or nil, caster = g,
+            spell = tostring(spell) })
     end
 end
 
@@ -510,10 +528,10 @@ function A.dispatch(event, args)
     elseif event == "CombatEnded" and args[1] then
         G.combat_ended(args[1])
     elseif event == "AttackedBy" and args[1] then
-        A.stirred(args[1], "a hit on the caster")
+        U.each_side(A.stirred, args[1], "a hit on the caster")
         A.note_hit(args[1], args[2], args[3], args[4], args[5])
     elseif (event == "CastSpell" or event == "CastedSpell") and args[1] then
-        A.foe_cast(event, args[1], args[2])
+        U.each_side(A.foe_cast, event, args[1], args[2]) -- "outside the party" is per side in an arena
         A.track_cast(event, args[1], args[2])
         A.scroll_cast(event, args[1])
         A.note_cast(args[1]) -- the idle teleport watch: a jump right after it is the caster's spell (ActionsMove)
@@ -525,7 +543,7 @@ function A.dispatch(event, args)
         -- shown statuses only, by their shown name (Prone: standing up; Hold Person); technical ones flap all the time
         local V = BG3AI.Visibility
         local info = V and V.statusInfo and V.statusInfo(tostring(args[2]))
-        if info then A.stirred(args[1], "the caster's " .. tostring(info.name) .. " ending") end
+        if info then U.each_side(A.stirred, args[1], "the caster's " .. tostring(info.name) .. " ending") end
     end
     each_running(function(job)
         if job.tele then -- a jump settling (teleport_check): only the story signals count now
@@ -552,7 +570,8 @@ local function listen(event, arity)
     registered[event] = true
     local ok, err = pcall(Ext.Osiris.RegisterListener, event, arity, "after", function(...)
         local args = { ... }
-        local ok2, err2 = pcall(A.dispatch, event, args)
+        -- listener code never runs as the op an event fired inside of (each_running / each_side pick their own)
+        local ok2, err2 = pcall(U.with_side, nil, A.dispatch, event, args)
         if not ok2 then Ext.Utils.PrintWarning("[BG3AI] act dispatch " .. event .. ": " .. tostring(err2)) end
     end)
     if not ok then
@@ -817,6 +836,7 @@ local function guarded(kind, fn)
         local outer = A.call_now
         A.call_now = { run = run, args = args } -- start() parks it for a stand-up and runs it again after
         local ok, res = pcall(function()
+            G.match_over_gate() -- a side's action after the match's end
             A.tb_gate(kind, args)
             return fn(args)
         end)

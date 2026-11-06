@@ -43,7 +43,8 @@ PATH_MARK = "<path>"
 
 
 def decode(code: str) -> tuple[list[dict[str, Any]], bool] | None:
-    """([{op, args}, ...], is_multi) for an RPC eval, None for any other Lua."""
+    """([{op, args}, ...], is_multi) for an RPC eval, None for any other Lua. A call that names its side (a server
+    playing one team of a match, BG3AI_SIDE) keeps it: {op, args, side}."""
     code = code.strip()
     m = _SINGLE.match(code)
     if m:
@@ -55,7 +56,10 @@ def decode(code: str) -> tuple[list[dict[str, Any]], bool] | None:
 
 def _call(payload: str) -> dict[str, Any]:
     req = json.loads(payload)
-    return {"op": req.get("op"), "args": req.get("args") or {}}
+    call = {"op": req.get("op"), "args": req.get("args") or {}}
+    if "side" in req:
+        call["side"] = req["side"]
+    return call
 
 
 def scrub(value: Any) -> Any:

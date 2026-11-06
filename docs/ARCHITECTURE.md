@@ -95,7 +95,7 @@ the rest at its end with `Ext.Require`:
 |---|---|
 | Visibility | `Server/Visibility.lua`, `VisibilityObjects.lua` |
 | State | `Server/State.lua`, `StateWorld.lua`, `StateOps.lua` |
-| Navigation | `Server/Navigation.lua`, `NavigationReach.lua`, `NavigationTerrain.lua`, `NavigationRoute.lua`, `NavigationOps.lua`, `NavigationDoors.lua`, `NavigationSpots.lua` (data: `Server/Data/JournalMarkers.lua`, generated, exempt from the cap) |
+| Navigation | `Server/Navigation.lua`, `NavigationSides.lua`, `NavigationReach.lua`, `NavigationTerrain.lua`, `NavigationRoute.lua`, `NavigationOps.lua`, `NavigationDoors.lua`, `NavigationSpots.lua` (data: `Server/Data/JournalMarkers.lua`, generated, exempt from the cap) |
 | Guard | `Server/Guard.lua`, `GuardGate.lua`, `GuardSpells.lua`, `GuardCast.lua` |
 | Actions | `Server/Actions.lua`, `ActionsMove.lua`, `ActionsInteract.lua`, `ActionsCast.lua`, `ActionsParty.lua`, `ActionsClick.lua` |
 | Events | `Server/Events.lua` |

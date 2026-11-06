@@ -1,0 +1,87 @@
+{
+ "schema": "arena-builds.v1",
+ "name": "l2_hirelings_v1",
+ "title": "Level 2: Fighter, Rogue, Barbarian, Ranger (each its hireling's race and background)",
+ "tier": "L2",
+ "level": 2,
+ "game_build": "25605617",
+ "draft": "no reference profiles yet: plan step 3 reads each from a respecced hireling of the build's class (route H), and the respec page's command names are still TODO (route-H probe) (2026-11-03)",
+ "builds": [
+  {
+   "id": "fighter",
+   "class": "Fighter",
+   "subclass": null,
+   "race": "HalfElf_Wood",
+   "background": "Soldier",
+   "role": "frontline: heavy armour and a longsword",
+   "script": {
+    "cc": {
+     "abilities": {"Strength": 15, "Dexterity": 13, "Constitution": 14, "Intelligence": 10, "Wisdom": 12, "Charisma": 8},
+     "ability_bonus": ["Strength", "Constitution"],
+     "skills": ["Perception", "Survival"],
+     "passives": [["FightingStyle_Defense"]]
+    },
+    "level_ups": [{"level": 2}]
+   },
+   "gear": ["WPN_Longsword", "WPN_Shortbow", "ARM_ScaleMail_Body", "ARM_Boots_Leather", "OBJ_Potion_Healing", "OBJ_Potion_Healing"],
+   "reference": null
+  },
+  {
+   "id": "rogue",
+   "class": "Rogue",
+   "subclass": null,
+   "race": "Human",
+   "background": "Urchin",
+   "role": "melee skirmisher: shortsword and sneak attacks",
+   "script": {
+    "cc": {
+     "abilities": {"Strength": 8, "Dexterity": 15, "Constitution": 14, "Intelligence": 12, "Wisdom": 13, "Charisma": 10},
+     "ability_bonus": ["Dexterity", "Constitution"],
+     "skills": ["Acrobatics", "Perception", "Deception", "Investigation"],
+     "expertise": ["Stealth", "Perception"],
+     "race_skills": ["Athletics"]
+    },
+    "level_ups": [{"level": 2}]
+   },
+   "gear": ["WPN_Shortsword", "WPN_Shortbow", "ARM_Leather_Body_Rogue", "ARM_Boots_Leather", "OBJ_Kit_ThievesTools", "OBJ_Potion_Healing", "OBJ_Potion_Healing"],
+   "reference": null
+  },
+  {
+   "id": "barbarian",
+   "class": "Barbarian",
+   "subclass": null,
+   "race": "Dwarf_GoldHill",
+   "background": "Outlander",
+   "role": "melee damage: greataxe and rage",
+   "script": {
+    "cc": {
+     "abilities": {"Strength": 15, "Dexterity": 13, "Constitution": 14, "Intelligence": 10, "Wisdom": 12, "Charisma": 8},
+     "ability_bonus": ["Strength", "Constitution"],
+     "skills": ["Intimidation", "Perception"]
+    },
+    "level_ups": [{"level": 2}]
+   },
+   "gear": ["WPN_Greataxe", {"item": "WPN_Handaxe", "equip": false}, {"item": "WPN_Handaxe", "equip": false}, "ARM_Barbarian", "ARM_Shoes_Barbarian", "OBJ_Potion_Healing", "OBJ_Potion_Healing"],
+   "reference": null
+  },
+  {
+   "id": "ranger",
+   "class": "Ranger",
+   "subclass": null,
+   "race": "Drow_Seldarine",
+   "background": "Criminal",
+   "role": "ranged damage and healer: shortbow, Hunter's Mark, Cure Wounds",
+   "script": {
+    "cc": {
+     "abilities": {"Strength": 12, "Dexterity": 15, "Constitution": 13, "Intelligence": 8, "Wisdom": 14, "Charisma": 10},
+     "ability_bonus": ["Dexterity", "Wisdom"],
+     "skills": ["Survival", "Athletics", "Investigation"],
+     "passives": [["FavoredEnemy_BountyHunter"], ["NaturalExplorer_BeastTamer"]]
+    },
+    "level_ups": [{"level": 2, "spells": [["Target_HuntersMark", "Target_CureWounds"]], "passives": [["FightingStyle_Archery"]]}]
+   },
+   "gear": ["WPN_Shortbow", "WPN_Shortsword", "ARM_Leather_Body", "ARM_Boots_Leather", "OBJ_Potion_Healing", "OBJ_Potion_Healing"],
+   "reference": null
+  }
+ ]
+}

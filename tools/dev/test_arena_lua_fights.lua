@@ -1,0 +1,271 @@
+-- Part of test_arena_lua.lua (split for the 1000-line cap): the fight as each side reads it (allies, the turn order,
+-- a pending end, a blast's bystanders). test_arena_lua.lua runs it after its stubs and helpers, shared as globals.
+
+test("the engine calling the other team allies: still no sneaker or invisible character seen through it", function()
+    begin()
+    osiv[key("IsAlly", A1, B1)] = 1
+    osiv[key("HasActiveStatus", B1, "SNEAKING")] = 1
+    local e = V.entity(B1)
+    eq(as("A", function() return V.characterVisible(V.context(), B1, e) end), false, "a sneaking B1")
+    eq(as("A", function() return V.isAlly(V.context(), B1) end), false, "isAlly")
+    osiv[key("HasActiveStatus", B1, "SNEAKING")] = nil
+    osiv[key("IsInvisible", B1)] = 1
+    eq(as("A", function() return V.characterVisible(V.context(), B1, e) end), false, "an invisible B1")
+end)
+
+test("a blast's bystanders: the other team is hostile, whatever the engine's relation", function()
+    begin()
+    osiv[key("CanSee", A1, B1)] = 1
+    osiv[key("IsAlly", A1, B1)] = 1
+    local near = as("A", G.in_blast, A1, { 10, 0, 0 }, 3)
+    local side
+    for _, r in ipairs(near or {}) do if r.uuid == B1 then side = r.side end end
+    eq(side, "hostile", "B1's side")
+end)
+
+-- S084 shape: A1 ended (end_requested), the game still shows its turn open; B1's turn is open. A asks at once, then
+-- someone asks again once END_DROP_MS has passed.
+local function pendingEndAsked(by)
+    reset()
+    begin()
+    setTurn(A1, true, false)
+    setTurn(B1, true, false)
+    G.end_requested[A1] = clock
+    order = { { A1, B1 } }
+    local first = as("A", Ar.acting_side)
+    clock = clock + G.END_DROP_MS + 1000
+    return first, by and as(by, Ar.acting_side) or Ar.acting_side()
+end
+
+test("a pending end is judged in the character's own team: who asks never changes who acts", function()
+    local first, a = pendingEndAsked("A")
+    eq(first, "B", "at once: A1's end is kept")
+    local _, b = pendingEndAsked("B")
+    local _, h = pendingEndAsked(nil)
+    eq(b, a, "B asking vs A asking")
+    eq(h, a, "the harness asking vs A asking")
+end)
+
+local function combatAs(side)
+    local r = rpc("state.combat", "{}", side)
+    if not r.ok then error("state.combat: " .. tostring(r.error), 2) end
+    local rows = {}
+    for _, o in ipairs(r.result.order) do rows[o.uuid] = o end
+    return r.result, rows
+end
+
+test("state.combat per side: own team party, the other hostile, unseen rows left out", function()
+    begin()
+    setTurn(A1, true, false)
+    order = { A1, B1, A2, B2 }
+    osiv[key("CanSee", A1, B1)] = 1
+    osiv[key("HasActiveStatus", B2, "SNEAKING")] = 1
+    local c, rows = combatAs("A")
+    eq(rows[A1].relation, "party", "A1")
+    eq(rows[B1].relation, "hostile", "B1")
+    eq(rows[B2], nil, "the sneaking B2")
+    eq(c.current, A1, "current")
+    osiv[key("CanSee", B1, A1)] = 1
+    local _, rb = combatAs("B")
+    eq(rb[A1] and rb[A1].relation, "hostile", "B reads A1")
+end)
+
+test("state.combat: the acting combatant unseen: current null, active true", function()
+    begin()
+    setTurn(B2, true, false)
+    order = { B2, A1 }
+    osiv[key("HasActiveStatus", B2, "SNEAKING")] = 1
+    local c = combatAs("A")
+    eq(c.active, true, "active")
+    eq(c.current, nil, "current")
+end)
+
+test("state.combat, a turn group across the teams: the waiting side's member is not current for either side", function()
+    begin()
+    setTurn(A1, true, false)
+    setTurn(B1, true, false)
+    order = { { B1, A1 } }
+    osiv[key("CanSee", B1, A1)] = 1
+    osiv[key("CanSee", A1, B1)] = 1
+    local cb, rb = combatAs("B")
+    eq(rb[A1].is_current, nil, "B reads A1")
+    eq(cb.current, B1, "B: current")
+    eq(table.concat(cb.turn_group, ","), B1, "B: turn_group")
+    local ca, ra = combatAs("A")
+    eq(ra[A1].is_current, nil, "A reads A1")
+    eq(ca.current, B1, "A: current")
+end)
+
+-- Live check 8 (2026-11-02): side B's rows showed a downed A member without `downed` (party members only had it).
+test("state.combat: the other team's downed member reads downed (the status); an NPC at 0 HP without it does not",
+    function()
+    begin()
+    order = { A1, B1, GOB }
+    osiv[key("CanSee", B1, A1)], osiv[key("CanSee", B1, GOB)] = 1, 1
+    osiv[key("HasActiveStatus", A1, "DOWNED")] = 1
+    world[A1].comps.Health.Hp = 0
+    world[GOB].comps.Health = { Hp = 0, MaxHp = 10 }
+    local _, rows = combatAs("B")
+    eq(rows[A1] and rows[A1].downed, true, "B reads A1 downed")
+    eq(rows[GOB] and rows[GOB].relation ~= nil, true, "B sees the goblin")
+    eq(rows[GOB].downed, nil, "the goblin at 0 HP, no DOWNED: not downed")
+    local _, ra = combatAs("A")
+    eq(ra[A1].downed, true, "A reads its own A1 downed")
+end)
+
+-- arena C5 (live 10 m1 a2): a member at 0 HP without DOWNED read "hp 0% downed" for its side and "hp 0%" for the other;
+-- its own row read "downed can_act" and its own party sheet had no downed.
+test("a team member at 0 HP without DOWNED: both sides read downed where its HP shows; never can_act; the sheet agrees",
+    function()
+    begin()
+    order = { A1, B1 }
+    osiv[key("CanSee", B1, A1)] = 1
+    world[A1].comps.Health.Hp = 0
+    world[A1].comps.TurnBased.CanActInCombat = true
+    local _, rb = combatAs("B")
+    eq(rb[A1] and rb[A1].hp_pct, 0, "B sees A1's HP")
+    eq(rb[A1].downed, true, "B reads A1 downed")
+    local ca, ra = combatAs("A")
+    eq(ra[A1].downed, true, "A reads its own A1 downed")
+    eq(ra[A1].can_act, nil, "a downed A1 can't act")
+    eq(table.concat(ca.party_can_act or {}, ","):find(A1, 1, true), nil, "A's party_can_act: no A1")
+    local sheet
+    for _, m in ipairs(rpc("state.status", "{}", "A").result.party) do if m.uuid == A1 then sheet = m end end
+    eq(sheet and sheet.downed, true, "A's party sheet: A1 downed")
+    local rules = V.rules
+    V.rules, V.sideCtx = function() return { HIDE_NPC_HP = true } end, nil -- the side context is cached per frame
+    local ok, err = pcall(function()
+        local _, hidden = combatAs("B")
+        eq(hidden[A1].hp_pct, nil, "HP hidden")
+        eq(hidden[A1].downed, nil, "HP hidden: no 0 HP downed")
+    end)
+    V.rules, V.sideCtx = rules, nil
+    if not ok then error(err, 0) end
+end)
+
+-- A move's reactions (Actions.lua reaction_annotate) are read as the mover's side (RPC as_job): a reactor that side
+-- can't see is not named, nor its spell; the damage the mover took from it still shows (the event log's "Someone").
+test("a move's reactions as the mover's side sees them: an unseen reactor isn't named, its damage still shows",
+    function()
+    local A = BG3AI.Actions
+    local function moved(seen)
+        reset()
+        begin()
+        osiv[key("CanSee", A1, B1)] = seen and 1 or nil
+        local job = RPC.start_job("act.move_to", { char = A1, annotate = A.reaction_annotate })
+        job.side = "A"
+        A.casts, A.hits = {}, {}
+        A.track_cast("CastSpell", B1, "Projectile_FireBolt")
+        A.note_hit(A1, B1, B1, "Fire", 7)
+        A.track_cast("CastedSpell", B1, "Projectile_FireBolt")
+        RPC.finish_job(job, "done", {})
+        return job.result.reactions or {}
+    end
+    local r = moved(false)
+    eq(#r, 1, "one reaction")
+    eq(r[1].unseen, true, "unseen")
+    eq(r[1].by, nil, "no reactor named")
+    eq(r[1].name, nil, "no spell named")
+    eq(r[1].damage, 7, "its damage")
+    eq(r[1].type, "Fire", "type")
+    r = moved(true)
+    eq(r[1].by and r[1].by.uuid, B1, "a seen reactor is named")
+    eq(r[1].name, "Fire Bolt", "and its spell")
+end)
+
+-- Window 9 MR1: a foe's ReactionInterruptUsed during a move holds it until the foe's cast starts. In a match the foe
+-- is the other team (Ar.side_of), whatever the party says: both teams are one party.
+test("a move held by an interrupt in a match: the other team's holds it until its cast starts, a teammate's doesn't",
+    function()
+    local A = BG3AI.Actions
+    reset()
+    begin()
+    osiv[key("IsInCombat", A1)] = 1
+    local job = RPC.start_job("act.move_to", { char = A1 })
+    job.side = "A"
+    A.casts, A.hits, A.interrupts = {}, {}, {}
+    A.note_interrupt(A2)
+    eq(as("A", A.reaction_hold, job), false, "a teammate's interrupt holds nothing")
+    A.note_interrupt(B1)
+    eq(as("A", A.reaction_hold, job), true, "the other team's interrupt holds the move")
+    A.track_cast("CastSpell", B1, "Target_MainHandAttack")
+    A.track_cast("CastedSpell", B1, "Target_MainHandAttack")
+    clock = clock + A.CAST_REACT_SETTLE_MS
+    eq(as("A", A.reaction_hold, job), false, "its cast resolved and settled: released")
+    osiv[key("IsInCombat", A1)] = nil
+    RPC.finish_job(job, "done", {})
+end)
+
+-- Window 9 MR2: path_preview's attack-of-opportunity fact (G.path_provokes) in a match: the other team's member whose
+-- reach the path leaves (both teams are one party, so not the party rule), never a teammate, nor one the side can't
+-- see.
+test("path_provokes in a match: the other team's reach, not a teammate's, only when the side sees it", function()
+    reset()
+    begin()
+    world[B1].pos = { 2.4, 0, 0 }
+    for _, u in ipairs({ A2, B1 }) do
+        world[u].comps.ActionResources = { Resources = { ReactionActionPoint = { { Level = 0, Amount = 1 } } } }
+    end
+    local path = { { 1, 0, 0 }, { -2, 0, 0 }, { -5, 0, 0 } }
+    osiv[key("CanSee", A1, B1)], osiv[key("CanSee", A2, B1)] = 1, 1
+    osiv[key("IsEnemy", B1, A1)], osiv[key("CanSee", B1, A1)] = 1, 1 -- the engine's view (setup's hostile matrix)
+    osiv[key("IsEnemy", A2, A1)], osiv[key("CanSee", A2, A1)] = 1, 1 -- even an engine relation gone wrong
+    V.ctxCache, V.sideCtx = nil, nil
+    local r = as("A", G.path_provokes, A1, path)
+    eq(#r, 1, "one")
+    eq(r[1].uuid, B1, "B1, not the teammate A2 in reach too")
+    local reach = G.melee_reach(B1, A1, G.DEFAULT_MELEE_M) -- B1 at x 2.4: the path (from x 1, west) leaves it here
+    eq(r[1].along_m, U.round(1 - (2.4 - reach), 1), "where it leaves B1's reach")
+    osiv[key("IsEnemy", B1, A1)] = nil
+    eq(#as("A", G.path_provokes, A1, path), 0, "the engine not calling B1 hostile to A1: nothing")
+    osiv[key("IsEnemy", B1, A1)] = 1
+    osiv[key("CanSee", A1, B1)], osiv[key("CanSee", A2, B1)] = nil, nil
+    V.ctxCache, V.sideCtx = nil, nil
+    N.frame = N.frame + 1
+    eq(#as("A", G.path_provokes, A1, path), 0, "B1 unseen by side A: nothing")
+end)
+
+-- O1 audit S3 (REVIEW-8): one character a phase holds a side's second member until the other side's next phase;
+-- party_can_act listed it, so a side would try it ("it is not this character's turn").
+test("state.combat: a held own member isn't in party_can_act; the acting one is", function()
+    begin()
+    order = { { A1, B1, A2, B2 } }
+    for _, u in ipairs({ A1, B1, A2, B2 }) do
+        setTurn(u, true, false)
+        world[u].comps.TurnBased.CanActInCombat = true
+    end
+    tick()
+    eq(Ar.held(A2), true, "A2 waits for B1")
+    local ca, ra = combatAs("A")
+    eq(table.concat(ca.party_can_act or {}, ","), A1, "A's party_can_act: A1 only")
+    eq(enc({ ra[A1].can_act, ra[A2].can_act }), enc({ true, nil }), "the rows agree")
+end)
+
+-- A7 (audit S2-4 residual): "it turned invisible" was judged at the query from where the enemy stands then; the vanish
+-- is noted per side as it happens (StatusApplied), where that side sees the spot
+test("a vanish is noted by the side that sees it happen: none for one that vanished unseen and walked into view",
+    function()
+    begin()
+    V.invisibleNow = {}
+    as("A", V.remember, B1, "Birch", world[B1].pos, "hostile") -- A looked at it before
+    osiv[key("IsInvisible", B1)] = 1
+    osiv[key("HasLineOfSight", A1, B1)] = 1 -- B1 10 m from A1, in its sight range
+    fire("StatusApplied", B1, "INVISIBILITY", B1, 0)
+    local gone, m = as("A", V.vanished, B1)
+    eq(gone, true, "A saw it vanish")
+    eq(m and m.pos[1], 10, "where")
+    world[B1].pos = { 5, 0, 0 }
+    fire("StatusApplied", B1, "WET", B1, 0) -- REVIEW-18e: a later status on it, in A's view, is no vanish
+    local _, m2 = as("A", V.vanished, B1)
+    eq(m2 and m2.pos[1], 10, "the record stays where it vanished")
+    reset()
+    begin()
+    V.invisibleNow = {}
+    as("A", V.remember, B1, "Birch", world[B1].pos, "hostile")
+    osiv[key("IsInvisible", B1)] = 1
+    fire("StatusApplied", B1, "INVISIBILITY", B1, 0) -- no sight or line of sight from A's members
+    eq(as("A", V.vanished, B1), false, "unseen as it vanished")
+    world[B1].pos = { 2, 0, 0 }
+    osiv[key("HasLineOfSight", A1, B1)] = 1
+    eq(as("A", V.vanished, B1), false, "walked into A's view, invisible: still not seen to vanish")
+end)

@@ -11,7 +11,7 @@ from typing import Any
 
 from .. import actq, areablock, busywait, companions, longnav, macros, navhints, party, render
 from ..game import GameError, JobResult, NotReady
-from . import camp_night, core, overview, plumbing, reporting, world_tools
+from . import camp_night, core, overview, plumbing, reporting, transition, world_tools
 
 
 @core.mcp.tool()
@@ -334,7 +334,7 @@ def fast_travel(waypoint: str) -> str:
         return reporting._finish("fast_travel", {"waypoint": waypoint}, (left + "\n" if left else "") + split, time.monotonic())
     sub = overview.minimap_sub()
     watch = _ReadyCheckWatch()
-    world_tools._TRANSITION_LAST.clear()
+    transition._TRANSITION_LAST.clear()
     with watch:
         out = world_tools._box_act("fast_travel", "ui.fast_travel", {"waypoint": waypoint}, wait_s=70, on_start=watch.on_start)
     if watch.failed is not None:
@@ -348,7 +348,7 @@ def fast_travel(waypoint: str) -> str:
     if out.rstrip().endswith("travelling"):
         # The box needed a mouse click (region change): the mod's job had stopped there, so nothing watched the
         # trip. Live 11:4x: "travelling" came back mid-load and the next reads saw the loading screen.
-        if world_tools._TRANSITION_LAST.get("tool") == "fast_travel" and world_tools._TRANSITION_LAST.get("transition") in (
+        if transition._TRANSITION_LAST.get("tool") == "fast_travel" and transition._TRANSITION_LAST.get("transition") in (
                 "the game loaded", "the party moved"):
             out += "; arrived" if _settle_hud(20) else "; the HUD isn't back yet (wait_for idle)"
         elif saving._load_started(10.0):

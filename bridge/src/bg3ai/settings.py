@@ -50,6 +50,8 @@ class Settings:
     rpc_conns: int  # $BG3AI_RPC_CONNS: LuaDebug connections in the pool (1 = one serialised connection)
     job_push: bool  # $BG3AI_JOB_PUSH != "0": wait on the mod's job-finished prints (jobpush.py)
     saves: SaveIdentity
+    # $BG3AI_SIDE "A"|"B": the team this server plays in a two-team match; every RPC carries it (Game.side).
+    side: str | None = None
     # $BG3AI_OPERATOR_DIR: the app's operator messages (bg3ai.operator), set only for a playthrough with the option
     # on; None = no operator messages, no file is opened
     operator_dir: Path | None = None
@@ -83,8 +85,23 @@ def from_env(env: Mapping[str, str], repo: Path = REPO, home: Path | None = None
         rpc_conns=max(1, int(env.get("BG3AI_RPC_CONNS") or 4)),
         job_push=env.get("BG3AI_JOB_PUSH", "1") != "0",
         saves=save_identity(env),
+        side=side(env),
         operator_dir=Path(env["BG3AI_OPERATOR_DIR"]) if env.get("BG3AI_OPERATOR_DIR") else None,
     )
+
+
+SIDES = ("A", "B")
+
+
+def side(env: Mapping[str, str]) -> str | None:
+    """$BG3AI_SIDE, or None when unset/empty. Any other value raises ValueError: the server fails at startup
+    instead of playing without a side (or as the wrong one)."""
+    value = env.get("BG3AI_SIDE", "")
+    if not value:
+        return None
+    if value not in SIDES:
+        raise ValueError(f"BG3AI_SIDE: {value!r} is not a side (A or B)")
+    return value
 
 
 def save_identity(env: Mapping[str, str]) -> SaveIdentity:

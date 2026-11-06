@@ -10,6 +10,7 @@ from unittest import mock
 
 from test_turn_macros import (  # sets BG3AI_RUNTIME before importing bg3ai
     GOB,
+    NOT_JOBS,
     P1,
     P2,
     CombatTurnBase,
@@ -132,6 +133,45 @@ class CombatTools(CombatTurnBase):
             r = combat_tools._end_turn_by_hud(P1, JobResult("failed", None, combat_tools.END_IGNORED))
         self.assertEqual(r.status, "done", r.error)
         self.assertIn("the game, slowly (10 s after the order", r.result["via"])
+
+    # S018: end_turn on downed Claude / Shadowheart -> "FAILED: character is downed" (x2): the mod's refusal is the fact
+    def test_downed_or_dead_member_end_is_skipped_on_the_mods_refusal(self):
+        p1 = next(o for o in self.g.combat["order"] if o["uuid"] == P1)
+        p1.update(hp_pct=0, downed=True)
+        self.g.on_start = None
+        self.g.refuse_if = lambda op, a: "character is downed" if op == "act.end_turn" else None  # Guard.actor
+        out = combat_tools.end_turn(who=core.H.get(P1), wait=False)
+        self.assertIn("skipped", out)
+        self.assertIn("is downed: nothing to play, its turn passes by itself", out)
+        # live smoke L5: only a thrown potion heals another, and this server can't throw one: no potion named
+        self.assertIn("Healing Word or Help (adjacent) from an ally gets it up.", out)
+        self.assertNotIn("potion", out)
+        self.assertNotIn("FAILED", out)
+        self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], ["act.end_turn"])
+        self.g.refuse_if = lambda op, a: "character is dead" if op == "act.end_turn" else None
+        out = combat_tools.end_turn(who=core.H.get(P1), wait=False)
+        self.assertIn("is dead: it has no turn", out)
+        self.assertNotIn("FAILED", out)
+
+    # Live 10 m1 a2 (D297): Lae'zel at 0 HP without the DOWNED status (the mod's row reads downed by its HP; the
+    # game rolled no death saving throw and kept her turn open). end_turn said "downed ... its turn passes by itself",
+    # sent no end and waited 80 s on that open turn. The mod ends it (it refuses only DOWNED or dead).
+    def test_zero_hp_member_without_downed_status_gets_its_turn_ended(self):
+        p1 = next(o for o in self.g.combat["order"] if o["uuid"] == P1)
+        p1.update(hp_pct=0, downed=True)
+
+        def advance(op, args):  # the end goes through: Lae'zel's turn next
+            if op == "act.end_turn":
+                self.g.combat["current"] = P2
+        self.g.on_start = advance
+        t = time.monotonic()
+        out = combat_tools.end_turn(who=core.H.get(P1))
+        self.assertLess(time.monotonic() - t, 5.0)
+        self.assertEqual([o for o, _ in self.g.ops("act.") if o not in NOT_JOBS], ["act.end_turn"])
+        self.assertNotIn("passes by itself", out)
+        self.assertNotIn("skipped", out)
+        self.assertIn("is at 0 HP without the Downed status (no death saving throws): the game kept its turn open", out)
+        self.assertIn(f"now {core.H.get(P2)}'s turn", out)
 
     def test_a_busy_answer_after_the_hud_press_checks_the_turn(self):
         """act2-fights-analysis fix 3 (launch-v1 deepseek windmill r3, balthazar r1, act3_gold_max r1): the press

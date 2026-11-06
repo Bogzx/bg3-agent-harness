@@ -42,6 +42,19 @@ function U.comp(entity, name)
     return nil
 end
 
+-- An extender array's elements 1..#a as a Lua list (a Lua list's too), the walk bounded by its length: never an
+-- open-ended ipairs over extender userdata. A set's index is membership (bg3se LuaSetProxy.inl: every integer reads
+-- false), so ipairs over one never ends: live check 13d, SpellList.Spells hung the server. Errors when the length
+-- doesn't read or passes `cap` (U.ITEMS_CAP).
+U.ITEMS_CAP = 100000
+function U.items(a, cap)
+    local n = #a
+    if type(n) ~= "number" or n < 0 or n > (cap or U.ITEMS_CAP) then error("a list of length " .. tostring(n), 0) end
+    local out = {}
+    for k = 1, n do out[k] = a[k] end
+    return out, n
+end
+
 -- Load a module by path relative to the Lua/ folder; a missing or broken
 -- module is reported but doesn't stop the rest of the mod from loading.
 function U.require(path)
@@ -50,6 +63,42 @@ function U.require(path)
         Ext.Utils.PrintWarning("[BG3AI] failed to load " .. path .. ": " .. tostring(err))
     end
     return ok
+end
+
+-- Sides (an arena: two teams, two bridges), as the mod's modules call them. Shared/RPC.lua implements them; these
+-- shims keep a module working without it (a stubbed RPC: no side, today's path).
+local function rpcFn(name)
+    local R = BG3AI.RPC
+    return R and R[name]
+end
+function U.side()
+    local f = rpcFn("side")
+    return f and f() or nil
+end
+function U.with_side(side, fn, ...)
+    local f = rpcFn("with_side")
+    if f then return f(side, fn, ...) end
+    return fn(...)
+end
+function U.each_side(fn, ...)
+    local f = rpcFn("each_side")
+    if f then return f(fn, ...) end
+    return fn(...)
+end
+function U.sided(owner, key)
+    local f = rpcFn("sided")
+    if f then return f(owner, key) end
+    return owner[key]
+end
+function U.sget(owner, key)
+    local f = rpcFn("sget")
+    if f then return f(owner, key) end
+    return owner[key]
+end
+function U.sset(owner, key, v)
+    local f = rpcFn("sset")
+    if f then return f(owner, key, v) end
+    owner[key] = v
 end
 
 return U

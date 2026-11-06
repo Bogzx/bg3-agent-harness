@@ -752,3 +752,20 @@ test("known: ground seen earlier stays known when the seen set fills (FAIRNESS: 
     N.SEEN_MAX = saved
     if not ok then error(err, 0) end
 end)
+
+test("known: in an arena a side's seen set and its generations are its own", function()
+    local savedMax, savedSide, savedSeen, side = N.SEEN_MAX, RPC.side, seen, "A"
+    N.SEEN_MAX, RPC.side = 4, function() return side end
+    local ok, err = pcall(function()
+        seen = function() return true end
+        for i = 1, 6 do eq(N.known(nil, { i, 0, 31 }), true, "A sees " .. i) end -- past A's cap: a rollover
+        seen = function() return false end
+        eq(N.known(nil, { 1, 0, 31 }), true, "A remembers it from its old generation")
+        side = "B"
+        eq(N.known(nil, { 1, 0, 31 }), false, "B never saw it")
+        side = nil
+        eq(N.known(nil, { 1, 0, 31 }), false, "nor did the no-side set")
+    end)
+    N.SEEN_MAX, RPC.side, seen, N._sides = savedMax, savedSide, savedSeen, nil
+    if not ok then error(err, 0) end
+end)

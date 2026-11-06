@@ -96,6 +96,8 @@ game unless it says so.
   10G as before. The relaunch reason names the kill the game really runs under, not always 9000.
 - The game's swap cap defaults to 4G under a `BG3AI_GAME_MEMORY_MAX` below 10G (`ramwatch.default_swap_max`): the v0.10
   pilot's act3_gold_max runs went past 2 GB of swap at 8G. 10G keeps 2G, and `BG3AI_GAME_SWAP_MAX` always wins.
+- An arena match isolates the mod's nav files and scenario.json as a bench run does: moved into `<run_dir>/reset/` before the
+  game starts and back on every way out, the match's own kept in `reset/run/`. It used to overwrite the avatar's nav mirror.
 
 - Casts the harness starts now roll their dice. A cast an Osiris `UseSpell` or
   `UseSpellAtPosition` starts carries IgnoreSpellRolls (live 2026-11-03: its options also name IgnoreHasSpell,
@@ -178,6 +180,11 @@ game unless it says so.
   did not stand up this turn: standing needs half its movement)"), and the movement figure shows 0. A knocked-down
   status without that condition gives its own effect, read from its RemoveEvents/RemoveConditions. Outside its own
   turn nothing changes.
+  In a match, where every member's turn starts in the round's burst before any phase, the mod stands a prone member up
+  at its own phase start for half its movement when it has that much (REVIEW-12 (a)); it takes that half itself unless
+  the status's removal already did. The arena rules state the house rule for durations (an N-turn status lasts the rest
+  of its round plus N-1 rounds) and the prone rule. Not run live: whether the game's removal of the status spends the
+  half itself is w10 ST-P5(f) (`Ar.PRONE_DEDUCT` switches the mod's half off).
 - `runner/launch_game.sh` checks the game build (`tools/ci/game_build.py` against `WANT_BUILD`): another build is
   refused, exit 6, also with `--dry-run`, unless `BG3AI_ALLOW_OTHER_BUILD=1`; when it can't tell, or an update is
   pending, it warns. `--no-bg3le` skips it. When the game exits the launcher prints the game log and the bg3le log

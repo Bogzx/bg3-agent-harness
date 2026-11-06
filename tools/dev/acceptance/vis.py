@@ -23,6 +23,13 @@ from .core import (
     took,
 )
 
+# G.disabling_info for SLEEPING_EYEBITE|HOLD_PERSON|PRONE|FRIGHTENED|BLEEDING: effect/fix, GuardCast.lua's prone text
+V18_WANT = (
+    "cannot act/an adjacent ally's Help (an action) ends it; any damage ends it|cannot act/it saves again "
+    "each turn|stands up at its turn start for half its movement/an adjacent ally's Help (an action) ends "
+    "it|cannot move/nil|-"
+)
+
 
 def sec_vis() -> None:
     """vis overnight batch (2026-10-10/11), read-only on the base save (no jump is cast): the drop extends the jump
@@ -365,12 +372,7 @@ def sec_vis() -> None:
         'out[#out + 1] = i and (tostring(i.effect) .. "/" .. tostring(i.fix)) or "-" end '
         'return table.concat(out, "|")'
     )
-    want = (
-        "cannot act/an adjacent ally's Help (an action) ends it; any damage ends it|cannot act/it saves again "
-        "each turn|stands up at its turn start for half its movement/an adjacent ally's Help (an action) ends "
-        "it|cannot move/nil|-"
-    )
-    item("vis: V18 disabling statuses read from the stats", "PASS" if v == want else "FAIL", v[:400])
+    item("vis: V18 disabling statuses read from the stats", "PASS" if v == V18_WANT else "FAIL", v[:400])
     # 20. V10: Mystra's statue in get_nearby (loads its own save)
     mystra_statue_probe()
     load_verified(BASE)

@@ -5,13 +5,59 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
-## 2026-11-04: EVENTS leaves out the old round's turn ends
+## 2026-11-05: a potion aimed at someone else is refused
 
-- When a turn group closes, the game starts the new round's turns before it ends the old round's, so EVENTS could
-  show `turn_ended X` after X's new turn started, in the same result or in the next one. When the mod tags a turn
-  event with its `round`, a `turn_ended` of a round older than that member's last `turn_started` is left out. The
-  tag itself is not printed. Turn events without a round are shown as before. Port of arena ad8fc751, with the mod's
-  pairing and round tag (arena eac2da4a, 00cf506f).
+- `use_ability` with a potion and another character as target answers `<potion> is drunk by whoever uses it: X would
+  drink it, not Y; nothing used`. Before, the user drank it and the target was dropped without a word (live smoke
+  2026-11-03 L5). On a side's server, which makes no clicks, the line also says `throwing items isn't available`. A
+  potion aimed at its own user is drunk as before. No tool description changed.
+
+## 2026-11-04: get_inventory's notes leave out the server's off tools
+
+- The JUNK line's notes (`trade sell=junk ...`, `manage_inventory op=camp ...`) and BETTER GEAR IN BAGS'
+  `(equip_best equips all)` go through the same off-tool filter as ALERTS (`economy.without_off_tools`): a note that
+  names a tool the server switched off is left out, and the rest of the line stays. Under arena-v1 (trade and camp
+  off) the JUNK line ends at its weight. REVIEW-18f NOTE 2. No tool description changed.
+
+## 2026-11-04: tool results state facts, not advice or the next call
+
+- facts-text-3 (website ops/logs/facts-text-3.md, rows A1-A26 and B1-B48): about 100 result texts lost their gameplay
+  advice ("heal first", "sell at another trader", "Get farther first", "Now loot and heal up") and their next-call
+  imperatives ("call save_game again", "then talk_to again", "try get_frontier, a door, or a jump"). What each text
+  said about the game stays; where the advice named a fact the code holds, the fact stays ("traders sell Trap Disarm
+  Toolkits", "travel_to(avoid_hazards='cross') crosses anyway", "the scroll reaches 9 m"). Session protocol and
+  argument-format errors are unchanged, and so are tools/list and the golden dump.
+- compact.py's `saving` and `sell_junk` patterns are gone with the texts they shortened.
+- The downed text keeps Healing Word or Help without a potion (4662f225).
+
+## 2026-11-04: in a fight EVENTS shows the whole batch; casts and party rows are never cut
+
+- While a fight is open (or the drained batch has fight events), a result's EVENTS shows every row of the batch, up
+  to 200 after the folds; out of combat it stays the newest 25. REVIEW-14: 264 of launch-v1's 283 cut results were
+  inside a fight (median 14 rows cut, p90 51, max 150), the enemies' turns the agent could not see.
+- On top of spell_info, every `cast` row and every row whose target or roller is a party member is shown even when
+  the cap cuts the rows around it. A folded row (status group, zero-damage run) is kept when any of its rows would be.
+  `(+N earlier events)` counts only the rows not shown. No tool or tool description changed.
+- Arena: a side's server (BG3AI_SIDE) plays one match, a fight from start to end, so every batch is shown whole (up
+  to 200) whichever turn events of the shared turn group reach that side; its pinned party is its own team, the same
+  rule for A and B. The events are that side's own (the mod filters them per side before the bridge drains them).
+
+## 2026-11-04: the EVENTS tail keeps spell_info; back-to-back zero-damage rows share one
+
+- A `spell_info` line is shown even when it falls before the 25 newest events: it comes once per spell per fight, so
+  a cut one never came back. w11 L4: one end_turn + wait_for (44.6 s) showed `(+56 earlier events)` and Balthazar's
+  Cloudkill spell_info was among them. `(+N earlier events)` counts only what is not shown.
+- Back-to-back `damage ... amount=0` rows that differ only in their target share one row, each target with its count:
+  `damage source={e7 name=Balthazar} type= amount=0 x9 on 5: Apostate Defender e9, Apostate Defender e12 x2, ...`.
+  Only consecutive rows: a damage event names no spell, and a miss is a zero row next to its cast, so the order is
+  unchanged. A single zero row reads as before.
+
+## 2026-11-04: screenshot waits where the running game writes
+
+- `screenshot` looks for the PNG in the folder the game's capture layer writes to (the output_dir in the running
+  game's VK_LAYER_MESA_SCREENSHOT_CONFIG), before BG3AI_SHOTS_DIR or runtime/shots. v010 window 9: a bridge from
+  another checkout waited 5 s in its own folder while the game wrote each PNG elsewhere in 0.5 s. Its timeout now
+  names the file it waited for: `game did not present a frame in time (minimized or loading?): no <path>`.
 
 ## 2026-11-05: fairness: nothing about a character or marker the screen doesn't show
 
@@ -115,35 +161,6 @@ Facts stay; the call the agent might make next goes (no-coaching rule). Tool des
   sold and bought with its price (SOLD/BOUGHT)" (it said confirm calls show the table only). Golden regenerated;
   the release's tools.defs_sha256 moves.
 
-## 2026-11-04: tool results state facts, not advice or the next call
-
-- facts-text-3 (website ops/logs/facts-text-3.md, rows A1-A26 and B1-B48): about 100 result texts lost their gameplay
-  advice ("heal first", "sell at another trader", "Get farther first", "Now loot and heal up") and their next-call
-  imperatives ("call save_game again", "then talk_to again", "try get_frontier, a door, or a jump"). What each text
-  said about the game stays; where the advice named a fact the code holds, the fact stays ("traders sell Trap Disarm
-  Toolkits", "travel_to(avoid_hazards='cross') crosses anyway", "the scroll reaches 9 m"). Session protocol and
-  argument-format errors are unchanged, and so are tools/list and the golden dump.
-- compact.py's `saving` and `sell_junk` patterns are gone with the texts they shortened.
-
-## 2026-11-04: in a fight EVENTS shows the whole batch; casts and party rows are never cut
-
-- While a fight is open (or the drained batch has fight events), a result's EVENTS shows every row of the batch, up
-  to 200 after the folds; out of combat it stays the newest 25. REVIEW-14: 264 of launch-v1's 283 cut results were
-  inside a fight (median 14 rows cut, p90 51, max 150), the enemies' turns the agent could not see.
-- On top of spell_info, every `cast` row and every row whose target or roller is a party member is shown even when
-  the cap cuts the rows around it. A folded row (status group, zero-damage run) is kept when any of its rows would be.
-  `(+N earlier events)` counts only the rows not shown. No tool or tool description changed.
-
-## 2026-11-04: the EVENTS tail keeps spell_info; back-to-back zero-damage rows share one
-
-- A `spell_info` line is shown even when it falls before the 25 newest events: it comes once per spell per fight, so
-  a cut one never came back. w11 L4: one end_turn + wait_for (44.6 s) showed `(+56 earlier events)` and Balthazar's
-  Cloudkill spell_info was among them. `(+N earlier events)` counts only what is not shown.
-- Back-to-back `damage ... amount=0` rows that differ only in their target share one row, each target with its count:
-  `damage source={e7 name=Balthazar} type= amount=0 x9 on 5: Apostate Defender e9, Apostate Defender e12 x2, ...`.
-  Only consecutive rows: a damage event names no spell, and a miss is a zero row next to its cast, so the order is
-  unchanged. A single zero row reads as before.
-
 ## 2026-11-04: junk inside bags is marked as such
 
 - `get_inventory` lists with bags expanded (any filter but equipped/notable) mark an item inside a bag `in <bag>`,
@@ -179,13 +196,6 @@ Facts stay; the call the agent might make next goes (no-coaching rule). Tool des
   couldn't be moved": an item this trade already put on its own side of the table is not moved again (a second move
   would take it back off) and is listed `ALREADY ON THE TABLE: e83 Scroll of Revivify, ...`. An id on no side still
   fails the confirm (NOT MOVED). launch-v1: 67 such failures in 19 runs (haiku act3_gold_max r2 seq 16-21).
-
-## 2026-11-04: screenshot waits where the running game writes
-
-- `screenshot` looks for the PNG in the folder the game's capture layer writes to (the output_dir in the running
-  game's VK_LAYER_MESA_SCREENSHOT_CONFIG), before BG3AI_SHOTS_DIR or runtime/shots. v010 window 9: a bridge from
-  another checkout waited 5 s in its own folder while the game wrote each PNG elsewhere in 0.5 s. Its timeout now
-  names the file it waited for: `game did not present a frame in time (minimized or loading?): no <path>`.
 
 ## 2026-11-04: react(use=true) clicks a lone reaction row instead of pressing its command
 
@@ -435,6 +445,56 @@ Facts stay; the call the agent might make next goes (no-coaching rule). Tool des
   `(who=<member> on each action, end_turn for each)`; end_turn on an ended member says "its turn already ended (the
   rest of its turn group is still acting)"; camp in a fight "a fight is on: finish it first, then camp()".
 - Compaction keeps its combat_turn rules for recorded runs (golden replay, obs_size).
+
+## 2026-11-02: end_turn on a member who can't act follows the mod's answer
+
+- `end_turn` no longer skips a member just because its combat row reads `downed` (the row says so for the DOWNED
+  status and for 0 HP). It sends the end, and the mod's refusal decides: downed gives the old "is downed: nothing to
+  play, its turn passes by itself" text, dead gives "is dead: it has no turn". A member at 0 HP without the Downed
+  status gets its turn ended, with "is at 0 HP without the Downed status (no death saving throws): the game kept its
+  turn open". Before, that member's turn stayed open and `end_turn` waited 80 s on it.
+
+## 2026-11-02: a combat row that ended its turn no longer says current
+
+- get_combat_state rows print `current` only when the row has not `ended`: `ended current` is now `ended`. An ended
+  row is always in the current turn group (the mod sets `ended` only there), so nothing is lost. In a two-team match
+  the game puts every player character in one shared group, so every row used to read `current` next to the
+  `COMBAT current=<the acting one>` line.
+
+## 2026-11-02: EVENTS leaves out the old round's turn ends
+
+- When a turn group closes, the game starts the new round's turns before it ends the old round's, so EVENTS could
+  show `turn_ended X` after X's new turn started, in the same result or in the next one. When the mod tags a turn
+  event with its `round`, a `turn_ended` of a round older than that member's last `turn_started` is left out. The
+  tag itself is not printed. Turn events without a round are shown as before.
+
+## 2026-11-01: a server can play one side of a two-team match
+
+A server started without `BG3AI_SIDE` serves the same tools and rules as before and sends the mod the same bytes.
+
+- `BG3AI_SIDE=A|B`: every mod op carries the side, and the mod answers from that team's view. Any other value stops
+  the server at startup.
+- `ui.state` with a side: a reaction prompt for the other side's character reads as `screen: game`, with a
+  `WAITING a reaction prompt of the other side is open: the game waits for that side's answer` line and without its
+  rows. No wait, interrupt or turn plan stops on it or answers it.
+- Refusals from the mod are shown word for word: `not your turn (side <X> is acting)`, `<name> is not on your side`,
+  `not your job`, `not your reaction`.
+- `BG3AI_TOOLS_OFF` takes the named list `arena-v1` (capabilities.LISTS). It removes the memory, wiki, reload,
+  saves, screenshots and raw_input groups, and the travel, rest, conversation, roll, trade, loot, levelling, journal
+  and map tools. `confirm` and `dismiss_popups` stay, since a popup can come up mid-fight.
+- A side's server adds the match's rules (`rules/arena.md`) after the other rules.
+- A side's server makes no clicks or key presses, because both sides share one game screen. `click_on`, `click`,
+  `press_key`, `flee`, reading a scroll or using a carried item other than a potion (a potion is drunk
+  without a click), the walk-up-and-click actions and a reaction answered by a row click fail at
+  once with "not available in a two-team match: both sides share one game screen, so this server makes no clicks or
+  key presses". `end_turn` ends a turn through the mod only, with no HUD End Turn press. A multi-target or two-step
+  cast goes as with those routes off. With a side, `ui.selected` without a uuid means the other side's character
+  holds the HUD.
+- In every condition, ALERTS leaves out an alert that names a tool the server has off, e.g. `trade sell=junk` when
+  `trade` is off.
+- With a side, every turn end waits up to 22 s for the mod's answer (`end_turn` and a stunned member's end), since
+  the mod's last end of a turn group can take up to 20 s to settle. Before, `end_turn` answered "not finished" after
+  15 s. Normal play keeps 15 / 5 s.
 
 ## 2026-11-01: fast_travel from camp names the conversation screen; get_status stops re-sending a refused re-chain
 

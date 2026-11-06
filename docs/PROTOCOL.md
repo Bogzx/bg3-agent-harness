@@ -113,17 +113,21 @@ in [ARCHITECTURE.md](ARCHITECTURE.md), "The mod"). Ops are registered wherever t
 
 ### Events (`Server/Events.lua`; owner: **vis**)
 `RPC.push(kind, data)` for visible facts, with kinds such as `combat_started`, `combat_ended`,
-`turn_started{uuid}`, `turn_ended`, `round_started`, `damage{source?,target,amount,type}`,
+`turn_started{uuid, round?}`, `turn_ended{uuid, round?}` (round: the round the turn belongs to, absent when the mod
+never saw that combat's round start; at a round change the game sends the new round's turn_started before the old
+round's turn_ended), `round_started`, `damage{source?,target,amount,type}`,
 `status_applied/removed` (visible statuses only), `died`, `downed`, `dialogue_started{speakers}`,
 `dialogue_ended`, `roll_result{roller,skill,dc?,total,success}`, `quest_update{title}`, `xp`,
 `level_up_available{uuid}`, `item_added{owner,name,count}`, `gold_changed`, `level_changed{level}`,
 `teleported`, `rest`, `approval{npc,delta}` (as the toast shows), `used{char,item}`, `opened{item}`,
 `spotted{uuid}` (a hidden thing revealed to the party), `cast{caster,spell,target?}` for visible
 casters, `spell_info` (a string: an enemy spell's tooltip text from its stats, the first time a fight shows it cast
-in view or on a row's concentration), `walk_fell{uuid,from,to,m}` (our walk dropped m metres: no teleport), and
-`moved_done{uuid,move_id}`.
+in view or on a row's concentration; in an arena, per side, never from the harness's own reads),
+`walk_fell{uuid,from,to,m}` (our walk dropped m metres: no teleport), and `moved_done{uuid,move_id}`. In an arena,
+`turn_forced{uuid, name, why}` goes to the side whose turn the arena runner ended at a cap (`act.end_turn {forced}`:
+why = which cap), once per phase.
 
-### Navigation (`Server/Navigation.lua` + `NavigationReach.lua`, `NavigationTerrain.lua`, `NavigationRoute.lua`, `NavigationOps.lua`, `NavigationDoors.lua`, `NavigationSpots.lua`; owner: **vis**)
+### Navigation (`Server/Navigation.lua` + `NavigationSides.lua`, `NavigationReach.lua`, `NavigationTerrain.lua`, `NavigationRoute.lua`, `NavigationOps.lua`, `NavigationDoors.lua`, `NavigationSpots.lua`; owner: **vis**)
 | op | ctx | args | result (sketch) |
 |---|---|---|---|
 | `nav.path` | S | `{char?, pos \| target}` | `{reachable, length_m, nodes, needs_jump?, within_movement?, movement_left, approach_pos?}` or `{reachable:false, straight_m, error_cause}`; points > 80 m → `{estimate:true, straight_m}`; a pos the party hasn't seen or walked (`N.known`) → `{unknown_goal:true, straight_m, dir, dy}` |

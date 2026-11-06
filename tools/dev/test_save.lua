@@ -160,6 +160,7 @@ BG3AI = {
 }
 
 dofile(LUA .. "/Client/UIState.lua")
+dofile(LUA .. "/Client/UIStateArena.lua")
 local S = BG3AI.UIState
 S.region = function() return nil end
 S.notifications = function() return nil end

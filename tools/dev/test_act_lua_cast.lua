@@ -168,7 +168,7 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
     eq(d[1].name, "Sleeping"); eq(d[1].turns, 7); eq(d[1].effect, "cannot act")
     eq(d[1].fix, "an adjacent ally's Help (an action) ends it; any damage ends it", "sleep fix")
     eq(d[2].effect, "cannot act"); eq(d[2].fix, "it saves again each turn", "hold fix")
-    eq(d[3].effect, "stands up at its turn start for half its movement")
+    eq(d[3].effect, "stands up at its turn start for half its movement"); eq(d[3].prone, true, "prone")
     eq(d[3].fix, "an adjacent ally's Help (an action) ends it", "prone fix")
     eq(d[4].effect, "cannot move"); eq(d[4].fix, nil, "fear: no fix")
     eq(d[5].name, "Lethargic")

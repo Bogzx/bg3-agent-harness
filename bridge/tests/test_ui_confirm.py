@@ -178,6 +178,31 @@ class Confirm(Base):
         self.assertIn("pressed=Yes", out)
         self.assertIn("confirm", session.ALWAYS_LOAD)
 
+    def test_in_a_match_the_side_not_acting_answers_no_box(self):
+        # arena-fight-analysis #1: a box on the one shared screen is the acting side's; side B pressed nothing
+        from bg3ai.game import GameError
+        seen = []
+
+        def rpc(op, args=None, context="server", timeout=12.0):
+            seen.append(op)
+            if op == "guard.side_gate":
+                raise GameError("not your turn (side A is acting)")
+            return {}
+        self.g.rpc = rpc
+        self.g.try_rpc = lambda op, args=None, context="server", default=None: seen.append(op) or default
+        self.g.run_job = lambda *a, **kw: seen.append(a[0]) or JobResult("done", {"pressed": "Yes"})
+        self.g.side = "B"
+        self.assertEqual(uitools.confirm("yes"), "FAILED: not your turn (side A is acting)")
+        self.assertEqual(uitools.dismiss_popups(), "FAILED: not your turn (side A is acting)")
+        self.assertEqual(seen, ["guard.side_gate", "guard.side_gate"])
+        self.g.side = None  # normal play: no gate call
+        seen.clear()
+        uitools.confirm("yes")
+        uitools.dismiss_popups()
+        self.assertNotIn("guard.side_gate", seen)
+        self.assertIn("ui.confirm", seen)
+        self.assertIn("ui.dismiss", seen)
+
     def test_long_rest_confirm_flag(self):
         seen = []
         self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: (

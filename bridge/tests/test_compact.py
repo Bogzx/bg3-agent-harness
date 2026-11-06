@@ -119,6 +119,31 @@ class CheckerCatchesLosses(unittest.TestCase):
         self.assertEqual(cc.check("ALERTS gold 0", "ALERTS (unchanged)", ["ALERTS gold 0"], "x\nALERTS gold 0\n"), [])
 
 
+class CastIdsAnyKeyOrder(unittest.TestCase):
+    """The event's keys come in any order (live B1 window 2026-11-06: spell= last, so the checker called the dropped id
+    a lost fact in end_turn's result, where a paused cast's event landed)."""
+
+    def problems(self, line: str) -> list[str]:
+        raw = "EVENTS\n" + line
+        c = compact.Compactor()
+        return cc.check(raw, c.apply("end_turn", raw), c.elided, "")
+
+    def test_an_id_beside_the_display_name_is_no_fact_in_any_order(self):
+        for line in (
+            "  cast roll=attack caster={e3 name=Karlach} name=Ranged Attack spell=Projectile_MainHandAttack",
+            "  cast caster={name=Karlach e3} name=Ranged Attack roll=attack spell=Projectile_MainHandAttack",
+            "  cast caster={e3 name=Karlach} spell=Projectile_MainHandAttack roll=attack name=Ranged Attack",
+        ):
+            self.assertEqual(self.problems(line), [], line)
+
+    def test_an_id_with_only_the_casters_name_beside_it_is_kept_and_its_loss_is_caught(self):
+        raw = "EVENTS\n  cast roll=attack caster={e3 name=Karlach} spell=Projectile_MainHandAttack"
+        out = compact.Compactor().apply("end_turn", raw)
+        self.assertIn("Projectile_MainHandAttack", out)
+        got = cc.check(raw, out.replace(" spell=Projectile_MainHandAttack", ""), [], "")
+        self.assertEqual(got, ["lost atoms: ['Projectile_MainHandAttack']"])
+
+
 class Rules(unittest.TestCase):
     def test_refs_both_orders_and_bare(self):
         self.assertEqual(compact.refs("item={name=Sphincter e23} char={e1 name=Orsen Vale}"),
@@ -257,6 +282,22 @@ class Rules(unittest.TestCase):
         folded = "  is_current relation=party e29 Lae'zel @(-45,3,-404) initiative=4 can_act from={e1=[1.6,1]} hp_pct=100"
         self.assertEqual(compact.combat_row(folded),
                          "  e29 Lae'zel party init 4 hp 100% current can_act @(-45,3,-404) from e1 1.6m")
+
+    def test_an_ended_row_is_not_current(self):
+        # arena live 8: one shared group, every member "ended current" next to COMBAT current=e2 (the acting one)
+        from bg3ai.render import Handles, render_combat
+        u1, u2 = (f"00000000-0000-0000-0000-{n:012d}" for n in (41, 2))
+        order = [{"uuid": u1, "name": "Gale", "relation": "hostile", "initiative": 5, "hp_pct": 0, "is_current": True,
+                  "ended": True},
+                 {"uuid": u2, "name": "Wyll", "relation": "party", "initiative": 2, "hp_pct": 10, "is_current": True,
+                  "can_act": True}]
+        raw = render_combat({"active": True, "round": 1, "current": u2, "order": order}, Handles()).split("\n")
+        self.assertEqual(raw[1:], ["  e2 name=Gale relation=hostile initiative=5 hp_pct=0 ended",
+                                   "  e1 name=Wyll relation=party initiative=2 hp_pct=10 is_current can_act"])
+        self.assertEqual(compact.combat_row("  is_current ended relation=party e3 Gale initiative=5 hp_pct=0"),
+                         "  e3 Gale party init 5 hp 0% ended")
+        self.assertEqual(compact.combat_row("  is_current can_act relation=party e2 Wyll initiative=2 hp_pct=10"),
+                         "  e2 Wyll party init 2 hp 10% current can_act")
 
     def test_reported_positions_round_offered_targets_do_not(self):
         line = "REMEMBERED e5 Imp last seen @(-36.6,15.2,-432.3) 38s ago; closest walkable spot (-46.2,5.1,-361.8)"

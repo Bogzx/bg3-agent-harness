@@ -56,7 +56,20 @@ OVERFLOW_RE = re.compile(
     r"exceeds the model's|reduce the length",
     re.IGNORECASE,
 )
+# What a match forfeits on (arena rule A6, context_full) is its own list, since a wrong forfeit is a valid loss and a
+# miss is only a rerun: OVERFLOW_RE less "exceeds the model's" (a 400 on max_tokens says it too) and "too many tokens"
+# (throttles say it: Bedrock's, a 429's), plus Anthropic's "input length and max_tokens exceed context limit"
+FULL_CONTEXT_RE = re.compile(
+    r"context.?length|maximum context|context window|prompt is too long|reduce the length|exceeds? context limit",
+    re.IGNORECASE,
+)
+THROTTLE_RE = re.compile(r"rate.?limit|too many requests|throttl", re.IGNORECASE)
 EXTENSION_FAILED_RE = re.compile(r"Failed to load extension .*bg3\.ts", re.DOTALL)
+
+
+def context_full(error: str) -> bool:
+    """An API error's text says the conversation no longer fits the model's context (the arena's check)."""
+    return bool(FULL_CONTEXT_RE.search(error)) and not THROTTLE_RE.search(error)
 
 
 def _obj(v: object) -> Json:
@@ -275,7 +288,9 @@ class PiParser:
                 return self._init() if self.server_tools is not None else []
             if msg.get("role") == "user":
                 self._stamp(msg)
-                return []
+                # A resumed process has no system message: init comes at the prompt, the model thinks from then (the
+                # arena's ModelClock starts at init: at the first response it was charged 0, REVIEW-18i)
+                return self._init() if self.server_tools is not None else []
             if msg.get("role") == "assistant":
                 return self._assistant(msg)
             return []

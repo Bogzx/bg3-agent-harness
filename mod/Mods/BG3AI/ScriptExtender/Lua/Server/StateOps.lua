@@ -229,7 +229,8 @@ timed("state.entity", function(args)
     if comp(e, "ServerCharacter") then
         if ctx.is_party[u] then return partyBrief(ctx, u, selectedCharacter(ctx.party)) end
         if not V.characterVisible(ctx, u, e) then
-            local m, seen = V.memory[u], V.lastSeen(u) -- this level only (a position elsewhere leads nowhere)
+            -- this level only (a position elsewhere leads nowhere)
+            local m, seen = U.sided(V, "memory")[u], V.lastSeen(u)
             if m and seen then return { uuid = u, name = m.name, visible = false, last_pos = seen.pos, ago_s = seen.ago_s } end
             error("not visible", 0)
         end
@@ -287,6 +288,8 @@ RPC.register("state.timings", function() return S.lastMs or {} end)
 -- Fairness self-test: per-rule counts of what the filter hid around the
 -- party (no names, no ids), so the filter can be audited without leaking.
 RPC.register("dev.fairness_probe", function(args)
+    -- the harness's: counts of what a side must not see (REVIEW-18c)
+    if RPC.Ctx.side then error("dev.fairness_probe is the harness's (no side)", 0) end
     local ctx = V.context()
     local radius = tonumber(args.radius) or 30
     local center = ctx.observers[1] and ctx.observers[1].pos

@@ -8,7 +8,7 @@ local truthy = U.truthy
 local osi = V.osi
 local round = U.round
 local I = N.inner
-local store, DIRS, DIR_VEC, floorAt = I.store, I.DIRS, I.DIR_VEC, I.floorAt
+local DIRS, DIR_VEC, floorAt = I.DIRS, I.DIR_VEC, I.floorAt
 
 function N.safeSpot(charUuid, maxM, toward)
     local e = V.entity(charUuid)
@@ -889,7 +889,7 @@ end
 -- cell on every far route.
 N.cellCenter = N.cellCenter or {}
 function N.nearestVisited(level, goal)
-    local l = level and store().levels[level]
+    local l = level and I.walkedStore(level)
     if not l or not goal then return nil end
     local best, bd
     local cc = N.cellCenter

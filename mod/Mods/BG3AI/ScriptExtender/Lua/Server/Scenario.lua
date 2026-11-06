@@ -297,26 +297,31 @@ pcall(Ext.Osiris.RegisterListener, "LevelGameplayStarted", 2, "after", function(
 end)
 
 ------------------------------------------------------------------------
--- Ops (harness only; never an MCP tool). All refused without the switch.
+-- Ops (harness only; never an MCP tool). All refused without the switch, and to a side (a match's game runs with the
+-- switch; scn.karmic {set} would change the dice), as arena.* is (REVIEW-18c).
 ------------------------------------------------------------------------
 
 local function op(name, fn)
     RPC.register(name, function(args)
+        if RPC.Ctx.side then error(name .. " is the harness's (no side)", 0) end
         refuse()
         return fn(args or {})
     end)
 end
 
--- {seed}: write it now and record it for every later load.
-op("scn.seed", function(args)
-    local seed = math.tointeger and math.tointeger(tonumber(args.seed)) or tonumber(args.seed)
+-- Write the seed now and record it for every later load (scn.seed; arena.setup with the arena's seed).
+function S.set_seed(value)
+    local seed = math.tointeger and math.tointeger(tonumber(value)) or tonumber(value)
     if type(seed) ~= "number" or seed < 0 or seed % 1 ~= 0 or seed > 2000000000 then
         error("seed must be an integer in 0..2000000000")
     end
     S.rec.seed = seed
     save()
     return S.applySeed(seed)
-end)
+end
+
+-- {seed}: write it now and record it for every later load.
+op("scn.seed", function(args) return S.set_seed(args.seed) end)
 
 -- {} reads; {set = false|true} turns Karmic Dice off / on (read back).
 op("scn.karmic", function(args)

@@ -1,0 +1,339 @@
+{
+ "schema": "arena-builds.v1",
+ "name": "l5_4v4_v1",
+ "title": "Level 5: Fighter (Battle Master), Cleric (Life), Wizard (Evocation), Rogue (Thief); each its hireling's race and background",
+ "tier": "L5",
+ "level": 5,
+ "game_build": "25605617",
+ "draft": "no reference profiles yet (plan S3: one respecced hireling per build at this level); the Cleric and Wizard hireling templates are not read yet, and the kit's subclass, improvement and prepared-spell parts are not in arena.mirror_kit yet (website repo ops/logs/arena-4v4-builds.md G5, G10) (2026-11-04)",
+ "builds": [
+  {
+   "id": "fighter",
+   "class": "Fighter",
+   "subclass": "BattleMaster",
+   "race": "HalfElf_Wood",
+   "background": "Soldier",
+   "role": "frontline: heavy armour, a longsword two-handed, Battle Master maneuvers",
+   "script": {
+    "cc": {
+     "abilities": {
+      "Strength": 15,
+      "Dexterity": 13,
+      "Constitution": 14,
+      "Intelligence": 10,
+      "Wisdom": 12,
+      "Charisma": 8
+     },
+     "ability_bonus": [
+      "Strength",
+      "Constitution"
+     ],
+     "skills": [
+      "Perception",
+      "Survival"
+     ],
+     "passives": [
+      [
+       "FightingStyle_Defense"
+      ]
+     ]
+    },
+    "level_ups": [
+     {
+      "level": 2
+     },
+     {
+      "level": 3,
+      "passives": [
+       [
+        "PrecisionAttack",
+        "Riposte",
+        "GoadingAttack"
+       ]
+      ]
+     },
+     {
+      "level": 4,
+      "improvement": {
+       "asi": {
+        "Strength": 2
+       }
+      }
+     },
+     {
+      "level": 5
+     }
+    ]
+   },
+   "gear": [
+    "WPN_Longsword_1",
+    "WPN_Shortbow_1",
+    "ARM_ScaleMail_Body_1",
+    "ARM_Boots_Leather",
+    "OBJ_Potion_Healing",
+    "OBJ_Potion_Healing",
+    "OBJ_Potion_Healing_Greater"
+   ],
+   "reference": null
+  },
+  {
+   "id": "cleric",
+   "class": "Cleric",
+   "subclass": "LifeDomain",
+   "race": "Elf_HighElf",
+   "background": "Acolyte",
+   "role": "healer: Life Domain, mace and shield",
+   "script": {
+    "cc": {
+     "abilities": {
+      "Strength": 14,
+      "Dexterity": 10,
+      "Constitution": 14,
+      "Intelligence": 8,
+      "Wisdom": 15,
+      "Charisma": 10
+     },
+     "ability_bonus": [
+      "Wisdom",
+      "Constitution"
+     ],
+     "skills": [
+      "Medicine",
+      "Persuasion"
+     ],
+     "race_spells": [
+      "Projectile_FireBolt"
+     ],
+     "spells": [
+      [
+       "Target_SacredFlame",
+       "Target_TollTheDead",
+       "Target_Guidance"
+      ]
+     ]
+    },
+    "level_ups": [
+     {
+      "level": 2
+     },
+     {
+      "level": 3
+     },
+     {
+      "level": 4,
+      "spells": [
+       [
+        "Target_Resistance"
+       ]
+      ],
+      "improvement": {
+       "asi": {
+        "Wisdom": 2
+       }
+      }
+     },
+     {
+      "level": 5
+     }
+    ],
+    "prepared": [
+     "Target_HealingWord",
+     "Target_ShieldOfFaith",
+     "Projectile_GuidingBolt",
+     "Target_Sanctuary",
+     "Target_InflictWounds",
+     "Target_SpiritualWeapon",
+     "Target_HoldPerson",
+     "Shout_SpiritGuardians",
+     "Shout_HealingWord_Mass"
+    ]
+   },
+   "gear": [
+    "WPN_Mace_1",
+    "ARM_Shield_1",
+    "ARM_ChainShirt_Body_1",
+    "ARM_Boots_Leather",
+    "OBJ_Potion_Healing",
+    "OBJ_Potion_Healing",
+    "OBJ_Potion_Healing_Greater"
+   ],
+   "reference": null
+  },
+  {
+   "id": "wizard",
+   "class": "Wizard",
+   "subclass": "EvocationSchool",
+   "race": "Gnome_Rock",
+   "background": "Sage",
+   "role": "ranged caster: Evocation",
+   "script": {
+    "cc": {
+     "abilities": {
+      "Strength": 8,
+      "Dexterity": 14,
+      "Constitution": 14,
+      "Intelligence": 15,
+      "Wisdom": 12,
+      "Charisma": 8
+     },
+     "ability_bonus": [
+      "Intelligence",
+      "Constitution"
+     ],
+     "skills": [
+      "Investigation",
+      "Insight"
+     ],
+     "spells": [
+      [
+       "Projectile_FireBolt",
+       "Projectile_RayOfFrost",
+       "Target_ShockingGrasp"
+      ],
+      [
+       "Projectile_MagicMissile",
+       "Shout_Shield_Wizard",
+       "Target_MageArmor",
+       "Projectile_ChromaticOrb",
+       "Zone_BurningHands",
+       "Projectile_WitchBolt"
+      ]
+     ]
+    },
+    "level_ups": [
+     {
+      "level": 2,
+      "spells": [
+       [
+        "Shout_FalseLife",
+        "Shout_ExpeditiousRetreat"
+       ]
+      ]
+     },
+     {
+      "level": 3,
+      "spells": [
+       [
+        "Projectile_ScorchingRay",
+        "Target_MistyStep"
+       ]
+      ]
+     },
+     {
+      "level": 4,
+      "spells": [
+       [
+        "Target_ChillTouch"
+       ],
+       [
+        "Shout_MirrorImage",
+        "Target_Shatter"
+       ]
+      ],
+      "improvement": {
+       "asi": {
+        "Intelligence": 2
+       }
+      }
+     },
+     {
+      "level": 5,
+      "spells": [
+       [
+        "Projectile_Fireball",
+        "Target_Counterspell"
+       ]
+      ]
+     }
+    ],
+    "prepared": [
+     "Projectile_MagicMissile",
+     "Shout_Shield_Wizard",
+     "Target_MageArmor",
+     "Projectile_ChromaticOrb",
+     "Zone_BurningHands",
+     "Projectile_ScorchingRay",
+     "Target_MistyStep",
+     "Projectile_Fireball",
+     "Target_Counterspell"
+    ]
+   },
+   "gear": [
+    "WPN_Quarterstaff_1",
+    "ARM_Robe_Body_1",
+    "ARM_Shoes",
+    "OBJ_Potion_Healing",
+    "OBJ_Potion_Healing",
+    "OBJ_Potion_Healing_Greater"
+   ],
+   "reference": null
+  },
+  {
+   "id": "rogue",
+   "class": "Rogue",
+   "subclass": "Thief",
+   "race": "Human",
+   "background": "Urchin",
+   "role": "melee skirmisher: shortsword and sneak attacks",
+   "script": {
+    "cc": {
+     "abilities": {
+      "Strength": 8,
+      "Dexterity": 15,
+      "Constitution": 14,
+      "Intelligence": 12,
+      "Wisdom": 13,
+      "Charisma": 10
+     },
+     "ability_bonus": [
+      "Dexterity",
+      "Constitution"
+     ],
+     "skills": [
+      "Acrobatics",
+      "Perception",
+      "Deception",
+      "Investigation"
+     ],
+     "expertise": [
+      "Stealth",
+      "Perception"
+     ],
+     "race_skills": [
+      "Athletics"
+     ]
+    },
+    "level_ups": [
+     {
+      "level": 2
+     },
+     {
+      "level": 3
+     },
+     {
+      "level": 4,
+      "improvement": {
+       "asi": {
+        "Dexterity": 2
+       }
+      }
+     },
+     {
+      "level": 5
+     }
+    ]
+   },
+   "gear": [
+    "WPN_Shortsword_1",
+    "WPN_Shortbow_1",
+    "ARM_Leather_Body_Rogue",
+    "ARM_Boots_Leather",
+    "OBJ_Kit_ThievesTools",
+    "OBJ_Potion_Healing",
+    "OBJ_Potion_Healing",
+    "OBJ_Potion_Healing_Greater"
+   ],
+   "reference": null
+  }
+ ]
+}

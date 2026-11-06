@@ -1,0 +1,20 @@
+# Arena v0.1 go/no-go: one DeepSeek flash v DeepSeek flash pairing on arena-v0.1 (arena-v0's 2v2 Fighter + Rogue mirror
+# with each kit's race named), its two matches with the sides swapped. A self-pair is graded, never rated. Played by
+# `runner/play.py arena-matrix --matrix packages/bench/matrices/arena-v0.1-smoke.toml` (--plan prints the matches and the
+# estimate).
+# Money: at most $0.50 in all, held by the budget file. The matrix's own file runtime/budget-arena-v0.json must hold
+# {"cap": 0.5, "spent": 0} (or the arena total so far + 0.5). Each side is capped at $0.20 per match, so a match reserves
+# $0.40 and --plan's estimate says up to $0.80 for the two. The budget file stops it first: a match starts only with
+# $0.40 left, so the second one fits only if what came before spent at most $0.10 (2026-11-05: three attempts spent
+# $0.134539, two of them invalid when graded, and the matrix stopped on budget before the rerun of match 2).
+name = "arena-v0.1-smoke"
+pairs = [["profiles/deepseek-flash.toml", "profiles/deepseek-flash.toml"]]
+arenas = ["arena-v0.1"]
+repeats = 1
+
+[budget]
+file = "runtime/budget-arena-v0.json"
+max_cost = { "arena-v0.1" = 0.20 }               # USD per side per match: a paid side's reserve and cap
+
+[budget.models]
+"profiles/deepseek-flash.toml" = ["runtime/budget-deepseek.json"]

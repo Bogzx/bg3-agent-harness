@@ -154,8 +154,15 @@ local function observerFp(ctx)
     return ctx.rayFp
 end
 
+-- A verdict is its asker's: an arena side's (or, with no side, the harness's) own. Fairness audit S2-3: keyed by
+-- uuid alone, B's clear ray to a door answered A's question behind a wall within RAY_CACHE_MS (one frame runs the
+-- harness, A and B).
+local function sideKey(key)
+    return (U.side() or "") .. "|" .. key
+end
+
 local function rayCacheGet(ctx, key, now)
-    local c = V.rayCache[key]
+    local c = V.rayCache[sideKey(key)]
     if not c then return nil end
     if now - c.t < V.RAY_CACHE_MS or (c.fp == observerFp(ctx) and now - c.t < V.RAY_STILL_MS) then return c end
     return nil
@@ -164,7 +171,7 @@ end
 local function rayCachePut(ctx, key, now, v)
     V.rayCacheN = (V.rayCacheN or 0) + 1
     if V.rayCacheN > 4000 then V.rayCache, V.rayCacheN = {}, 0 end
-    V.rayCache[key] = { t = now, v = v, fp = observerFp(ctx) }
+    V.rayCache[sideKey(key)] = { t = now, v = v, fp = observerFp(ctx) }
 end
 
 -- Was an eye within OBSERVER_SAME_M of `eye` already tried? (records it if not)
@@ -705,30 +712,31 @@ V.memory = V.memory or {}
 V.MEMORY_CAP = 200
 
 function V.remember(uuid, name, pos, relation)
-    V.memory[uuid] = { name = name, pos = pos, relation = relation, t = Ext.Utils.MonotonicTime(), level = currentLevel() }
+    U.sided(V, "memory")[uuid] = { name = name, pos = pos, relation = relation, t = Ext.Utils.MonotonicTime(),
+        level = currentLevel() }
 end
 
 -- The party's last sight of one character on this level: {pos, ago_s} or nil
 -- (what get_nearby lists as REMEMBERED; the refusal of an out-of-sight target
 -- names it, Guard.target_visible).
 function V.lastSeen(uuid)
-    local m = uuid and V.memory[uuid]
+    local m = uuid and U.sided(V, "memory")[uuid]
     if not m or not m.pos or m.level ~= currentLevel() then return nil end
     return { pos = U.vec(m.pos, 1), ago_s = math.floor((Ext.Utils.MonotonicTime() - m.t) / 1000) }
 end
 
 -- A character the party saw vanish on this level, still invisible (not revealed) and alive: a player saw it go. S030
 -- Soft-Step Trial: a Shadow 1.8 m away answered "target is not visible; last seen 2s ago: travel_to that spot" 3x.
--- The vanish is noted as it happens (V.noteVanish, on StatusApplied), only where the party sees the spot then (a
--- member's sight range and line of sight): fairness audit S2-4, and its residual (arena A7): judged at the query from
--- where it stands now, one that vanished out of view and walked in unseen was "seen to vanish".
+-- The vanish is noted as it happens (V.noteVanish, on StatusApplied), per side, only where that side sees the spot
+-- then (a member's sight range and line of sight): fairness audit S2-4, and its residual (arena A7): judged at the
+-- query from where it stands now, one that vanished out of view and walked in unseen was "seen to vanish".
 -- -> true, {pos = where it vanished, ago_s}; else false (the plain last-seen hint).
 V.INVISIBLE_SEEN_S = 120
 V.VANISH_CAP = 200
 function V.vanished(uuid)
     local e = uuid and V.entity(uuid)
     if not e or not U.comp(e, "ServerCharacter") then return false end
-    local v = V.vanishes[uuid]
+    local v = U.sided(V, "vanishes")[uuid]
     if not v or v.level ~= currentLevel() then return false end
     local ago = math.floor((Ext.Utils.MonotonicTime() - v.t) / 1000)
     if ago > V.INVISIBLE_SEEN_S then return false end
@@ -744,9 +752,9 @@ local function invisibilityStatus(status)
 end
 
 -- The transition to invisible (StatusApplied: the target reads invisible, or the applied status is an invisibility
--- one) while it wasn't (V.invisibleNow): if the party perceives the spot then, the vanish is noted there; if not,
--- any older record of it goes. Any other status on a creature already invisible (WET, Bless, a refresh) notes nothing,
--- so the record never follows it (REVIEW-18e).
+-- one) while it wasn't (V.invisibleNow): each side (no side outside an arena) that perceives the spot then notes the
+-- vanish there; a side that doesn't loses any older record of it. Any other status on a creature already invisible
+-- (WET, Bless, a refresh) notes nothing, so the record never follows it (REVIEW-18e).
 V.invisibleNow = V.invisibleNow or {}
 function V.noteVanish(target, status)
     local uuid = V.uuid(target)
@@ -758,19 +766,24 @@ function V.noteVanish(target, status)
     end
     if V.invisibleNow[uuid] then return end
     V.invisibleNow[uuid] = true
-    local pos, now, list = V.pos(e), Ext.Utils.MonotonicTime(), V.vanishes
-    if not V.perceived(V.context(), uuid, pos) then
-        list[uuid] = nil
-        return
-    end
-    if not list[uuid] then -- bounded: the ones past the hint's window go, and all of them at the cap
-        local n = 0
-        for u, x in pairs(list) do
-            if (now - x.t) / 1000 > V.INVISIBLE_SEEN_S then list[u] = nil else n = n + 1 end
+    local pos, now, lvl = V.pos(e), Ext.Utils.MonotonicTime(), currentLevel()
+    local function note()
+        local list = U.sided(V, "vanishes")
+        if not V.perceived(V.context(), uuid, pos) then
+            list[uuid] = nil
+            return
         end
-        if n >= V.VANISH_CAP then for u in pairs(list) do list[u] = nil end end
+        if not list[uuid] then -- bounded: the ones past the hint's window go, and all of them at the cap
+            local n = 0
+            for u, x in pairs(list) do
+                if (now - x.t) / 1000 > V.INVISIBLE_SEEN_S then list[u] = nil else n = n + 1 end
+            end
+            if n >= V.VANISH_CAP then for u in pairs(list) do list[u] = nil end end
+        end
+        list[uuid] = { pos = pos, t = now, level = lvl }
     end
-    list[uuid] = { pos = pos, t = now, level = currentLevel() }
+    local RPC = BG3AI.RPC
+    if RPC and RPC.each_side then RPC.each_side(note) else note() end
 end
 
 -- StatusRemoved: once the target reads visible again, its next invisibility is a new vanish.
@@ -795,7 +808,7 @@ function V.recall(exclude, around, radius)
     local out = {}
     local now = Ext.Utils.MonotonicTime()
     local lvl = currentLevel()
-    for u, m in pairs(V.memory) do
+    for u, m in pairs(U.sided(V, "memory")) do
         if not exclude[u] and m.level == lvl and m.pos and (not around or U.dist(around, m.pos) <= radius) then
             out[#out + 1] = { uuid = u, name = m.name, relation = m.relation, last_pos = U.vec(m.pos, 1),
                 ago_s = math.floor((now - m.t) / 1000) }
@@ -815,6 +828,8 @@ end
 
 if BG3AI.RPC then
     BG3AI.RPC.register("dev.perception_probe", function(args)
+        -- the harness's: counts of what a side must not see (REVIEW-18c)
+        if BG3AI.RPC.Ctx.side then error("dev.perception_probe is the harness's (no side)", 0) end
         local ctx = V.context()
         local radius = tonumber(args.radius) or 30
         local center = ctx.observers[1] and ctx.observers[1].pos

@@ -60,6 +60,7 @@ INSTRUCTIONS = instructions()  # every tool on; session.INSTRUCTIONS is the serv
 
 # The assembled rules for clients other than Claude Code (rules.py): in `instructions` and on the first briefing.
 RULES = rules.Once(rules.load(required=rules.serve_enabled()))
+TOOLS_OFF: frozenset[str] = frozenset()  # the tools this server's condition removed (set by tools/session.py)
 
 
 class Server(MCPServer):
@@ -77,7 +78,7 @@ class Server(MCPServer):
 mcp = Server("bg3", instructions=rules.instructions(INSTRUCTIONS, RULES.rules))
 SANDBOX = memtools.Sandbox(lambda: MEMORY, lambda: KNOWLEDGE)  # memory/ + read-only knowledge/ (memtools.py)
 LIFE = memtools.Lifecycle(lambda: MEMORY)  # opens/ends the memory session without client hooks
-game = Game(port=SETTINGS.port, pool_max=SETTINGS.rpc_conns, job_push=SETTINGS.job_push)
+game = Game(port=SETTINGS.port, pool_max=SETTINGS.rpc_conns, job_push=SETTINGS.job_push, side=SETTINGS.side)
 H = Handles()
 DELTA = delta.TRACKER.bind(H)  # the agent's last look; get_status/look/get_map diff against it
 METRICS = metrics.Recorder.from_env(RUNTIME)  # $BG3AI_METRICS_PATH (set by the runner) or runtime/metrics.jsonl
@@ -360,8 +361,11 @@ _FIGHT_KINDS = {"combat_started", "round_started", "turn_started", "turn_ended",
 
 def _event_limit(evs: list) -> int:
     """The EVENTS cap for one drained batch: the whole batch (up to render.EVENT_CEILING rows) while a fight is open
-    (the fight tracker's, fed after this render) or the batch itself has fight events; else render.EVENT_LIMIT."""
-    fight = reporting._fights().cur is not None or any(e.get("kind") in _FIGHT_KINDS for e in evs)
+    (the fight tracker's, fed after this render) or the batch itself has fight events; else render.EVENT_LIMIT.
+    A side's server (SETTINGS.side) plays one match, a fight from its start to its end: every batch, A's and B's
+    alike, whichever turn events of the shared turn group reach that side."""
+    fight = (SETTINGS.side is not None or reporting._fights().cur is not None
+             or any(e.get("kind") in _FIGHT_KINDS for e in evs))
     return render.EVENT_CEILING if fight else render.EVENT_LIMIT
 
 

@@ -64,7 +64,10 @@ Osi = setmetatable({
     return function(...) return osiv[key(name, ...)] end
 end })
 
-BG3AI = { RPC = { ops = {}, register = function(n, f) BG3AI.RPC.ops[n] = f end } }
+-- RPC.side: nil, as the real one answers outside an active arena (Shared/RPC.lua RPC.side); Ctx: the request's
+-- context (no side: the harness's request)
+BG3AI = { RPC = { ops = {}, register = function(n, f) BG3AI.RPC.ops[n] = f end, side = function() return nil end,
+    Ctx = {} } }
 dofile(LUA .. "/Shared/Util.lua")
 dofile(LUA .. "/Server/Visibility.lua")
 dofile(LUA .. "/Server/Navigation.lua")
@@ -776,6 +779,21 @@ test("nav.activity: positions, running jobs, dialogue/combat flags", function()
     eq(r.jobs, 1); eq(r.job_kinds[1], "move_to"); eq(r.in_dialogue, true); eq(r.in_combat, true)
     eq(r.pos.P1[1], 0)
     BG3AI.RPC.jobs = nil
+end)
+
+test("nav.activity as an arena side counts that side's running jobs only", function()
+    setup()
+    local side = BG3AI.RPC.side
+    BG3AI.RPC.side = function() return "A" end
+    BG3AI.Arena = { team = function() return { "P1" } end } -- a side's party is its team (V.party)
+    BG3AI.RPC.jobs = {
+        [1] = { status = "running", kind = "move_to", side = "A" },
+        [2] = { status = "running", kind = "cast", side = "B" },
+    }
+    local ok, r = pcall(BG3AI.RPC.ops["nav.activity"], {})
+    BG3AI.RPC.side, BG3AI.Arena, BG3AI.RPC.jobs = side, nil, nil
+    assert(ok, r)
+    eq(r.jobs, 1); eq(r.job_kinds[1], "move_to"); eq(#r.job_kinds, 1)
 end)
 
 -- ---- per-frame caches (read cost) -------------------------------------------

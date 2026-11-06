@@ -112,6 +112,8 @@ end
 
 local function relation(ctx, uuid)
     if ctx.is_party[uuid] then return "party" end
+    -- a side reads the other team as hostile from the team tables, whatever the engine's relation says
+    if U.side() and BG3AI.Arena.side_of(uuid) then return "hostile" end
     local o = ctx.observers[1] or { uuid = ctx.party[1] }
     if not o.uuid then return "neutral" end
     if truthy(osi(Osi.IsEnemy, o.uuid, uuid)) then return "hostile" end
@@ -145,6 +147,8 @@ local function concentration(e, own)
 end
 
 local function selectedCharacter(party)
+    local side = U.side()
+    if side then return BG3AI.Arena.lead(side) end -- the side's own (Arena.lead), never the HUD's or the host
     return V.selected(party) or osi(Osi.GetHostCharacter) and V.uuid(osi(Osi.GetHostCharacter)) or party[1]
 end
 
@@ -320,7 +324,8 @@ local function partyBrief(ctx, uuid, active)
     local cl = classes(e)
     if #cl > 0 then o.classes = cl end
     if truthy(osi(Osi.IsDead, uuid)) then o.dead = true end
-    if truthy(osi(Osi.HasActiveStatus, uuid, "DOWNED")) then o.downed = true end
+    -- 0 HP without DOWNED (live 10 m1 a2) is downed too, as the combat row reads it (arena C5)
+    if truthy(osi(Osi.HasActiveStatus, uuid, "DOWNED")) or (not o.dead and h.hp == 0) then o.downed = true end
     if inCombat(uuid) then o.in_combat = true end
     if uuid == active then o.active = true end
     if not truthy(osi(Osi.IsOnStage, uuid)) then o.off_stage = true end

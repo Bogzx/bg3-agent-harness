@@ -1,0 +1,408 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bogzx/bg3-agent-harness/packages/bench/schema/arena-builds.v1.schema.json",
+  "title": "An arena build file (packages/bench/builds/<name>.json), v1",
+  "description": "One tier's team of builds (BUILDS.md step 4): per build its class, subclass, race and background (its class's hireling's: A1), the choice script the respec page is driven through and the per-match copies' kit is made from, the gear, and the reference profile read from a respecced hireling (null until read). tools/dev/arena_builds.py check_builds is the full check (the choices against the game's rows, the point-buy against our stat entries, a rated file's references).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "name",
+    "title",
+    "tier",
+    "level",
+    "game_build",
+    "builds"
+  ],
+  "$defs": {
+    "abilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Strength",
+        "Dexterity",
+        "Constitution",
+        "Intelligence",
+        "Wisdom",
+        "Charisma"
+      ],
+      "properties": {
+        "Strength": {
+          "type": "integer",
+          "minimum": 8,
+          "maximum": 15
+        },
+        "Dexterity": {
+          "type": "integer",
+          "minimum": 8,
+          "maximum": 15
+        },
+        "Constitution": {
+          "type": "integer",
+          "minimum": 8,
+          "maximum": 15
+        },
+        "Intelligence": {
+          "type": "integer",
+          "minimum": 8,
+          "maximum": 15
+        },
+        "Wisdom": {
+          "type": "integer",
+          "minimum": 8,
+          "maximum": 15
+        },
+        "Charisma": {
+          "type": "integer",
+          "minimum": 8,
+          "maximum": 15
+        }
+      },
+      "description": "the 27-point point-buy, before any bonus"
+    },
+    "item": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "item"
+          ],
+          "properties": {
+            "item": {
+              "type": "string",
+              "minLength": 1
+            },
+            "equip": {
+              "type": "boolean"
+            }
+          }
+        }
+      ]
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "class",
+        "subclass",
+        "race",
+        "background",
+        "role",
+        "script",
+        "gear",
+        "reference"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,23}$"
+        },
+        "class": {
+          "enum": [
+            "Fighter",
+            "Rogue",
+            "Barbarian",
+            "Ranger",
+            "Cleric",
+            "Wizard"
+          ]
+        },
+        "subclass": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "a subclass of tools/dev/arena_static.json (subclasses), null while the class has none by the file's level"
+        },
+        "race": {
+          "type": "string",
+          "minLength": 1,
+          "description": "a race of tools/dev/arena_static.json, the class's hireling's"
+        },
+        "background": {
+          "type": "string",
+          "minLength": 1,
+          "description": "a background of tools/dev/arena_static.json, the class's hireling's"
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "description": "for people only, never prompt text"
+        },
+        "script": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cc",
+            "level_ups"
+          ],
+          "properties": {
+            "cc": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "abilities"
+              ],
+              "properties": {
+                "abilities": {
+                  "$ref": "#/$defs/abilities"
+                },
+                "ability_bonus": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "description": "the +2 ability, then the +1"
+                },
+                "skills": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "expertise": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "race_skills": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "passives": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "description": "one list per SelectPassives selector of level 1"
+                },
+                "spells": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "description": "one list per SelectSpells selector of level 1"
+                },
+                "race_spells": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": "the race's spell pick (a High Elf's Wizard cantrip)"
+                }
+              }
+            },
+            "level_ups": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "level"
+                ],
+                "properties": {
+                  "level": {
+                    "type": "integer",
+                    "minimum": 2
+                  },
+                  "passives": {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "spells": {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "skills": {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "expertise": {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "improvement": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "asi"
+                        ],
+                        "properties": {
+                          "asi": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 2
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "required": [
+                          "feat"
+                        ],
+                        "properties": {
+                          "feat": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      }
+                    ],
+                    "description": "at an improvement level (AllowImprovement): an ASI or a feat (with the feat's own picks)"
+                  }
+                }
+              }
+            },
+            "prepared": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "a preparer's (Cleric, Wizard) prepared spells at the file's level: casting modifier + level of them"
+            }
+          }
+        },
+        "gear": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item"
+          },
+          "description": "the class's character-creation equipment, less the excluded items; at level 5 / 12 each weapon and armour as its +1 / +2 entry where the game has one, and the tier's extra potions"
+        },
+        "reference": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "profile",
+                "game_build",
+                "hireling",
+                "evidence"
+              ],
+              "properties": {
+                "profile": {
+                  "type": "object",
+                  "description": "arena.symmetry's profile of the respecced hireling, read before any rest or combat"
+                },
+                "game_build": {
+                  "type": "string",
+                  "pattern": "^[0-9]+$"
+                },
+                "hireling": {
+                  "type": "string",
+                  "description": "the class's hireling origin uuid"
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema": {
+      "const": "arena-builds.v1"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,35}$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tier": {
+      "enum": [
+        "L2",
+        "L5",
+        "L12"
+      ]
+    },
+    "level": {
+      "enum": [
+        2,
+        5,
+        12
+      ]
+    },
+    "game_build": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+    },
+    "draft": {
+      "type": "string",
+      "minLength": 1,
+      "description": "why the builds can't be rated yet"
+    },
+    "builds": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "$ref": "#/$defs/build"
+      }
+    }
+  }
+}

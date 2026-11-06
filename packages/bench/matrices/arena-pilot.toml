@@ -1,0 +1,15 @@
+# The arena pilot: one pairing (DeepSeek flash v Claude Haiku 5.5 on crash-companions-v1), its two matches with the
+# sides swapped on the arena's seed. Played by `runner/play.py arena-matrix --matrix packages/bench/matrices/arena-pilot.toml`
+# (--plan prints the matches and the estimate). The budget files live in the runtime the matrix runs in.
+name = "arena-pilot"
+pairs = [["profiles/deepseek-flash.toml", "profiles/claude-haiku-5-5.toml"]]
+arenas = ["crash-companions-v1"]
+repeats = 1
+
+[budget]
+file = "runtime/budget-arena.json"           # this matrix's own cap: both sides' cost of every match
+max_cost = { crash-companions-v1 = 1.0 }     # USD per side per match: a paid side's reserve and cap
+
+[budget.models]                              # each side's cost also goes into its model's files
+"profiles/claude-haiku-5-5.toml" = ["runtime/budget-haiku.json", "runtime/budget-anthropic.json"]
+"profiles/deepseek-flash.toml" = ["runtime/budget-deepseek.json"]

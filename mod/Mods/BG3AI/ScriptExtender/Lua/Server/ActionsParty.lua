@@ -16,10 +16,12 @@ local reg, start, holder, name_of, NULL_GUID = I.reg, I.start, I.holder, I.name_
 -- turn_ended events at once). result.still_to_act lists those members.
 ------------------------------------------------------------------------
 
+-- The rest of char's turn group still to act, held arena members included (live 2026-11-02: counting only whose
+-- turn it is, a phase's last end found nobody waiting and fell to END_IGNORED; the other phase never came).
 local function group_waiting(char)
     local out = {}
-    for _, m in ipairs(G.party()) do
-        if not G.same(m, char) and G.is_my_turn(m) then out[#out + 1] = m end
+    for _, m in ipairs(G.turn_group_members()) do
+        if not G.same(m, char) and G.still_to_act(m) then out[#out + 1] = m end
     end
     return out
 end
@@ -27,12 +29,30 @@ end
 reg("end_turn", function(args)
     local char = G.actor(args.char)
     if not G.in_combat(char) then G.refuse("not in combat") end
+    G.side_gate() -- a held member's end: the other side's phase, not this character's
     if G.turn_requested_end(char) then
         G.refuse("this character already ended its turn (the rest of its turn group is still acting)")
     end
     if not G.is_my_turn(char) then G.refuse("it is not this character's turn") end
+    -- the arena runner's end at its cap (args.forced: which cap, as the side is told; the bridge never sends it)
+    local Ar = BG3AI.Arena
+    if args.forced and Ar and Ar.active() then Ar.note_forced(char, tostring(args.forced)) end
+    -- The round this turn is in. A group's last end can settle after the game started the next round (live
+    -- 2026-11-02: CombatRoundStarted and the new TurnStarted before the old TurnEnded): the members open then are the
+    -- new round's, not this group's still to act.
+    local round = G.round_of(char)
+    local function moved_on()
+        local now = G.round_of(char)
+        if round and now and now ~= round then return { from = round, to = now } end
+    end
     local function finish(job, requested, by_flags)
-        local res = { ended = true }
+        local res = { ended = true, end_written = job.wrote }
+        local mv = moved_on()
+        if mv then
+            res.round_moved_on = mv
+            RPC.finish_job(job, "done", res)
+            return
+        end
         if by_flags then
             -- S087 05:57:40: the game showed this end (RequestedEndTurn / the turn closed), then, while it applied
             -- the group's ends (18 s to TurnEnded), showed the turn open again: Claude read as acting and the next
@@ -50,7 +70,7 @@ reg("end_turn", function(args)
             -- shared turn": still active, no RequestedEndTurn, only our pending flag) get their EndTurn again once
             -- nobody else in the group is really acting.
             local stale, others = {}, false
-            for _, m in ipairs(G.party()) do
+            for _, m in ipairs(G.turn_group_members()) do
                 if not G.same(m, char) then
                     local a, r = G.tb_flags(m)
                     if a and not r then
@@ -76,8 +96,9 @@ reg("end_turn", function(args)
         if #resent > 0 then res.ended_again = resent end
         RPC.finish_job(job, "done", res)
     end
+    local arena = Ar and Ar.active()
     return start("end_turn", char, {
-        timeout_ms = 10000,
+        timeout_ms = arena and A.END_LAST_WAIT_MS + 1000 or 10000,
         osi = {
             TurnEnded = function(job, a)
                 if G.same(a[1], char) then finish(job) end
@@ -85,17 +106,35 @@ reg("end_turn", function(args)
         },
         start = function() G.osi("EndTurn", char) end,
         on_tick = function(job)
+            local waited = RPC.now_ms() - job.started
+            if job.wrote then -- the group's ends written: done only once the game closes the group (no second write)
+                if moved_on() then finish(job) return end
+                if waited >= A.END_LAST_WAIT_MS then
+                    RPC.finish_job(job, "failed", { still_my_turn = true, end_written = job.wrote }, A.END_IGNORED)
+                end
+                return
+            end
             if not G.is_my_turn(char) then finish(job, false, true) return end
             -- Shared turn group, others still up: EndTurn stays pending until they end (live S002:
             -- every such end_turn timed out at 10 s). Record it and return.
-            if RPC.now_ms() - job.started >= A.END_REQUEST_AFTER_MS and #group_waiting(char) > 0 then
+            if waited >= A.END_REQUEST_AFTER_MS and #group_waiting(char) > 0 then
                 G.end_requested[char] = G.now_ms()
                 finish(job, true)
                 return
             end
+            -- In an arena this is the group's last end (nobody else still to act): the game closes the group, which
+            -- took up to 18 s to its TurnEnded (S087), and may show nothing until then. Done when the round moves
+            -- on (a new round's open turns are not stale ends: nobody's EndTurn is sent again).
+            if arena and moved_on() then finish(job) return end
+            -- Not closed END_WRITE_AFTER_MS after the end: the group's ends written (once: then the branch above), if
+            -- every other member's end is the mod's (live 14: that closed the group at once).
+            if arena and waited >= A.END_WRITE_AFTER_MS then
+                job.wrote = Ar.write_group_end(char)
+                if job.wrote then return end
+            end
             -- S044/S045: our Spiritual Weapon's EndTurn (×4) and turns during Ketheric's mid-fight lines (×5) were
             -- ignored: 10 s TIMEOUT each. Hand back early so the bridge presses the HUD's End Turn instead.
-            if RPC.now_ms() - job.started >= A.END_IGNORED_MS then
+            if waited >= (arena and A.END_LAST_WAIT_MS or A.END_IGNORED_MS) then
                 RPC.finish_job(job, "failed", { still_my_turn = true }, A.END_IGNORED)
             end
         end,
@@ -113,6 +152,8 @@ local function party_item(item)
     local g = G.guid(item)
     if not g or not G.b(G.q("IsItem", g)) then G.refuse("that is not an item") end
     local h = holder(g)
+    local Ar = BG3AI.Arena
+    if h and Ar and Ar.active() and Ar.side_of(h) then G.on_my_side(h) end -- the other team's bag
     if not h or not G.is_party(h) then G.refuse("that item is not in the party's inventory") end
     return g, h
 end
@@ -217,7 +258,7 @@ end)
 
 reg("transfer", function(args)
     local item, from = party_item(args.item)
-    if G.in_combat(from) then G.refuse("not available during combat through this action (the UI tools can do it)") end
+    if G.in_combat(from) then G.refuse_ui("not available during combat through this action") end
     if G.b(G.q("IsEquipped", item)) then G.refuse("it is equipped") end
     -- One value only: G.q returns three and tonumber(n, base) raised "bad argument #1 to 'tonumber'"
     -- on every give/camp (S018-S024, 7 calls).
@@ -294,6 +335,9 @@ end
 
 reg("select", function(args)
     local char = G.actor(args.char)
+    -- the one client's selection: only the acting side's (fairness audit S2-2: the other side's set_reactions then
+    -- failed "not the selected character" and the recording's camera moved)
+    G.side_gate()
     local function selected()
         if controls(char) then return true end
         if controller() then return false end

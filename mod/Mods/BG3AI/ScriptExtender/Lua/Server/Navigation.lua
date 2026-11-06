@@ -80,6 +80,9 @@ local function levelStore(level)
     return l
 end
 
+-- The walked cells and trail a reader uses (a side's own in a match): NavigationSides.lua.
+local function walkedStore(level) return N.walkedStore(level) end
+
 local function cellOf(p)
     return math.floor(p[1] / N.CELL_XZ), math.floor(p[2] / N.CELL_Y), math.floor(p[3] / N.CELL_XZ)
 end
@@ -156,10 +159,11 @@ local function record()
     if Ext.Utils.GetGameState and tostring(Ext.Utils.GetGameState()) ~= "Running" then return end
     local lvl = currentLevel()
     if not lvl or lvl:find("^SYS_") then return end
+    local now = Ext.Utils.GameTime and Ext.Utils.GameTime() or nil
+    N.recordSides(lvl, now)
     local party = V.party()
     if #party == 0 then return end
     local l = levelStore(lvl)
-    local now = Ext.Utils.GameTime and Ext.Utils.GameTime() or nil
     for _, u in ipairs(party) do
         if truthy(osi(Osi.IsOnStage, u)) then
             local e = V.entity(u)
@@ -214,7 +218,7 @@ if not N.tickSubscribed then
 end
 
 function N.visited(level, p, slack)
-    local l = store().levels[level]
+    local l = walkedStore(level)
     if not l then return false end
     local cx, cy, cz = cellOf(p)
     local r = slack or 1
@@ -240,21 +244,25 @@ end
 N.SEEN_MAX = 20000
 N.seenPts = N.seenPts or {}
 N.seenPtsN = N.seenPtsN or 0
-local function rememberSeen(k)
-    if N.seenPtsN >= N.SEEN_MAX then
-        local old = setmetatable(N.seenPts, nil) -- the generation before it is dropped
-        N.seenPts, N.seenPtsN = setmetatable({}, { __index = old }), 0
+local function rememberSeen(k) -- in an arena into the side's own set
+    local pts, n = U.sided(N, "seenPts"), U.sget(N, "seenPtsN") or 0
+    if n >= N.SEEN_MAX then
+        local old = setmetatable(pts, nil) -- the generation before it is dropped
+        pts, n = setmetatable({}, { __index = old }), 0
+        U.sset(N, "seenPts", pts)
     end
-    N.seenPts[k], N.seenPtsN = true, N.seenPtsN + 1
+    pts[k] = true
+    U.sset(N, "seenPtsN", n + 1)
 end
 function N.known(ctx, p)
     if type(p) ~= "table" then return false end
     local lvl = currentLevel() or "?"
-    local l = store().levels[lvl]
+    local l = walkedStore(lvl)
     if l and l.cells[cellKey(cellOf(p))] then return true end
     local k = string.format("%s|%d:%d:%d", lvl, math.floor(p[1]), math.floor(p[2] / 2), math.floor(p[3]))
-    if N.seenPts[k] then
-        if rawget(N.seenPts, k) == nil then rememberSeen(k) end -- from the old generation: keep it
+    local pts = U.sided(N, "seenPts") -- a side remembers its own sightings (an arena); else N.seenPts
+    if pts[k] then
+        if rawget(pts, k) == nil then rememberSeen(k) end -- from the old generation: keep it
         return true
     end
     local ok, s = pcall(V.pointSeen, ctx or V.context(), p)
@@ -959,15 +967,17 @@ function N.path(charUuid, target, deadline, noSearch)
 end
 
 -- File-local helpers the other parts use.
-N.inner = { store = store, mirror = mirror, levelStore = levelStore, currentLevel = currentLevel, DIRS = DIRS,
+N.inner = { store = store, mirror = mirror, levelStore = levelStore, walkedStore = walkedStore, cellOf = cellOf,
+    cellKey = cellKey, currentLevel = currentLevel, DIRS = DIRS,
     DIR_VEC = DIR_VEC, floorAt = floorAt, readResult = readResult, rawPath = rawPath, gatedPath = gatedPath,
     pathKey = pathKey, RING = RING,
     helperBox = helperBox, inBox = inBox }
 
 -- The rest of the module, in this order (split for the 1000-line cap). Each part reads N and the
 -- helpers in N.inner.
-for _, part in ipairs({ "Server/NavigationReach.lua", "Server/NavigationTerrain.lua", "Server/NavigationRoute.lua",
-    "Server/NavigationOps.lua", "Server/NavigationDoors.lua", "Server/NavigationSpots.lua" }) do
+for _, part in ipairs({ "Server/NavigationSides.lua", "Server/NavigationReach.lua", "Server/NavigationTerrain.lua",
+    "Server/NavigationRoute.lua", "Server/NavigationOps.lua", "Server/NavigationDoors.lua",
+    "Server/NavigationSpots.lua" }) do
     Ext.Require(part)
 end
 

@@ -128,6 +128,28 @@ class Lint(unittest.TestCase):
         for group, words in GROUP_WORDS.items():
             self.assertIsNone(re.search(words, bare, re.IGNORECASE), group)
 
+    def test_arena_rules(self):
+        # a two-team match: rules only, the match's file last; its backticked words are tools or known terms
+        text = A.assemble("rules", caps=frozenset(), arena=True, turn_cap_s=75, turn_order="snake").text
+        self.assertIn("75 s of model time per character", " ".join(text.split()))
+        # REVIEW-12 (a): the arena's house rule for durations, and prone as the mod plays it
+        for words in (
+            "an N-turn status lasts the rest of its round plus N-1 rounds",
+            "it stands up at its turn start for half its movement",
+        ):
+            self.assertIn(words, " ".join(text.split()))
+        self.assertNotIn("{turn_cap_s}", text)
+        self.assertEqual(A.part_files("rules", caps=frozenset(), arena=True)[-1], A.ARENA)
+        self.assertTrue(text.startswith(A.assemble("rules", caps=frozenset()).text.rstrip("\n")))
+        self.assertLessEqual(len(text), MAX_RULES)
+        for span in re.findall(r"`([^`\n]+)`", text):
+            m = re.match(r"[a-z][a-z0-9_]*", span)
+            if m:
+                self.assertIn(m.group(0), TOOLS | TERMS, f"`{span}`: not a server tool nor a known term")
+        self.assertNotIn(A.ARENA, A.part_files("rules", caps=frozenset()))
+        with self.assertRaises(ValueError):
+            A.part_files("rules+coaching", arena=True)
+
     def test_lengths(self):
         for p in parts_in("rules") + parts_in("coaching") + parts_in("clients"):
             self.assertLessEqual(len(p.read_text(encoding="utf-8")), MAX_PART, p)
@@ -138,6 +160,7 @@ class Lint(unittest.TestCase):
         used = {f for c in A.CONDITIONS for f in A.part_files(c, "claude")} | {
             A.PACE_PREFLIGHT,
             "clients/claude-kickoff.md",
+            A.ARENA,
         }
         on_disk = {str(p.relative_to(PROMPTS)) for p in parts_in("rules") + parts_in("coaching") + parts_in("clients")}
         self.assertEqual(on_disk, used)
