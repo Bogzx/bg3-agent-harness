@@ -82,6 +82,10 @@ def _no_sleep(seconds: float) -> None:
     pass
 
 
+def _mod_ops(ctx: str) -> set[str]:
+    return {"ui.state"}
+
+
 NEW = G.Save("Claude-2__S002-end", "Claude", "S002-end", 200.0)
 OLD = G.Save("Claude-1__S001-end", "Claude", "S001-end", 100.0)
 
@@ -153,7 +157,7 @@ class MissingStats(Base):
         with (
             mock.patch.object(self.ctl, "wait_for", wait_for),
             mock.patch.object(self.ctl, "kill", lambda: killed.append("kill")),
-            mock.patch.object(C.game, "available_ops", lambda ctx: {"ui.state"}),  # pyright: ignore[reportUnknownLambdaType]
+            mock.patch.object(C.game, "available_ops", _mod_ops),
         ):
             self.assertTrue(self.ctl.wait_menu())
         return killed
@@ -171,12 +175,7 @@ class MissingStats(Base):
     def test_a_bench_new_game_start_is_refused_at_the_menu(self) -> None:
         # nautiloid: load_save(None) launches, waits at the menu and never passes wait_running
         self.write_log("[ 1.0] stats: 15754 stats via the rarity run at 0x3\n[ 1.1] stats: no guid pool found; GUID\n")
-        ctl = self.ctl
-
-        class Side(GS.GameSide):
-            gamectl = ctl  # pyright: ignore[reportAssignmentType, reportIncompatibleVariableOverride]
-
-        side: Any = Side.__new__(Side)
+        side: Any = GS.GameSide.__new__(GS.GameSide)
         side.opt = types.SimpleNamespace(take_over=False, save_owner="Tav")
         launched: list[str | None] = []
 
@@ -184,10 +183,11 @@ class MissingStats(Base):
             return True
 
         with (
+            mock.patch.object(GS.GameSide, "gamectl", self.ctl),
             mock.patch.object(self.ctl, "launch", launched.append),
             mock.patch.object(self.ctl, "wait_for", wait_for),
             mock.patch.object(self.ctl, "kill", lambda: None),
-            mock.patch.object(C.game, "available_ops", lambda ctx: {"ui.state"}),  # pyright: ignore[reportUnknownLambdaType]
+            mock.patch.object(C.game, "available_ops", _mod_ops),
             mock.patch.object(GS.game, "port_open", lambda: False),
             self.assertRaises(G.StatsPoolsMissing),
         ):
