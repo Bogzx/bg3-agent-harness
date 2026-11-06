@@ -178,6 +178,7 @@ def test_the_builds_arena_is_a_rated_4v4_red_blue_from_the_build_file_with_a_rac
     a = arena.load_named("builds-l2-4v4-v1")
     pairs = a["mirror"]["pairs"]
     assert [p["build"] for p in pairs] == ["fighter", "rogue", "barbarian", "ranger"]
+    assert a["turn_cap_s"] == 90  # the cap all paid arena play ran at, not its base's 60
     assert len({p["race"] for p in pairs}) == 4 and len({p["template"] for p in pairs}) == 4  # A1: a race per build
     assert all(p["kit"]["race"]["race"] == p["race"] for p in pairs)
     assert "draft" not in a and all(p["reference"]["profile"] for p in pairs)  # S3's four references

@@ -43,6 +43,7 @@ REFERENCE_KEYS = {"profile", "game_build", "hireling", "evidence"}
 REFERENCE_OPTIONAL = {"accepted"}
 ACCEPTED_KEYS = {"field", "only_twin", "only_reference", "why"}
 ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,23}$")
+TURN_CAP_S = 90  # every builds arena's, whatever its base says: all paid arena play ran at 90 (arena-s6-prep.md)
 STATS_LUA = mas.REPO / "mod/Mods/BG3AI/ScriptExtender/Lua/Shared/ArenaStats.lua"
 # Server/ArenaSymmetry.lua Sym.FIELDS: what a reference holds and arena.setup compares
 REFERENCE_FIELDS = (
@@ -334,11 +335,12 @@ def arena_file(
     static: dict[str, Any] | None = None,
     line_gap: float | None = None,
 ) -> dict[str, Any]:
-    """An arena file for a checked build file: `base`'s save, seed, caps and rule keys, the builds' level, teams and
-    mirror, these spawns on the base's game level, line_gap when it isn't the default. A draft build file makes a draft
-    arena (it can't be played)."""
+    """An arena file for a checked build file: `base`'s save, seed, round and wall caps and rule keys, TURN_CAP_S, the
+    builds' level, teams and mirror, these spawns on the base's game level, line_gap when it isn't the default. A draft
+    build file makes a draft arena (it can't be played)."""
     keep = ("schema", "save", "seed", "karmic", "round_cap", "wall_cap_min", "turn_cap_s", "condition", "tools_off")
     a = {k: base[k] for k in keep if k in base}
+    a["turn_cap_s"] = TURN_CAP_S
     a["name"], a["title"] = name, doc["title"]
     a["about"] = (
         f"The build file {doc['name']} (tools/dev/make_arena_save.py builds-arena), each pair's twins made per match, "

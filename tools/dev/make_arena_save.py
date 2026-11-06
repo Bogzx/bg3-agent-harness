@@ -755,9 +755,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     bm.add_argument("names", nargs="+", type=_pair_arg, help="each pair's twins' names, A:B, in the builds' order")
     m = sub.add_parser("mirror", help="print the arena file's level, teams and mirror section for a pairs spec")
     m.add_argument("spec", type=Path)
-    ba = sub.add_parser("builds-arena", help="write an arena file: a base arena's save and caps, a build file's pairs")
+    ba = sub.add_parser(
+        "builds-arena", help="write an arena file: a base arena's save, seed, round and wall caps, a build file's pairs"
+    )
     ba.add_argument("builds", type=Path)
-    ba.add_argument("base", type=Path, help="the arena file whose save, seed and caps it takes")
+    ba.add_argument("base", type=Path, help="the arena file whose save, seed, round and wall caps it takes")
     ba.add_argument("name", help="the new arena's name (its file's stem)")
     ba.add_argument("names", nargs="+", type=_pair_arg, help="each pair's twins' names, A:B, in the builds' order")
     ba.add_argument("--spawn-a", required=True, type=_spawn_arg, help="x,y,z")

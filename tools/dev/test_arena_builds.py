@@ -460,6 +460,14 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
         del played["mirror"]["party_xp"]
         self.assertTrue(any("needs mirror.party_xp" in e for e in barena.validate(played, "arena-4v4-l5")))
 
+    def test_arena_file_has_the_builds_turn_cap_not_the_bases(self):
+        base = json.loads((REPO / "packages/bench/arenas/crash-mirror-v1.json").read_text())
+        self.assertEqual(base["turn_cap_s"], 60)  # a base whose cap differs, or this test shows nothing
+        a = ab.arena_file(
+            ab.check_builds(tier(5)), base, "x", NAMES4, [213.0, 10.98, 288.0], [213.0, 10.98, 296.0], STATIC
+        )
+        self.assertEqual(a["turn_cap_s"], 90)
+
     def test_arena_file_writes_a_line_gap_and_checks_the_spawns_with_it(self):
         base = json.loads((REPO / "packages/bench/arenas/arena-v0.1.json").read_text())
         spots = [212.875, 10.98, 288.0], [212.875, 10.98, 296.0]
