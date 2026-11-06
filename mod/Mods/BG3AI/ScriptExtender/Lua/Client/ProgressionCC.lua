@@ -199,7 +199,7 @@ local function abilitiesView(dc)
             local n = abilityOf(it)
             opts[#opts + 1] = n
             local p = UI.props(it)
-            if p.IsSelected == true or p.Selected == true or p.IsChecked == true then chosen = n end
+            if (tonumber(p.Improvement) or 0) ~= 0 then chosen = n end -- CharacterRespec.xaml: 0 hides the mark
         end
         bonus[#bonus + 1] = { bonus = UI.prop(col, "AbilityBonus"), picked = chosen, options = opts }
     end
@@ -692,6 +692,20 @@ end)
 --               skills?, expertise?, cantrips?, spells?, passives?, name?}, finish? = true}
 ------------------------------------------------------------------------
 
+-- What `name` holds from the bonus columns (the page's +2/+1). Value includes it; RaceBonus reads 0 for it on the respec
+-- page (live 2026-11-06: a hireling's picks stay through ResetAbilities, so 15 Value was 13 bought, 6 points left).
+local function pickedBonus(dc, name)
+    local n = 0
+    for _, col in ipairs(list(UI.path(dc, "RaceProgressionDetails.AbilityBonusSelection"))) do
+        for _, it in ipairs(list(UI.prop(col, "BonusAbilities"))) do
+            if abilityOf(it) == name and (tonumber(UI.prop(it, "Improvement")) or 0) ~= 0 then
+                n = n + (tonumber(UI.prop(col, "AbilityBonus")) or 0)
+            end
+        end
+    end
+    return n
+end
+
 local function abilitiesStage(ctx, plan)
     local state = { reset = false, steps = 0 }
     return function()
@@ -725,6 +739,7 @@ local function abilitiesStage(ctx, plan)
         -- One point per tick, re-reading the page each time (point-buy costs differ per score).
         state.steps = state.steps + 1
         if state.steps > 80 then return "fail", "point buy did not converge" end
+        local stuck = {}
         for _, a in ipairs(abilities) do
             local name = abilityOf(a)
             local target
@@ -732,15 +747,21 @@ local function abilitiesStage(ctx, plan)
                 if abilityName(k) == name then target = tonumber(v) end
             end
             local cur = tonumber(UI.prop(a, "Value")) or 0
-            local base = cur - (tonumber(UI.prop(a, "RaceBonus")) or 0)
+            local base = cur - math.max(tonumber(UI.prop(a, "RaceBonus")) or 0, pickedBonus(dc, name))
             local cmd = target and (base < target and UI.prop(a, "CanIncrease") ~= false and "IncreaseAbility"
                 or base > target and UI.prop(a, "CanDecrease") ~= false and "DecreaseAbility") or nil
-            if cmd and UI.command(dc, cmd, a) then
+            local ok, err
+            if cmd then ok, err = UI.command(dc, cmd, a) end
+            if ok then
                 if not ctx.fast then return "wait", P.CC_POINT_MS end
                 state.pending = { name = name, value = cur, at = RPC.now_ms() }
                 return "wait", P.CC_POLL_MS
             end
+            if target and base ~= target then
+                stuck[#stuck + 1] = ("%s bought %s, wanted %s%s"):format(name, base, target, err and (": " .. tostring(err)) or "")
+            end
         end
+        for _, s in ipairs(stuck) do ctx.result.problems[#ctx.result.problems + 1] = "abilities: " .. s end
         return "next", ctx.fast and P.CC_SETTLE_MS or 200
     end
 end
@@ -870,7 +891,20 @@ RPC.register("ui.cc_apply", function(args)
         { "abilities", abilitiesStage(ctx, plan), 30000 },
         { "ability_bonus", abilityBonusStage(ctx, plan) },
         { "abilities?", function()
-            ctx.result.set.abilities = abilitiesView(get())
+            local view = abilitiesView(get())
+            ctx.result.set.abilities = view
+            local left = tonumber(view.points_left) or 0
+            if type(plan.abilities) == "table" and left ~= 0 then
+                ctx.result.problems[#ctx.result.problems + 1] = ("abilities: %s points left"):format(left)
+            end
+            local cols = { table.unpack(view.bonus or {}) }
+            table.sort(cols, function(a, b) return (tonumber(a.bonus) or 0) > (tonumber(b.bonus) or 0) end)
+            for i, name in ipairs(type(plan.bonus) == "table" and plan.bonus or {}) do
+                local got = cols[i] and cols[i].picked
+                if got and got ~= abilityName(name) then
+                    ctx.result.problems[#ctx.result.problems + 1] = ("bonus %s: the page has %s"):format(name, got)
+                end
+            end
             return "next", 0
         end },
         { "skills", skillsStage(get, ctx, plan.skills) },

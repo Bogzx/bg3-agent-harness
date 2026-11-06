@@ -778,6 +778,10 @@ local function validity(dc)
     local out = v and meta(v) or {}
     local name = v and str(UI.prop(v, "Name"))
     if name then out.Name = name end
+    for _, k in ipairs({ "RacialSelectors", "ClassSelectors" }) do -- what the page's marks bind to
+        local m = v and UI.prop(v, k) and meta(UI.prop(v, k))
+        if m and next(m) then out[k] = m end
+    end
     local app = str(UI.prop(dc, "AppearanceValidationError"))
     if app then out.appearance = app end
     if next(out) == nil then return nil end

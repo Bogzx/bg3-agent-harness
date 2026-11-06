@@ -241,5 +241,92 @@ do
     BG3AI.UI.path, BG3AI.UI.command = path, command
 end
 
+-- 6. the point buy on the respec page, from live 2026-11-06 launch 3 (cc-options-fighter-stop.json): a hireling's
+-- +2 Str and +1 Con stay through ResetAbilities and sit in Value, RaceBonus reads nothing, Improvement marks the pick.
+do
+    local NAMES6 = { "Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma" }
+    local function cost(n) return n <= 13 and n - 8 or 5 + (n - 13) * 2 end
+    local function page6(start, picks, read)
+        local p = { abilities = {}, base = {}, cols = {}, refuse = {} }
+        for _, n in ipairs(NAMES6) do
+            p.base[n] = start[n]
+            p.abilities[#p.abilities + 1] = obj("ls.VM", { Ability = n, CanIncrease = true, CanDecrease = true })
+        end
+        for bonus, on in pairs(picks) do
+            local items = {}
+            for _, n in ipairs(NAMES6) do
+                items[#items + 1] = obj("ls.VM", { Ability = n, Improvement = read and (n == on and 1 or 0) or nil })
+            end
+            p.cols[#p.cols + 1] = obj("ls.VM", { AbilityBonus = bonus, BonusAbilities = items, _on = on })
+        end
+        function p.sync()
+            local spent = 0
+            for _, a in ipairs(p.abilities) do
+                local n, add = a._p.Ability, 0
+                for _, c in ipairs(p.cols) do if c._p._on == n then add = add + c._p.AbilityBonus end end
+                a._p.Value = p.base[n] + add
+                spent = spent + cost(p.base[n])
+            end
+            dc._p.UnusedAbilityPoints = 27 - spent
+        end
+        return p
+    end
+    local function apply(p, plan)
+        open("CharacterRespec", REAL.tabs, REAL.complete)
+        p.sync()
+        local path, command = BG3AI.UI.path, BG3AI.UI.command
+        BG3AI.UI.path = function(_, k)
+            if k == "DummyCharacter.Stats.Abilities" then return p.abilities end
+            if k == "RaceProgressionDetails.AbilityBonusSelection" then return p.cols end
+            return nil
+        end
+        BG3AI.UI.command = function(_, n, a)
+            if n == "ResetAbilities" then
+                for k in pairs(p.base) do p.base[k] = 8 end
+            elseif n == "IncreaseAbility" or n == "DecreaseAbility" then
+                local name = a._p.Ability
+                if p.refuse[name] and p.base[name] >= p.refuse[name] then return false, "not allowed" end
+                p.base[name] = p.base[name] + (n == "IncreaseAbility" and 1 or -1)
+            end
+            p.sync()
+            return true
+        end
+        RESPEC.tabs, RESPEC.finish, RESPEC.complete = REAL.tabs, REAL.finish, REAL.complete
+        local res = run("ui.cc_apply", { plan = plan, finish = false })
+        BG3AI.UI.path, BG3AI.UI.command = path, command
+        return res
+    end
+    local WANT = { Strength = 15, Dexterity = 13, Constitution = 14, Intelligence = 10, Wisdom = 12, Charisma = 8 }
+    local STOP = { Strength = 13, Dexterity = 13, Constitution = 13, Intelligence = 10, Wisdom = 12, Charisma = 8 }
+    local plan = { class = "Fighter", abilities = WANT }
+
+    local p = page6(STOP, { [2] = "Strength", [1] = "Constitution" }, true)
+    local r = apply(p, plan)
+    check(r and r.status == "done", "point buy: done (" .. tostring(r and r.error) .. ")")
+    check(p.base.Strength == 15 and p.base.Constitution == 14 and p.abilities[1]._p.Value == 17
+        and p.abilities[3]._p.Value == 15, "point buy: 15 and 14 bought under the kept +2 and +1, 17 and 15 shown")
+    check(dc._p.UnusedAbilityPoints == 0 and #r.result.problems == 0, "point buy: every point spent, no problem")
+    local picked = {}
+    for _, c in ipairs(r.result.set.abilities.bonus) do picked[c.bonus] = c.picked end
+    check(picked[2] == "Strength" and picked[1] == "Constitution", "point buy: the view reads the picks by Improvement")
+
+    p = page6(STOP, { [2] = "Strength", [1] = "Constitution" }, false)
+    r = apply(p, plan)
+    check(table.concat(r.result.problems, ";"):find("abilities: 6 points left", 1, true) ~= nil,
+        "point buy: a pick that doesn't read stops as live did, now named (" .. table.concat(r.result.problems, ";") .. ")")
+
+    p = page6(STOP, { [2] = "Strength", [1] = "Constitution" }, true)
+    p.refuse.Strength = 13
+    r = apply(p, plan)
+    check(table.concat(r.result.problems, ";"):find("Strength bought 13, wanted 15: not allowed", 1, true) ~= nil,
+        "point buy: a press the page refuses is named (" .. table.concat(r.result.problems, ";") .. ")")
+
+    p = page6(STOP, { [2] = "Strength", [1] = "Constitution" }, true)
+    r = apply(p, { class = "Fighter", abilities = WANT, bonus = { "Dexterity", "Constitution" } })
+    check(table.concat(r.result.problems, ";"):find("bonus Dexterity: the page has Strength", 1, true) ~= nil,
+        "point buy: a bonus the page didn't take is named")
+    filled(false)
+end
+
 print(fails == 0 and "ALL OK" or (fails .. " FAILED"))
 os.exit(fails == 0 and 0 or 1)
