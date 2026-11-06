@@ -58,6 +58,7 @@ namespace bg3le { static void logf(char const* fmt, ...) {
   va_list ap; va_start(ap, fmt); std::vfprintf(stdout, fmt, ap); va_end(ap); std::printf("\n");
 } }
 namespace Noesis { namespace bg3le_ui {
+struct CallRefs {};  // 0014: a call's references (tools/test_bg3le_ui_refs.py)
 GLOBALS
 FUNCS
 } }
