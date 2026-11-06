@@ -302,6 +302,19 @@ class GameController:
         )
         raise game.Bg3leStale(msg)
 
+    def refuse_missing_stats(self) -> None:
+        """A game at the menu or playing whose Ext.Stats has no pools (LaunchWatch.stats_problem): loud log, event,
+        the game killed, StatsPoolsMissing. No watch (a game the runner took over): nothing to read."""
+        h = self.host
+        why = self.watch.stats_problem() if self.watch is not None else None
+        if why is None:
+            return
+        h.log(f"!!!!! REFUSING TO PLAY: bg3le can't read the stats on this launch ({why}). See runtime/logs. !!!!!")
+        h.event("stats_pools_missing", why=why)
+        h.status(alert={"t": time.time(), "kind": "stats_pools_missing", "msg": f"runner stopped: {why}"[:600]})
+        self.kill()
+        raise game.StatsPoolsMissing(why)
+
     def kill(self) -> None:
         """Stop the game: SIGTERM, then SIGKILL after KILL_GRACE s (bg3 ignores SIGTERM), on both the
         launcher's process group (only while owned_group proves it is that launch) and this harness's bg3 processes
@@ -456,9 +469,12 @@ class GameController:
                 self.host.log(f"splash screen while waiting for the load: pressed {self.try_menu_key()}")
             return False
 
-        return self.wait_for("game state Running", running, 600, MENU_POLL) and self.wait_for(
-            "server context", game.server_ready, 120, 3
-        )
+        if not self.wait_for("game state Running", running, 600, MENU_POLL):
+            return False
+        if not self.wait_for("server context", game.server_ready, 120, 3):
+            return False
+        self.refuse_missing_stats()
+        return True
 
     def sleep(self, seconds: float) -> None:
         end = time.time() + seconds

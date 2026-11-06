@@ -90,6 +90,54 @@ class Base(unittest.TestCase):
         self.ctl = C.GameController(self.host)
 
 
+class MissingStats(Base):
+    """A game whose log shows Ext.Stats without its pools is killed and refused, at Running, with no retry."""
+
+    def write_log(self, text: str) -> None:
+        logs = self.host.runtime / "logs"
+        logs.mkdir(exist_ok=True)
+        (logs / "bg3le-s.log.1").write_text(text)
+        self.ctl.watch = G.LaunchWatch("s", logs, 1.0)
+
+    def run_load(self) -> tuple[list[str], list[str], G.Save | Exception]:
+        launched: list[str] = []
+        killed: list[str] = []
+
+        def launch(folder: str | None) -> None:
+            launched.append(str(folder))
+
+        with (
+            mock.patch.object(self.ctl, "launch", launch),
+            mock.patch.object(self.ctl, "wait_for", lambda *a, **k: True),  # pyright: ignore[reportUnknownLambdaType]
+            mock.patch.object(self.ctl, "kill", lambda: killed.append("kill")),
+            mock.patch.object(self.ctl, "sleep", _no_sleep),
+        ):
+            try:
+                return launched, killed, self.ctl.launch_and_load(NEW)
+            except G.StatsPoolsMissing as e:
+                return launched, killed, e
+
+    def test_a_launch_without_pools_is_killed_and_refused_once(self) -> None:
+        self.write_log("[ 1.0] stats: 15754 stats via the rarity run at 0x3\n[ 1.1] stats: no guid pool found; GUID\n")
+        launched, killed, got = self.run_load()
+        self.assertIsInstance(got, G.StatsPoolsMissing)
+        self.assertIsInstance(got, G.Bg3leStale)  # a stop for every retry loop, never a LaunchBlocked
+        self.assertNotIsInstance(got, G.LaunchBlocked)
+        self.assertEqual((launched, killed), ([NEW.folder], ["kill"]))
+        self.assertEqual([k for k, _ in self.host.events], ["stats_pools_missing"])
+        self.assertTrue(any("REFUSING TO PLAY" in line for line in self.host.logs))
+
+    def test_a_launch_with_its_pools_plays(self) -> None:
+        self.write_log("[ 1.0] stats: 15754 stats via the rarity run at 0x3\n[ 1.1] stats: attributes available\n")
+        launched, killed, got = self.run_load()
+        self.assertEqual((launched, killed, got), ([NEW.folder], [], NEW))
+        self.assertEqual(self.host.events, [])
+
+    def test_a_game_without_a_watch_has_nothing_to_read(self) -> None:
+        self.ctl.refuse_missing_stats()
+        self.assertEqual(self.host.events, [])
+
+
 class LaunchAndLoad(Base):
     def run_launches(self, dies: set[str]) -> tuple[list[str], G.Save | Exception]:
         """Each launch of a folder in `dies` dies before the save plays; the rest load."""

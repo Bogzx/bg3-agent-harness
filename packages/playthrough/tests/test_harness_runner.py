@@ -489,6 +489,9 @@ class FakeController:
     def wait_menu(self) -> bool:
         return False
 
+    def refuse_missing_stats(self) -> None:
+        pass
+
     def check_oom(self) -> str | None:
         return None
 
@@ -548,6 +551,9 @@ class NewGameController:
     def wait_menu(self) -> bool:
         self.calls.append("main menu")
         return True
+
+    def refuse_missing_stats(self) -> None:
+        pass
 
     def launch_and_load(self, save: Save) -> Save:
         self.calls.append(f"launch {save.folder}")
