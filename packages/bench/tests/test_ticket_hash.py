@@ -348,9 +348,10 @@ def test_a_line_may_wait_240_s_on_the_servers_clock(off, delay, ok):
     assert validate.t04_beats(run, t)[0] is ok
 
 
-def test_a_late_time_on_a_first_line_does_not_excuse_the_lines_after_it():
+@pytest.mark.parametrize("xs", [[590, 20, 30], [590, 590, 590, 590, 20]])
+def test_a_late_time_on_early_lines_does_not_excuse_the_lines_after_them(xs):
     """It would under a running maximum: moving one `t` forward would leave the whole stream uncommitted."""
-    run = with_rolls(run_of(every_10s(600)), [590, 20, 30])
+    run = with_rolls(run_of(every_10s(600)), xs)
     t = rooted([named(run, 0, T0 + 60, only=FACTS_ONLY), named(run, 1, T0 + 300, only=FACTS_ONLY)])
     ok, why = validate.t04_beats(run, t)
     assert ok is False and "rolls.jsonl" in why
