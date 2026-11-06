@@ -270,7 +270,7 @@ class ArenaQueue:
         """Play until every match is done, gave up or ended over budget, or a stop (module doc); the stop reason. A
         process that dies here (a signal, an exception) leaves progress.json stopped, never running."""
         self.q.create(self.m["name"], self.m["jobs"])
-        if why := self.operator_stopped():
+        if (why := self.operator_stopped()) is not None:
             raise ValueError(f"{self.root / 'queue.jsonl'} was closed by the operator: {why}; use a new matrix name")
         try:
             return self._run()

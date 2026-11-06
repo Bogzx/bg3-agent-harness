@@ -260,6 +260,20 @@ def test_a_queue_the_operator_closed_is_refused_with_nothing_charged_or_played(t
     assert q.state()[M1]["attempts"][-1]["result"] is None  # no end record was made up
 
 
+def test_a_closed_queue_with_an_empty_reason_is_still_closed(tmp_path, pilot):
+    budgets(tmp_path)
+    player = Player(tmp_path, "kill")
+    with pytest.raises(KeyboardInterrupt):
+        queue(pilot, tmp_path, player).run()
+    log = tmp_path / "matrix" / pilot["name"] / "queue.jsonl"
+    with log.open("a") as f:
+        f.write(json.dumps({"type": aq.OPERATOR_STOP, "job": M1, "attempt": 1, "t": 2.0, "by": "op", "why": ""}) + "\n")
+    before = spent(tmp_path)
+    with pytest.raises(ValueError, match="closed by the operator"):
+        queue(pilot, tmp_path, player).run()
+    assert spent(tmp_path) == before and len(player.calls) == 1
+
+
 def test_a_model_file_in_a_sibling_checkout_is_the_ledger_the_match_reads_and_charges(tmp_path, pilot):
     tree = tmp_path / "tree"
     budgets(tree)
