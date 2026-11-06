@@ -487,6 +487,25 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
         del played["mirror"]["party_xp"]
         self.assertTrue(any("needs mirror.party_xp" in e for e in barena.validate(played, "arena-4v4-l5")))
 
+    def test_every_builds_arena_is_what_its_build_file_generates(self):
+        # Names, spawns, line gap and the two caps are builds-arena's arguments, so they come from the file.
+        arenas = REPO / "packages/bench/arenas"
+        paths = sorted(arenas.glob("builds-*.json"))
+        self.assertEqual(len(paths), 4)  # a glob that finds nothing would pass
+        for path in paths:
+            with self.subTest(path.name):
+                a = json.loads(path.read_text())
+                m = re.fullmatch(r"The build file (\S+) .* on (\S+)'s save\.", a["about"])
+                assert m is not None, a["about"]
+                doc = ab.load_builds(REPO / f"packages/bench/builds/{m[1]}.json")
+                base = json.loads((arenas / f"{m[2]}.json").read_text())
+                names = [(p["names"]["A"], p["names"]["B"]) for p in a["mirror"]["pairs"]]
+                loc = a["location"]
+                want = ab.arena_file(
+                    doc, base, a["name"], names, loc["spawns"]["A"], loc["spawns"]["B"], STATIC, loc.get("line_gap")
+                )
+                self.assertEqual(a, want | {"round_cap": a["round_cap"], "wall_cap_min": a["wall_cap_min"]})
+
     def test_arena_file_has_the_builds_turn_cap_not_the_bases(self):
         base = json.loads((REPO / "packages/bench/arenas/crash-mirror-v1.json").read_text())
         self.assertEqual(base["turn_cap_s"], 60)  # a base whose cap differs, or this test shows nothing

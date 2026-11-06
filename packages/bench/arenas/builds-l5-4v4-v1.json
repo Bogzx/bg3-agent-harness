@@ -8,7 +8,7 @@
  "karmic": false,
  "round_cap": 20,
  "wall_cap_min": 60.0,
- "turn_cap_s": 60,
+ "turn_cap_s": 90,
  "condition": "rules",
  "tools_off": "arena-v1",
  "name": "builds-l5-4v4-v1",
@@ -352,6 +352,19 @@
        "CuttingWords"
       ],
       "spells": []
+     },
+     "spell_abilities": {
+      "Target_ViciousMockery": "Charisma",
+      "Shout_BladeWard": "Charisma",
+      "Target_HealingWord": "Charisma",
+      "Target_CureWounds": "Charisma",
+      "Target_FaerieFire": "Charisma",
+      "Target_Bane": "Charisma",
+      "Target_Heroism": "Charisma",
+      "Target_Blindness": "Charisma",
+      "Target_TrueStrike": "Charisma",
+      "Target_Shatter": "Charisma",
+      "Target_BestowCurse": "Charisma"
      }
     }
    },
@@ -489,6 +502,21 @@
        "SculptSpells"
       ],
       "spells": []
+     },
+     "spell_abilities": {
+      "Projectile_FireBolt": "Intelligence",
+      "Projectile_RayOfFrost": "Intelligence",
+      "Target_ShockingGrasp": "Intelligence",
+      "Projectile_MagicMissile": "Intelligence",
+      "Shout_Shield_Wizard": "Intelligence",
+      "Target_MageArmor": "Intelligence",
+      "Projectile_RayOfSickness": "Intelligence",
+      "Zone_BurningHands": "Intelligence",
+      "Projectile_ScorchingRay": "Intelligence",
+      "Target_MistyStep": "Intelligence",
+      "Target_ChillTouch": "Intelligence",
+      "Projectile_Fireball": "Intelligence",
+      "Target_Counterspell": "Intelligence"
      }
     }
    },

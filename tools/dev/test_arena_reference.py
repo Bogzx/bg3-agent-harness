@@ -378,6 +378,11 @@ class DressTest(unittest.TestCase):
         with self.assertRaisesRegex(ar.RefStepError, "the plan's"):
             live(g, FakeRoute()).dress(KIT, "u1")
 
+    def test_an_extra_spell_flipped_on_beside_the_plans_stops_it_though_the_tool_says_done(self):
+        g = FakeGame([], prepared=[[], ["Target_Bless", "Target_Bane"]])  # a look-alike's cell flipped too
+        with self.assertRaisesRegex(ar.RefStepError, "the plan's"):
+            live(g, FakeRoute()).dress(KIT, "u1")
+
     def test_a_hireling_with_no_prepared_list_stops_it(self):
         with self.assertRaisesRegex(ar.RefStepError, "no prepared list"):
             live(FakeGame([], prepared=[None]), FakeRoute()).dress(KIT, "u1")
