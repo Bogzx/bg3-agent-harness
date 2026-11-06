@@ -91,7 +91,7 @@ KITS["Wizard"] = {
     ],
     "prepared": ["Projectile_MagicMissile", "Shout_Shield_Wizard", "Target_MageArmor", "Projectile_ChromaticOrb",
                  "Shout_FalseLife"],
-    "items": ["WPN_Quarterstaff", "ARM_Robe_Body", "ARM_Shoes", *POTIONS],
+    "items": ["WPN_Dagger", "ARM_Robe_Body", "ARM_Shoes", *POTIONS],
 }  # fmt: skip
 KITS["Bard"] = {
     "race": "HalfElf",

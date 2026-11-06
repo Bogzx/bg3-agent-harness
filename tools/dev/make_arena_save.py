@@ -32,11 +32,12 @@ with a skill choice (Human) takes kit.race_skills. kit.background (optional) nam
 the player passives, and no skill choice may pick a skill the race or background already gives.
 kit.passives and kit.spells have one list per SelectPassives / SelectSpells selector, in the rows' order (a Ranger:
 favoured enemy, natural explorer, then its level-2 fighting style). Every kit also gets PLAYER_PASSIVES. kit.items is
-the class's character-creation equipment (EQP_CC_<class>) less EXCLUDED, as a multiset; weapons and armour are equipped
-unless the entry says "equip": false. The game's lists themselves (which skills, styles, spells a selector offers) are
-checked live by arena.mirror_kit. `template` may be null (validate accepts it; `mirror` will not). Pair i is teams.A[i]
-and teams.B[i] in the arena file. `symmetry` asks the game's arena.symmetry (the game runs with BG3AI_ARENA=1) and exits
-1 on any problem: a field that differs within a pair, a field that doesn't read, or one display name for two members.
+the class's character-creation equipment (EQP_CC_<class>) less EXCLUDED, plus KIT_ADDS, as a multiset; weapons and
+armour are equipped unless the entry says "equip": false. The game's lists themselves (which skills, styles, spells a
+selector offers) are checked live by arena.mirror_kit. `template` may be null (validate accepts it; `mirror` will
+not). Pair i is teams.A[i] and teams.B[i] in the arena file. `symmetry` asks the game's arena.symmetry (the game runs
+with BG3AI_ARENA=1) and exits 1 on any problem: a field that differs within a pair, a field that doesn't read, or one
+display name for two members.
 """
 
 from __future__ import annotations
@@ -86,17 +87,22 @@ PLAYER_PASSIVES = ("DeathSavingThrows",)
 STATIC = Path(__file__).resolve().parent / "arena_static.json"
 # Character creation's items a kit leaves out: the Revivify scroll (orchestrator D300), what plays no part in a fight,
 # and the knock-down sources (Fable REVIEW-12 option (d), 2026-11-04: Prone can cost a whole phase in the shared turn
-# group, and no turn order fixes it; the Rogue's grease bottles and the Ranger's Arrow of Ice make PRONE surfaces).
+# group, and no turn order fixes it; the Rogue's grease bottles and the Ranger's Arrow of Ice make PRONE surfaces; a
+# Quarterstaff unlocks Topple, tools/dev/arena_scan.py).
 EXCLUDED = (
     "OBJ_Scroll_Revivify",
     "OBJ_GreaseBottle",
     "OBJ_ArrowOfIce",
+    "WPN_Quarterstaff",
     "OBJ_Keychain",
     "OBJ_Bag_AlchemyPouch",
     "ARM_Camp_Body",
     "ARM_Camp_Shoes",
     "OBJ_Backpack_CampSupplies",
 )
+# What a kit holds in the place of a weapon EXCLUDED takes: a Wizard is proficient with daggers, and the scan finds
+# nothing behind Piercing Thrust.
+KIT_ADDS = {"Wizard": ("WPN_Dagger",)}
 SKILLS = (
     "Deception",
     "Intimidation",
@@ -503,7 +509,7 @@ def kit_plan(
         "player": {"passives": player},
         "ability_bonus": ab,
         "choices": choices,
-        "items": _items(kit.get("items"), c["equipment"], cls, what, level, static),
+        "items": _items(kit.get("items"), class_items(cls, static), cls, what, level, static),
     }
     if kit.get("subclass") is not None:
         out_kit["subclass"] = static["subclasses"][kit["subclass"]]["uuid"]
@@ -560,6 +566,13 @@ def race_plan(
     if spells:
         part["spells"] = spells
     return race["race"], part, choices, fixed
+
+
+def class_items(cls: str, static: dict[str, Any]) -> list[dict[str, Any]]:
+    """The class's character-creation equipment and its KIT_ADDS, as {item, type, root}."""
+    cat = static.get("items", {})
+    adds = [{"item": x, "type": cat[x]["type"], "root": cat[x]["root"]} for x in KIT_ADDS.get(cls, ())]
+    return [*static["classes"][cls]["equipment"], *adds]
 
 
 def tier_items(cc: list[dict[str, Any]], level: int, static: dict[str, Any]) -> list[dict[str, Any]]:
@@ -622,7 +635,9 @@ def _items(
             else ""
         )
         raise SpecError(
-            f"{what}: items must be EQP_CC_{cls} less {', '.join(EXCLUDED)}{tier}"
+            f"{what}: items must be EQP_CC_{cls} less {', '.join(EXCLUDED)}"
+            + (f" plus {', '.join(KIT_ADDS[cls])}" if cls in KIT_ADDS else "")
+            + tier
             + (f"; not that: {', '.join(sorted(set(extra)))}" if extra else "")
             + (f"; missing: {', '.join(sorted(set(short)))}" if short else "")
         )

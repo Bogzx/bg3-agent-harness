@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import arena_static_gen as gen
 import pak
 
+DAGGERS = ("WPN_Dagger", "WPN_Dagger_1", "WPN_Dagger_2")
+
 FIGHTER_T, BM_T, RACE_T, SUB_T = (f"{i}0000000-0000-0000-0000-000000000000" for i in "1234")
 FIGHTER, BM, RACE, SUB, BG, ORIGIN, LIST, SKILLS = (f"a{i}000000-0000-0000-0000-000000000000" for i in "12345678")
 
@@ -64,6 +66,7 @@ def game(tmp: Path, *, shared_rows=(), dev_rows=(), x_rows=()) -> Path:
         'new entry "WPN_Longsword_1"\ntype "Weapon"\nusing "WPN_Longsword"\ndata "RootTemplate" "root-ls1"\n'
         'data "Rarity" "Uncommon"\n'
     )
+    stats += "".join(f'new entry "{w}"\ntype "Weapon"\ndata "RootTemplate" "root-{w}"\n\n' for w in DAGGERS)
     objects = "".join(f'new entry "{p}"\ntype "Object"\ndata "RootTemplate" "root-{p}"\n\n' for p in gen.POTIONS)
     xp = "".join(f'key "Level{i}","{i * 100}"\n\n' for i in range(1, 12))
     shared = {
@@ -175,6 +178,7 @@ def test_class_rows_skip_the_multiclass_row_and_keep_improvements_subclass_count
     ]
     # the +1 entry inherits its type through `using` and is in the catalog with its own root and rarity
     assert g["items"]["WPN_Longsword_1"] == {"type": "Weapon", "root": "root-ls1", "rarity": "Uncommon"}
+    assert [g["items"][w]["root"] for w in DAGGERS] == [f"root-{w}" for w in DAGGERS]  # a kit's weapon, in no EQP_CC
     assert set(gen.POTIONS) <= set(g["items"])
 
 

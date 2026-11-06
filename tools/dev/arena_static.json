@@ -3811,6 +3811,21 @@
    "root": "c1c3e4fb-d68c-4e10-afdc-d4550238d50e",
    "rarity": "Common"
   },
+  "WPN_Dagger": {
+   "type": "Weapon",
+   "root": "569b0f3d-abcd-4b01-aaf0-979091288163",
+   "rarity": "Common"
+  },
+  "WPN_Dagger_1": {
+   "type": "Weapon",
+   "root": "1eab180b-5bf9-48ea-aece-7ba20d1deb78",
+   "rarity": "Uncommon"
+  },
+  "WPN_Dagger_2": {
+   "type": "Weapon",
+   "root": "c68026c8-8af9-4a05-b77a-246a01bafe61",
+   "rarity": "Rare"
+  },
   "WPN_Greataxe": {
    "type": "Weapon",
    "root": "d5712e24-ce9e-42ce-8fad-6e049b62c28c",

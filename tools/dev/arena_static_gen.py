@@ -45,6 +45,7 @@ MODULES = ("Shared", "SharedDev", "Gustav", "GustavDev", "GustavX")
 CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard", "Bard")
 MAX_LEVEL = 12
 POTIONS = ("OBJ_Potion_Healing", "OBJ_Potion_Healing_Greater", "OBJ_Potion_Healing_Superior")
+KIT_WEAPONS = ("WPN_Dagger",)  # make_arena_save.KIT_ADDS: in no EQP_CC, so named here with their _1/_2
 NULL = "00000000-0000-0000-0000-000000000000"
 SOURCE = (
     "game data of the installed BG3 (build in game_build), read-only from Shared.pak, Gustav.pak and GustavX.pak "
@@ -239,6 +240,9 @@ def generate(files: Files, classes: tuple[str, ...] = CLASSES) -> dict[str, Any]
             }
     for p in POTIONS:
         item(p)
+    for w in KIT_WEAPONS:
+        for n in (w, f"{w}_1", f"{w}_2"):
+            item(n)
     out["items"] = dict(sorted(items.items()))
     out["xp"] = xp_totals(files)
 
