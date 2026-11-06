@@ -266,6 +266,13 @@ def tier(level: int) -> dict[str, Any]:
     return json.loads((REPO / f"packages/bench/builds/l{level}_4v4_v1.json").read_text())
 
 
+def unread(d: dict[str, Any]) -> dict[str, Any]:
+    """A tier's file as it was before its references: a draft."""
+    for b in d["builds"]:
+        b["reference"] = None
+    return d | {"draft": "no reference profiles yet"}
+
+
 def tbuild(d: dict[str, Any], bid: str) -> dict[str, Any]:
     return next(b for b in d["builds"] if b["id"] == bid)
 
@@ -291,11 +298,11 @@ class TierTest(unittest.TestCase):
     Rogue (Thief) at levels 2, 5 and 12; subclass rows, improvements and prepared spells checked. The healer is a Bard
     (Lore) at 5 and 12 (owner D114): a Cleric copy's class rows add its whole list; l2_4v4_v1 keeps its Cleric draft."""
 
-    def test_the_three_tier_files_are_valid_drafts_of_the_same_four_builds(self):
+    def test_the_three_tier_files_are_valid_and_hold_the_same_four_builds(self):
         for lv in (2, 5, 12):
             with self.subTest(level=lv):
                 d = ab.check_builds(tier(lv))
-                self.assertIn("draft", d)
+                self.assertEqual("draft" in d, lv != 5)  # L5's references are in
                 healer = "Cleric" if lv == 2 else "Bard"
                 self.assertEqual([b["class"] for b in d["builds"]], ["Fighter", healer, "Wizard", "Rogue"])
                 schema = json.loads((REPO / "packages/bench/schema/arena-builds.v1.schema.json").read_text())
@@ -439,7 +446,7 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
         self.assertEqual(ab.party_xp(12, STATIC), {"total": 100000})
 
     def test_the_mirror_section_has_party_xp_and_each_read_reference(self):
-        d = tier(5)
+        d = unread(tier(5))
         d["builds"][0]["reference"] = ref_of(d["builds"][0])
         m = ab.mirror_section(ab.check_builds(d), NAMES4, STATIC)["mirror"]
         self.assertEqual(m["party_xp"], {"total": 6500, "below": 13000})
@@ -466,7 +473,7 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
 
     def test_arena_file_takes_the_bases_rules_and_the_builds_and_checks_the_spawns(self):
         base = json.loads((REPO / "packages/bench/arenas/arena-v0.1.json").read_text())
-        a = ab.arena_file(ab.check_builds(tier(5)), base, "arena-4v4-l5", NAMES4, [213.0, 10.98, 288.0],
+        a = ab.arena_file(ab.check_builds(unread(tier(5))), base, "arena-4v4-l5", NAMES4, [213.0, 10.98, 288.0],
                           [213.0, 10.98, 296.0], STATIC)  # fmt: skip
         self.assertEqual((a["level"], a["save"], a["name"]), (5, base["save"], "arena-4v4-l5"))
         self.assertEqual(a["location"]["level"], base["location"]["level"])
@@ -514,7 +521,7 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
                 ab.reference_read(lambda op, a: prof, path, "nobody", "u1", "x")
 
     def test_reference_diff_sends_the_reference_and_needs_one(self):
-        d = tier(5)
+        d = unread(tier(5))
         with self.assertRaisesRegex(ab.BuildError, "no reference yet"):
             ab.reference_diff(lambda op, a: {}, d, "fighter", "u1")
         d["builds"][0]["reference"] = ref_of(d["builds"][0])
