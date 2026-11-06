@@ -172,6 +172,10 @@ class BuildsTest(unittest.TestCase):
         bad(lambda d: build(0, d)["script"]["cc"]["abilities"].update(Strength=16), "stat entry's point-buy")
         bad(lambda d: build(3, d)["script"]["level_ups"][0].pop("spells"), "level-up 2 spells must have 1 lists")
         bad(lambda d: build(3, d)["script"]["cc"]["passives"].pop(), r"script.cc.passives must have 2 lists")
+        bad(
+            lambda d: build(3, d)["script"]["cc"]["skills"].__setitem__(2, "Investigation"),
+            "Investigation is picked, but passive FavoredEnemy_BountyHunter already gives it",
+        )
         bad(lambda d: build(0, d)["script"].update(level_ups=[]), "level_ups must list levels 2..2")
         bad(lambda d: build(0, d)["script"]["cc"].update(subclass="x"), "script.cc must have abilities and only")
         bad(lambda d: build(1, d).update(id="fighter"), "build id fighter is used twice")

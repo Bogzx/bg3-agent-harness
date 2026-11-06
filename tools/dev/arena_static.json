@@ -6591,5 +6591,135 @@
     "Target_FreedomOfMovement"
    ]
   }
+ },
+ "passive_skills": {
+  "Actor": [
+   "Deception",
+   "Performance"
+  ],
+  "AspectOfTheBeast_Tiger": [
+   "Survival"
+  ],
+  "AspectOfTheBeast_Wolf": [
+   "Stealth"
+  ],
+  "Background_Acolyte": [
+   "Insight",
+   "Religion"
+  ],
+  "Background_AstralZealot": [
+   "Athletics",
+   "Intimidation"
+  ],
+  "Background_BladeOfFrontiers": [
+   "Athletics",
+   "Persuasion"
+  ],
+  "Background_BloodWarVeteran": [
+   "Athletics",
+   "Survival"
+  ],
+  "Background_Charlatan": [
+   "Deception",
+   "SleightOfHand"
+  ],
+  "Background_CloisteredStray": [
+   "Religion",
+   "Survival"
+  ],
+  "Background_Criminal": [
+   "Deception",
+   "Stealth"
+  ],
+  "Background_Entertainer": [
+   "Acrobatics",
+   "Performance"
+  ],
+  "Background_FolkHero": [
+   "AnimalHandling",
+   "Survival"
+  ],
+  "Background_GroveKeeper": [
+   "AnimalHandling",
+   "Nature"
+  ],
+  "Background_GuildArtisan": [
+   "Insight",
+   "Persuasion"
+  ],
+  "Background_HauntedOne": [
+   "Medicine",
+   "Intimidation"
+  ],
+  "Background_LegendOfBaldur'sGate": [
+   "AnimalHandling",
+   "Perception"
+  ],
+  "Background_Noble": [
+   "History",
+   "Persuasion"
+  ],
+  "Background_Outlander": [
+   "Athletics",
+   "Survival"
+  ],
+  "Background_Sage": [
+   "Arcana",
+   "History"
+  ],
+  "Background_Soldier": [
+   "Athletics",
+   "Intimidation"
+  ],
+  "Background_TricksterHedonist": [
+   "Deception",
+   "Stealth"
+  ],
+  "Background_UnderdarkExile": [
+   "Deception",
+   "Intimidation"
+  ],
+  "Background_Urchin": [
+   "SleightOfHand",
+   "Stealth"
+  ],
+  "Background_VeteranMentor": [
+   "Insight",
+   "Intimidation"
+  ],
+  "Background_WaterdavianMagus": [
+   "Arcana",
+   "History"
+  ],
+  "BeguilingInfluence": [
+   "Deception",
+   "Persuasion"
+  ],
+  "CollegeOfLore_Proficiency": [
+   "Arcana",
+   "Intimidation",
+   "SleightOfHand"
+  ],
+  "FavoredEnemy_BountyHunter": [
+   "Investigation"
+  ],
+  "FavoredEnemy_KeeperOfTheVeil": [
+   "Arcana"
+  ],
+  "FavoredEnemy_MageBreaker": [
+   "Arcana"
+  ],
+  "FavoredEnemy_RangerKnight": [
+   "History"
+  ],
+  "FavoredEnemy_SanctifiedStalker": [
+   "Religion"
+  ],
+  "NaturalExplorer_UrbanTracker": [
+   "SleightOfHand"
+  ],
+  "RockGnome_ArtificersLore": [
+   "History"
+  ]
  }
 }

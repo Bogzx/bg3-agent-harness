@@ -29,7 +29,7 @@ to the level (tools/dev/arena_static.json, from the game's data):
 kit.race names an arena_static.json race; its part of the kit is that race's level-1 rows, the parent race's first
 (a Drow's Dancing Lights included), and names the race id, which arena.setup checks against the pair's race. A race
 with a skill choice (Human) takes kit.race_skills. kit.background (optional) names a background: its passive joins
-the player passives, and no skill choice may pick a skill the race or background already gives.
+the player passives, and no skill choice may pick a skill the race, background or a picked passive already gives.
 kit.passives and kit.spells have one list per SelectPassives / SelectSpells selector, in the rows' order (a Ranger:
 favoured enemy, natural explorer, then its level-2 fighting style). Every kit also gets PLAYER_PASSIVES. kit.items is
 the class's character-creation equipment (EQP_CC_<class>) less EXCLUDED, plus KIT_ADDS, as a multiset; weapons and
@@ -458,6 +458,10 @@ def kit_plan(
             raise SpecError(f"{what}: background must be one of {', '.join(static['backgrounds'])}")
         player.append(b["passive"])
         fixed += [(s, f"background {bg}") for s in b.get("skills", [])]
+    # A passive's skill leaves the class group once it's picked (live 2026-11-06: Bounty Hunter, Investigation)
+    gives = static.get("passive_skills", {})
+    for x in (c for c in choices if c["kind"] == "passives"):
+        fixed += [(s, f"passive {p}") for p in x["ids"] for s in gives.get(p, [])]
     choices = rchoices + choices
     picked = [s for x in choices if x["kind"] == "skills" for s in x["ids"]]
     for s in picked:

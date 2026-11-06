@@ -444,6 +444,9 @@ local PASSIVE_PATHS = {
 }
 
 P.featSel = P.featSel or {}   -- tostring(selector) -> the chosen feat's label, for feat passive selectors
+-- tostring(selector) -> its PassiveList id, where the plan named it (plan.passive_lists: a Ranger's two lists have 5
+-- entries each, so a length can't tell them apart, live 2026-11-06)
+P.selPassiveList = P.selPassiveList or {}
 
 local function passiveSelectors(dc)
     local out, seen = {}, {}
@@ -555,8 +558,12 @@ function P.namePassives(sel)
         return found
     end
     local feat = P.featSel[tostring(sel)]
+    local own = P.selPassiveList[tostring(sel)]
     local names
-    if feat then
+    if own then
+        names = passiveListNames(own)
+        if #names ~= n then return nil end
+    elseif feat then
         -- A feat's choice: that feat's lists (Feat resource Name "ElementalAdept" = page "Elemental Adept"), else
         -- a unique one among all feats' lists.
         local mine, all = {}, {}
@@ -675,7 +682,7 @@ P.spellLists = spellLists
 -- Forget the static-data name caches (offline tests; a data change).
 function P.clearNameCaches()
     spellListsByCount, passiveIndex, passiveNames = nil, nil, {}
-    P.featSel = {}
+    P.featSel, P.selPassiveList = {}, {}
     P.vmNames, P.spellStats = {}, {}
 end
 

@@ -67,6 +67,10 @@ def game(tmp: Path, *, shared_rows=(), dev_rows=(), x_rows=()) -> Path:
         'data "Rarity" "Uncommon"\n'
     )
     stats += "".join(f'new entry "{w}"\ntype "Weapon"\ndata "RootTemplate" "root-{w}"\n\n' for w in DAGGERS)
+    passives = (
+        'new entry "Trained"\ntype "PassiveData"\ndata "Boosts" "ProficiencyBonus(Skill,Stealth);Tag(X)"\n\n'
+        'new entry "Plain"\ntype "PassiveData"\ndata "Boosts" "ProficiencyBonus(SavingThrow,Wisdom)"\n\n'
+    )
     objects = "".join(f'new entry "{p}"\ntype "Object"\ndata "RootTemplate" "root-{p}"\n\n' for p in gen.POTIONS)
     xp = "".join(f'key "Level{i}","{i * 100}"\n\n' for i in range(1, 12))
     shared = {
@@ -149,6 +153,7 @@ def game(tmp: Path, *, shared_rows=(), dev_rows=(), x_rows=()) -> Path:
         ),
         "Public/Shared/Stats/Generated/Data/Weapon.txt": stats.encode(),
         "Public/Shared/Stats/Generated/Data/Object.txt": objects.encode(),
+        "Public/Shared/Stats/Generated/Data/Passive.txt": passives.encode(),
         "Public/Shared/Stats/Generated/Data/XPData.txt": xp.encode(),
     }
     data = tmp / "Data"
@@ -179,6 +184,7 @@ def test_class_rows_skip_the_multiclass_row_and_keep_improvements_subclass_count
     # the +1 entry inherits its type through `using` and is in the catalog with its own root and rarity
     assert g["items"]["WPN_Longsword_1"] == {"type": "Weapon", "root": "root-ls1", "rarity": "Uncommon"}
     assert [g["items"][w]["root"] for w in DAGGERS] == [f"root-{w}" for w in DAGGERS]  # a kit's weapon, in no EQP_CC
+    assert g["passive_skills"] == {"Trained": ["Stealth"]}
     assert set(gen.POTIONS) <= set(g["items"])
 
 
