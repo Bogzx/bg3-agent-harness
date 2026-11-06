@@ -34,7 +34,8 @@ end))
 
 test("a kit part only a reference can check, in a pair with none, is refused at the call", guarded(function()
     local a = mirrorArena()
-    for _, part in ipairs({ { subclass = "life" }, { grants = {} }, { prepared = { "Target_Bless" } } }) do
+    for _, part in ipairs({ { subclass = "life" }, { grants = {} }, { prepared = { "Target_Bless" } },
+        { unlocks = { Target_Bless = "Wisdom" } } }) do
         local k = next(part)
         a.mirror.pairs[2].kit[k] = part[k]
         local ok, err = pcall(Ar.Setup.check_mirror, a.mirror)

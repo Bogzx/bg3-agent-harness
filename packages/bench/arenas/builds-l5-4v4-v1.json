@@ -619,20 +619,7 @@
       "passives": [
        "CuttingWords"
       ],
-      "spells": [
-       "Target_HealingWord_2",
-       "Target_HealingWord_3",
-       "Target_CureWounds_2",
-       "Target_CureWounds_3",
-       "Target_FaerieFire_2",
-       "Target_FaerieFire_3",
-       "Target_Bane_2",
-       "Target_Bane_3",
-       "Target_Heroism_2",
-       "Target_Heroism_3",
-       "Target_Blindness_3",
-       "Target_Shatter_3"
-      ]
+      "spells": []
      },
      "spell_abilities": {
       "Target_ViciousMockery": "Charisma",
@@ -658,6 +645,15 @@
       "Target_Heroism_3": "Charisma",
       "Target_Blindness_3": "Charisma",
       "Target_Shatter_3": "Charisma"
+     },
+     "unlocks": {
+      "Target_HealingWord": "Charisma",
+      "Target_CureWounds": "Charisma",
+      "Target_FaerieFire": "Charisma",
+      "Target_Bane": "Charisma",
+      "Target_Heroism": "Charisma",
+      "Target_Blindness": "Charisma",
+      "Target_Shatter": "Charisma"
      }
     },
     "reference": {
@@ -1174,18 +1170,6 @@
        "SculptSpells"
       ],
       "spells": [
-       "Projectile_MagicMissile_2",
-       "Projectile_MagicMissile_3",
-       "Shout_Shield_Wizard_2",
-       "Shout_Shield_Wizard_3",
-       "Target_MageArmor_2",
-       "Target_MageArmor_3",
-       "Projectile_RayOfSickness_2",
-       "Projectile_RayOfSickness_3",
-       "Zone_BurningHands_2",
-       "Zone_BurningHands_3",
-       "Projectile_ScorchingRay_3",
-       "Target_MistyStep_3",
        "Shout_ArcaneRecovery_2",
        "Shout_ArcaneRecovery_3"
       ]
@@ -1218,6 +1202,15 @@
       "Target_MistyStep_3": "Intelligence",
       "Shout_ArcaneRecovery_2": "Intelligence",
       "Shout_ArcaneRecovery_3": "Intelligence"
+     },
+     "unlocks": {
+      "Projectile_MagicMissile": "Intelligence",
+      "Shout_Shield_Wizard": "Intelligence",
+      "Target_MageArmor": "Intelligence",
+      "Projectile_RayOfSickness": "Intelligence",
+      "Zone_BurningHands": "Intelligence",
+      "Projectile_ScorchingRay": "Intelligence",
+      "Target_MistyStep": "Intelligence"
      }
     },
     "reference": {

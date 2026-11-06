@@ -273,7 +273,9 @@ def _check_mirror(mirror: Any, teams: Any, draft: bool = False) -> list[str]:
             isinstance(p["reference"], dict) and isinstance(p["reference"].get("profile"), dict)
         ):
             errs.append(f"mirror.pairs[{i}].reference must hold its profile")
-        parts = [k for k in ("subclass", "grants", "prepared") if isinstance(p["kit"], dict) and k in p["kit"]]
+        parts = [
+            k for k in ("subclass", "grants", "prepared", "unlocks") if isinstance(p["kit"], dict) and k in p["kit"]
+        ]
         if ("build" in p or parts) and "reference" not in p and not draft:  # only a reference shows a twin holds these
             who = f"build {p['build']}" if "build" in p else f"a kit with {', '.join(parts)}"
             errs.append(f"mirror.pairs[{i}]: {who} has no reference (only a draft may lack one)")

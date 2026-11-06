@@ -564,7 +564,7 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
         for b, want in zip(doc["builds"], (0, 12, 14, 0), strict=True):
             with self.subTest(b["id"]):
                 k = plan(doc, b["id"])
-                got = set(k.get("grants", {}).get("spells", [])) & ups
+                got = set(k.get("spell_abilities", {})) & ups
                 self.assertEqual(len(got), want)
                 held = ups & set(b["reference"]["profile"]["spells"])
                 # the Wizard's learned, unprepared spells stay out with their upcasts: its twin holds neither
@@ -575,15 +575,25 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
                 self.assertEqual(got, held - out)
                 casting = STATIC["classes"][b["class"]]["casting"]
                 self.assertEqual({k["spell_abilities"][x] for x in got} - {casting}, set())
-        self.assertIn("Shout_ArcaneRecovery_3", plan(doc, "wizard")["grants"]["spells"])
+
+    def test_a_kits_own_spell_with_upcasts_is_unlocked_and_a_class_rows_keeps_its_upcasts_added(self):
+        ups = {x for v in STATIC["upcasts"].values() for ids in v.values() for x in ids}
+        bard, wizard = plan(tier(5), "bard"), plan(tier(5), "wizard")
+        self.assertEqual(bard["unlocks"]["Target_Bane"], "Charisma")
+        self.assertEqual(wizard["unlocks"]["Projectile_MagicMissile"], "Intelligence")
+        self.assertNotIn("Shout_ArcaneRecovery", wizard["unlocks"])  # the class row gives the root
+        self.assertEqual(set(wizard["grants"]["spells"]) & ups, {"Shout_ArcaneRecovery_2", "Shout_ArcaneRecovery_3"})
+        self.assertEqual(set(bard["grants"]["spells"]) & ups, set())
+        self.assertNotIn("Target_ViciousMockery", bard["unlocks"])  # no upcasts: AddSpell's
 
     def test_upcasts_stop_at_the_highest_slot_the_rows_open(self):
         d = ab.load_builds(REPO / "packages/bench/builds/l5_4v4_team2_v1.json")
-        spells = plan(d, "ranger")["grants"]["spells"]  # a half caster's level 5: 2nd-level slots
+        ups = {x for v in STATIC["upcasts"].values() for ids in v.values() for x in ids}
+        spells = set(plan(d, "ranger")["spell_abilities"]) & ups  # a half caster's level 5: 2nd-level slots
         self.assertTrue(spells and all(x.endswith("_2") for x in spells), spells)
-        self.assertEqual(plan(tier(5), "bard")["grants"]["spells"].count("Target_Bane_3"), 1)
-        self.assertNotIn("Target_Bane_4", plan(tier(5), "bard")["grants"]["spells"])
-        self.assertIn("Target_Bane_6", plan(tier(12), "bard")["grants"]["spells"])
+        self.assertIn("Target_Bane_3", plan(tier(5), "bard")["spell_abilities"])
+        self.assertNotIn("Target_Bane_4", plan(tier(5), "bard")["spell_abilities"])
+        self.assertIn("Target_Bane_6", plan(tier(12), "bard")["spell_abilities"])
 
     def test_the_second_team_is_valid_and_a_subclass_rows_removed_passive_is_in_the_kits_grants(self):
         d = ab.load_builds(REPO / "packages/bench/builds/l5_4v4_team2_v1.json")

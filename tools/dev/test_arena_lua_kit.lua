@@ -201,6 +201,42 @@ test("reference: one boost read two ways is one boost, in either direction", fun
     eq(d.ok, true, Ar.Symmetry.diff_text(d))
 end)
 
+test("reference: a kit's unlock row is left out by its exact form; any other UnlockSpell row still counts", function()
+    local slot = "d136c5d9-0ff0-43da-acce-a74a07f8d6bf"
+    local kitRow = "UnlockSpell|UnlockSpell|Target_Bane,AddChildren," .. slot .. ",,Charisma|"
+    local d = diff({ boosts = { kitRow, "UnlockSpell|UnlockSpell|Target_PommelStrike|" } },
+        { boosts = { "UnlockSpell|||" } })
+    eq(d.ok, true, Ar.Symmetry.diff_text(d))
+    for _, other in ipairs({ "UnlockSpell|UnlockSpell|Target_Bane|",
+        "UnlockSpell|UnlockSpell|Target_Bane,MostPowerful," .. slot .. ",,Charisma|",
+        "UnlockSpell|UnlockSpell|Target_Bane,AddChildren,e9127b70-22b7-42a1-b172-d02f828f260a,,Charisma|",
+        "UnlockSpell|UnlockSpell|Target_Bane,AddChildren," .. slot .. ",UntilRest,Charisma|", "UnlockSpell|||" }) do
+        d = diff({ boosts = { other } }, { boosts = {} })
+        eq(d.ok, false, other .. " is no kit unlock")
+    end
+    d = diff({ boosts = {} }, { boosts = { "UnlockSpell|||" } })
+    eq(d.ok, false, "a reference's own row still has to be on the twin")
+end)
+
+test("unlocks: the spell goes in by its boost on both twins, the kit's other spells by AddSpell", guarded(function()
+    twins()
+    for _, u in ipairs({ T1, T2 }) do book(u, { row("Target_Bane", "Boost", "Charisma") }) end
+    local j = start({ unlocks = { Target_Bane = "Charisma" },
+        grants = { spells = { "Target_Bane", "Target_DancingLights" } } })
+    runJob(j)
+    eq(j.status, "done", tostring(j.error))
+    local boost = Ar.Symmetry.unlock_boost("Target_Bane", "Charisma")
+    eq(boost, "UnlockSpell(Target_Bane,AddChildren,d136c5d9-0ff0-43da-acce-a74a07f8d6bf,,Charisma)",
+        "the Land rows' form")
+    local boosts, added = {}, {}
+    for _, c in ipairs(j.result.calls) do
+        if c[1] == "AddBoosts" and c[3] == boost then boosts[#boosts + 1] = c[2] end
+        if c[1] == "AddSpell" then added[#added + 1] = c[3] end
+    end
+    eq(enc(boosts), enc({ T1, T2 }), "one boost a twin")
+    eq(enc(added), enc({ "Target_DancingLights", "Target_DancingLights" }), "no AddSpell for the unlocked spell")
+end))
+
 test("reference: weapon_action_dc passes by its exact row only (D148); any other value on either side fails", function()
     local accepted = { { field = "derived", only_twin = { "weapon_action_dc=8" },
         only_reference = { "weapon_action_dc=3" }, why = "D148" } }

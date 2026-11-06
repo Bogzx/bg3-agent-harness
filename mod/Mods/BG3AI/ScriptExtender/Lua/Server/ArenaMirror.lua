@@ -38,6 +38,9 @@
 --       live 2026-11-06: a Ranger's Cure Wounds) where a real character's row has the ability its progression row gave.
 --       A finished kit writes them, a container spell's variants by their originator, and every SpellSet row (Jump,
 --       Dash...) to the stats' ability: the game gives a copy's SpellSet rows its class's, a real player's its stats'.
+--     unlocks = {spell id: ability}: a kit's spell with upcast rows goes in by Sym.unlock_boost, not AddSpell: AddSpell
+--       gives the one id it names, and an AddSpell'd X_2 reads in `prepared` where a character's holds X only (S4, live
+--       2026-11-07). The spell's id stays in its list above; spell_abilities names the rows to expect.
 --     prepared (spell ids): no game call limits a copy to them (S1 P3: a Cleric copy's book is its class list, all
 --       AlwaysPrepared, and nothing removes a spell). The job's result names it as not_applied; a build's reference
 --       compare then shows what differs. A kit key nobody reads is refused, so a part can't be dropped without a word.
@@ -77,7 +80,7 @@ M.LISTS = { skills = { "SkillList", "Skills" }, expertise = { "SkillList", "Skil
     passives = { "PassiveList", "Passives" }, spells = { "SpellList", "Spells", set = true } }
 
 M.KIT_KEYS = { race = true, player = true, ability_bonus = true, grants = true, choices = true, items = true,
-    subclass = true, prepared = true, spell_abilities = true }
+    subclass = true, prepared = true, spell_abilities = true, unlocks = true }
 M.NOT_APPLIED = { "prepared" } -- kit keys with no game call (S1 P3)
 
 local function osi(fn, ...) return V.osi(fn, ...) end
@@ -227,13 +230,23 @@ local function setSubclass(calls, u, id)
     calls[#calls + 1] = { "SubClassUUID", u, id }
 end
 
+-- One of the kit's spells into a twin's book.
+local function addSpell(calls, u, kit, id)
+    local ability = (kit.unlocks or {})[id]
+    if ability then
+        call(calls, "AddBoosts", { u, Ar.Symmetry.unlock_boost(id, ability), M.SOURCE, u })
+    else
+        call(calls, "AddSpell", { u, id, 0, 1 })
+    end
+end
+
 -- The non-item calls for one twin, in the kit's order.
 local function applyChoices(calls, u, kit)
     if kit.subclass then setSubclass(calls, u, kit.subclass) end
     local race = kit.race or {}
     if race.boosts and race.boosts ~= "" then call(calls, "AddBoosts", { u, race.boosts, M.SOURCE, u }) end
     for _, p in ipairs(race.passives or {}) do call(calls, "AddPassive", { u, p }) end
-    for _, id in ipairs(race.spells or {}) do call(calls, "AddSpell", { u, id, 0, 1 }) end
+    for _, id in ipairs(race.spells or {}) do addSpell(calls, u, kit, id) end
     for _, p in ipairs((kit.player or {}).passives or {}) do call(calls, "AddPassive", { u, p }) end
     local ab = kit.ability_bonus
     if ab then call(calls, "AddBoosts", { u, ("Ability(%s,2);Ability(%s,1)"):format(ab[1], ab[2]), M.SOURCE, u }) end
@@ -241,7 +254,7 @@ local function applyChoices(calls, u, kit)
     if g.boosts and g.boosts ~= "" then call(calls, "AddBoosts", { u, g.boosts, M.SOURCE, u }) end
     for _, p in ipairs(g.passives or {}) do call(calls, "AddPassive", { u, p }) end
     for _, p in ipairs(g.passives_removed or {}) do call(calls, "RemovePassive", { u, p }) end
-    for _, id in ipairs(g.spells or {}) do call(calls, "AddSpell", { u, id, 0, 1 }) end
+    for _, id in ipairs(g.spells or {}) do addSpell(calls, u, kit, id) end
     for _, c in ipairs(kit.choices or {}) do
         if c.kind == "skills" or c.kind == "expertise" then
             local fmt = c.kind == "skills" and "ProficiencyBonus(Skill,%s)" or "ExpertiseBonus(%s)"
@@ -251,7 +264,7 @@ local function applyChoices(calls, u, kit)
         elseif c.kind == "passives" then
             for _, id in ipairs(c.ids) do call(calls, "AddPassive", { u, id }) end
         else
-            for _, id in ipairs(c.ids) do call(calls, "AddSpell", { u, id, 0, 1 }) end
+            for _, id in ipairs(c.ids) do addSpell(calls, u, kit, id) end
         end
     end
 end
@@ -422,6 +435,9 @@ function M.kit(args)
     if kit.subclass ~= nil and type(kit.subclass) ~= "string" then error("the kit's subclass must be its uuid", 0) end
     if kit.spell_abilities ~= nil and type(kit.spell_abilities) ~= "table" then
         error("the kit's spell_abilities must map spell ids to abilities", 0)
+    end
+    if kit.unlocks ~= nil and type(kit.unlocks) ~= "table" then
+        error("the kit's unlocks must map spell ids to abilities", 0)
     end
     for i, u in ipairs(twins) do
         u = V.uuid(u)

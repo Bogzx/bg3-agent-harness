@@ -532,7 +532,9 @@ def kit_plan(
         if x["kind"] == "spells" and spell_ab:
             abilities.update(dict.fromkeys(x["ids"], spell_ab))
     upcast = _upcasts([*abilities, *class_spells], rows, static)
-    grants["spells"] += list(upcast)
+    # A class row's spell is the game's, so only its upcasts can be added; the kit's own goes in with them by one boost
+    grants["spells"] += [x for x, spell in upcast.items() if spell in class_spells]
+    unlocks = {spell: abilities[spell] for spell in upcast.values() if spell not in class_spells}
     for entry, spell in upcast.items():
         abilities[entry] = abilities.get(spell) or c["casting"]
     out_kit: dict[str, Any] = {
@@ -556,6 +558,8 @@ def kit_plan(
         out_kit["prepared"] = list(prepared)
     if abilities:
         out_kit["spell_abilities"] = abilities
+    if unlocks:
+        out_kit["unlocks"] = unlocks
     return {"race": race, "kit": out_kit}
 
 

@@ -192,7 +192,7 @@ def row_seeds(rows: list[dict[str, Any]], static: dict[str, Any]) -> tuple[dict[
 
 def kit_seeds(kit: dict[str, Any]) -> dict[str, str]:
     """What a kit picks and carries, id -> where from."""
-    seeds: dict[str, str] = {}
+    seeds: dict[str, str] = dict.fromkeys(kit.get("spell_abilities") or {}, "kit spell abilities")  # upcasts: unlocks'
     for c in kit.get("choices", []):
         if c["kind"] in ("spells", "passives"):
             seeds.update(dict.fromkeys(c["ids"], f"kit {c['kind']}"))

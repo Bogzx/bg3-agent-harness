@@ -307,11 +307,19 @@ local function unaccepted(list, accepted)
     return out
 end
 
+-- The boost a kit gives a spell and its upcast rows by, as the Circle of the Land passives' Boosts write it, and the
+-- row it reads as (live: AddBoosts' rows keep their text, `ActionResource|ActionResource|Movement,9,0|`).
+local SPELL_SLOT = "d136c5d9-0ff0-43da-acce-a74a07f8d6bf"
+local KIT_UNLOCK = "^UnlockSpell|UnlockSpell|[%w_]+,AddChildren," .. SPELL_SLOT:gsub("%-", "%%-") .. ",,%a+|$"
+function Sym.unlock_boost(id, ability)
+    return ("UnlockSpell(%s,AddChildren,%s,,%s)"):format(id, SPELL_SLOT, ability)
+end
+
 -- A field as reference_diff compares it, so that a stored reference stays as it was read:
 -- boosts by type, since one boost reads two ways: AddBoosts' `ActionResource|ActionResource|Movement,9,0|`, a
 --   progression's `ActionResource|||` (S4, live 2026-11-06); what its text says is compared by resources, skills and
 --   derived. Ability rows left out: the respec stores the base as boosts, a twin has it in its stats, `abilities`
---   compares the scores (orchestrator's ruling).
+--   compares the scores (orchestrator's ruling). A kit's unlock left out by that exact form: its rows are `spells`'.
 -- statuses without INSURFACE: where a character stood when read, nothing of its build (the same ruling).
 local function comparable(f, v)
     if type(v) ~= "table" then return v end
@@ -319,7 +327,7 @@ local function comparable(f, v)
     if f == "boosts" then
         for _, row in ipairs(v) do
             local t = tostring(row):match("^[^|]*")
-            if t ~= "Ability" then out[#out + 1] = t end
+            if t ~= "Ability" and not tostring(row):find(KIT_UNLOCK) then out[#out + 1] = t end
         end
         return out
     elseif f == "statuses" then

@@ -811,7 +811,8 @@ function Setup.check_mirror(mi, teams)
         if p.reference ~= nil and (type(p.reference) ~= "table" or type(p.reference.profile) ~= "table") then
             error("arena.mirror.pairs[" .. i .. "].reference needs its profile", 0)
         end
-        for _, k in ipairs({ "subclass", "grants", "prepared" }) do -- only a reference shows a twin holds these
+        -- only a reference shows a twin holds these
+        for _, k in ipairs({ "subclass", "grants", "prepared", "unlocks" }) do
             if p.kit[k] ~= nil and p.reference == nil then
                 error(("pair %d: its kit's %s has no reference to be checked against"):format(i, k), 0)
             end
