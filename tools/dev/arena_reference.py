@@ -278,6 +278,13 @@ class Live:
 
     def respec(self, plans: dict[str, Any], who: str) -> dict[str, Any]:
         log: dict[str, Any] = {"who": who}
+        try:
+            return self._respec(plans, who, log)
+        except RefStepError as e:  # what the step had by then: main writes it to -stop.json
+            e.log = e.log or log
+            raise
+
+    def _respec(self, plans: dict[str, Any], who: str, log: dict[str, Any]) -> dict[str, Any]:
         names = self.names(plans["names"])
         cc = translate(plans["cc"], names)
         pre = self.route.ev(rh.PRE)  # installs the route's listeners; its mark is where this respec's events start
@@ -288,7 +295,7 @@ class Live:
         opened, pages = self.route.page_open("CharacterRespec")
         if not opened:
             raise RefStepError(f"CharacterRespec didn't open (pages {pages})")
-        res = self.cc_apply(cc)
+        res = log["cc"] = self.cc_apply(cc)
         log["clicked"] = []
         for _ in range(CLICK_PASSES):  # a hireling's own picks off, then the plan's on, until the page asks for none
             needs = res.get("needs_clicks") or []
@@ -298,10 +305,9 @@ class Live:
             log["clicked"].append(clicks)
             if clicks.get("failed"):
                 raise RefStepError(f"respec spell picks failed: {clicks['failed']}")
-            res = self.cc_apply(cc)
+            res = log["cc"] = self.cc_apply(cc)
         if res.get("needs_clicks"):
             raise RefStepError(f"respec spell picks still open after {CLICK_PASSES} passes: {res['needs_clicks']}")
-        log["cc"] = res
         if res.get("problems") or res.get("complete") is not True:
             set_ = res.get("set") or {}
             raise RefStepError(

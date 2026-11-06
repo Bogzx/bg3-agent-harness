@@ -782,40 +782,48 @@ RPC.register("ui.level_up_spell_probe", function(args)
         local lu = UI.findAll(w, function(e) return UI.name(e) == "levelUp" end, { prune = true, hidden = true, max = 80000 })[1]
         out.hit_set = lu ~= nil and set(lu, "IsHitTestVisible", true) or false
     end
+    local mine = {}
+    local pool = args.remove and "Additions" or "Available"
+    for _, it in ipairs(list(UI.prop(s.sel, pool))) do mine[tostring(it)] = true end
+    local buttons = args.remove and PICK_BUTTONS or SPELL_BUTTONS
+    local function isButton(e) return buttons[UI.name(e) or ""] == true end
+    local function scan()
+        local n = 0
+        for _, b in ipairs(UI.findAll(w, isButton, { prune = true, max = 80000 })) do
+            local it = buttonItem(b)
+            if it ~= nil and mine[tostring(it)] then
+                n = n + 1
+                local over = UI.prop(b, "IsMouseOver") == true
+                if over then out.hovered = n end
+                if same(it, item) then
+                    out.index = n
+                    out.over = over
+                    out.enabled = UI.prop(b, "IsEnabled") ~= false
+                    local cp = UI.prop(b, "TemplatedParent")
+                    local cw, ch = tonumber(UI.prop(cp, "ActualWidth")) or 0, tonumber(UI.prop(cp, "ActualHeight")) or 0
+                    out.cell = { w = cw, h = ch }
+                    local panel = cp and try(function() return cp.VisualParent end)
+                    local pw = tonumber(UI.prop(panel, "ActualWidth")) or 0
+                    out.cols = (cw > 0 and pw >= cw) and math.floor(pw / cw + 0.01) or 1
+                    out.in_list = UI.prop(panel, "IsMouseOver") == true
+                    out.near = nearness(cp)
+                end
+            end
+        end
+        out.n = n
+        return out.index ~= nil
+    end
+    -- On these pages a sub-tab clears its own selection as it opens its panel (CCLib_k.xaml: subTabsSpellsList sets
+    -- gameplaySubPanel's Tag, and a Tag change sets its SelectedIndex to -1), so IsSelected never says the selector is
+    -- showing; live L5 launch 2 probed 16 times, each a switch. The button being there says it.
+    if pg and scan() then return out end
     local tabOk, switched
     if s.source == "FeatDetails" then tabOk, switched = P.showFeatSelector(w, s.sel)
     elseif pg then tabOk, switched = showPageSelector(pg, w, s.sel)
     else tabOk, switched = showClassSelector(w, s.sel) end
     if switched then out.switched = true return out end
     if not tabOk then out.tab = "no sub-tab for this selector" end
-    local mine = {}
-    local pool = args.remove and "Additions" or "Available"
-    for _, it in ipairs(list(UI.prop(s.sel, pool))) do mine[tostring(it)] = true end
-    local buttons = args.remove and PICK_BUTTONS or SPELL_BUTTONS
-    local n = 0
-    local function isButton(e) return buttons[UI.name(e) or ""] == true end
-    for _, b in ipairs(UI.findAll(w, isButton, { prune = true, max = 80000 })) do
-        local it = buttonItem(b)
-        if it ~= nil and mine[tostring(it)] then
-            n = n + 1
-            local over = UI.prop(b, "IsMouseOver") == true
-            if over then out.hovered = n end
-            if same(it, item) then
-                out.index = n
-                out.over = over
-                out.enabled = UI.prop(b, "IsEnabled") ~= false
-                local cp = UI.prop(b, "TemplatedParent")
-                local cw, ch = tonumber(UI.prop(cp, "ActualWidth")) or 0, tonumber(UI.prop(cp, "ActualHeight")) or 0
-                out.cell = { w = cw, h = ch }
-                local panel = cp and try(function() return cp.VisualParent end)
-                local pw = tonumber(UI.prop(panel, "ActualWidth")) or 0
-                out.cols = (cw > 0 and pw >= cw) and math.floor(pw / cw + 0.01) or 1
-                out.in_list = UI.prop(panel, "IsMouseOver") == true
-                out.near = nearness(cp)
-            end
-        end
-    end
-    out.n = n
+    scan()
     return out
 end)
 
