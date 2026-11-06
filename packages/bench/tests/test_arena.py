@@ -194,6 +194,16 @@ def test_the_builds_arena_is_a_rated_4v4_red_blue_from_the_build_file_with_a_rac
     }
 
 
+def test_the_builds_arena_accepts_only_each_builds_own_weapon_action_dc_row():
+    for p in arena.load_named("builds-l2-4v4-v1")["mirror"]["pairs"]:
+        ref = p["reference"]
+        dc = ref["profile"]["derived"]["weapon_action_dc"]
+        assert [(a["field"], a["only_twin"], a["only_reference"]) for a in ref["accepted"]] == [
+            ("derived", ["weapon_action_dc=8"], [f"weapon_action_dc={dc}"])
+        ]
+        assert "D148" in ref["accepted"][0]["why"]
+
+
 def test_a_kit_part_only_a_reference_checks_needs_one_whatever_build_says():
     a = copy.deepcopy(raw("arena-v0.1"))
     assert arena.validate(a, "arena-v0.1") == []

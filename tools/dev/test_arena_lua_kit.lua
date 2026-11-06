@@ -182,6 +182,19 @@ test("reference: one boost read two ways is one boost, in either direction", fun
     eq(d.ok, true, Ar.Symmetry.diff_text(d))
 end)
 
+test("reference: weapon_action_dc passes by its exact row only (D148); any other value on either side fails", function()
+    local accepted = { { field = "derived", only_twin = { "weapon_action_dc=8" },
+        only_reference = { "weapon_action_dc=3" }, why = "D148" } }
+    local function read(t, r)
+        return Ar.Symmetry.reference_diff(profile({ derived = { weapon_action_dc = t } }),
+            { profile = profile({ derived = { weapon_action_dc = r } }), accepted = accepted })
+    end
+    eq(read(8, 3).ok, true, "the accepted row")
+    eq(#read(8, 3).accepted, 1, "listed as accepted")
+    eq(read(9, 3).ok, false, "another twin value")
+    eq(read(8, 4).ok, false, "another reference value")
+end)
+
 test("reference: a boost held twice or lacking still fails, by its type; nothing is accepted for it", function()
     local d = diff({ boosts = { "AC|||", "AC|||" } }, { boosts = { "AC|||" } })
     eq(d.ok, false, "one more AC boost, S4's Defense twice")

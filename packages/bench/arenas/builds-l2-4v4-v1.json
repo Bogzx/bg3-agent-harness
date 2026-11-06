@@ -376,7 +376,18 @@
        "WeaponThrow|false|true"
       ]
      },
-     "accepted": []
+     "accepted": [
+      {
+       "field": "derived",
+       "only_twin": [
+        "weapon_action_dc=8"
+       ],
+       "only_reference": [
+        "weapon_action_dc=3"
+       ],
+       "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 3 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+      }
+     ]
     }
    },
    {
@@ -715,7 +726,18 @@
        "WeaponThrow|false|true"
       ]
      },
-     "accepted": []
+     "accepted": [
+      {
+       "field": "derived",
+       "only_twin": [
+        "weapon_action_dc=8"
+       ],
+       "only_reference": [
+        "weapon_action_dc=4"
+       ],
+       "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 4 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+      }
+     ]
     }
    },
    {
@@ -1023,7 +1045,18 @@
        "WeaponThrow|false|true"
       ]
      },
-     "accepted": []
+     "accepted": [
+      {
+       "field": "derived",
+       "only_twin": [
+        "weapon_action_dc=8"
+       ],
+       "only_reference": [
+        "weapon_action_dc=3"
+       ],
+       "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 3 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+      }
+     ]
     }
    },
    {
@@ -1399,7 +1432,18 @@
        "WeaponThrow|false|true"
       ]
      },
-     "accepted": []
+     "accepted": [
+      {
+       "field": "derived",
+       "only_twin": [
+        "weapon_action_dc=8"
+       ],
+       "only_reference": [
+        "weapon_action_dc=4"
+       ],
+       "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 4 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+      }
+     ]
     }
    }
   ]

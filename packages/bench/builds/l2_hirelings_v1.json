@@ -278,7 +278,19 @@
     },
     "game_build": "25605617",
     "hireling": "8078e34e-2dce-44ee-8072-072ac433350f",
-    "evidence": "live.md L2 launch 3 on 9309ae53, runtime/probes/4v4-references/"
+    "evidence": "live.md L2 launch 3 on 9309ae53, runtime/probes/4v4-references/",
+    "accepted": [
+     {
+      "field": "derived",
+      "only_twin": [
+       "weapon_action_dc=8"
+      ],
+      "only_reference": [
+       "weapon_action_dc=3"
+      ],
+      "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 3 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+     }
+    ]
    }
   },
   {
@@ -568,7 +580,19 @@
     },
     "game_build": "25605617",
     "hireling": "9e188239-c0ae-40d2-9298-930095e170b5",
-    "evidence": "live.md L2 launch on 66f8b95f, runtime/probes/4v4-references/"
+    "evidence": "live.md L2 launch on 66f8b95f, runtime/probes/4v4-references/",
+    "accepted": [
+     {
+      "field": "derived",
+      "only_twin": [
+       "weapon_action_dc=8"
+      ],
+      "only_reference": [
+       "weapon_action_dc=4"
+      ],
+      "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 4 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+     }
+    ]
    }
   },
   {
@@ -850,7 +874,19 @@
     },
     "game_build": "25605617",
     "hireling": "106511fd-b572-4468-bf9a-6b3da3e8646a",
-    "evidence": "live.md L2 launch on 66f8b95f, runtime/probes/4v4-references/"
+    "evidence": "live.md L2 launch on 66f8b95f, runtime/probes/4v4-references/",
+    "accepted": [
+     {
+      "field": "derived",
+      "only_twin": [
+       "weapon_action_dc=8"
+      ],
+      "only_reference": [
+       "weapon_action_dc=3"
+      ],
+      "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 3 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+     }
+    ]
    }
   },
   {
@@ -1167,7 +1203,19 @@
     },
     "game_build": "25605617",
     "hireling": "7198b8ec-8fb4-4a44-9306-a68d533d1cfb",
-    "evidence": "live.md L2 launch on e4f98d19, runtime/probes/4v4-references/"
+    "evidence": "live.md L2 launch on e4f98d19, runtime/probes/4v4-references/",
+    "accepted": [
+     {
+      "field": "derived",
+      "only_twin": [
+       "weapon_action_dc=8"
+      ],
+      "only_reference": [
+       "weapon_action_dc=4"
+      ],
+      "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 4 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+     }
+    ]
    }
   }
  ]
