@@ -37,6 +37,8 @@ def counted(name: str, **kw) -> tuple[str, float, dict, int]:
 
 
 REACTION_PAUSE = "the game paused it for a reaction decision"
+STILL_ACTING = "other combatants are still acting"  # end_turn: _wait_for_party_turn's 80 s ran out
+HANDED_READS = 240  # 0.5 s apart: 2 more minutes after that wait
 
 
 def _action_row(tool: str, out: str, dt: float, counts: dict) -> tuple[str, bool]:
@@ -66,6 +68,34 @@ def attack_landed(out: str, foe: dict) -> bool:
         nb = S.game.try_rpc("state.nearby", {"radius": 40}) or {}
         now = next((c for c in nb.get("characters") or [] if c.get("uuid") == foe["uuid"]), {})
         if now.get("dead") or (hp is not None and now.get("hp") is not None and now["hp"] < hp):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def handed_on(out: str, who: str, party: set[str], round_: int | None) -> bool:
+    """end_turn's `out` handed `who`'s turn on, in round `round_`. end_turn blocks until a party member acts (with that
+    member's actions), the fight stops it, or its 80 s wait ends in a long enemy phase (STILL_ACTING; live 2026-11-06:
+    82.5 s, the next member's turn up 2 s later). That end decides nothing, so state decides: read it up to
+    HANDED_READS times for the fight's end, a prompt, or a party member's turn other than `who`'s, or `who`'s in a
+    later round. False: none came, so the turn was never handed on."""
+    from bg3ai import turn as T
+    from bg3ai.tools import combat as ct
+
+    if STILL_ACTING not in out:
+        cs = S.game.try_rpc("state.combat")
+        nxt = re.search(r"(?m)^now (e\d+)'s", out)
+        over = "combat is over" in out or "waiting stopped" in out
+        return over or bool(cs is not None and nxt and "YOUR ACTIONS" in out and who not in T.acting(cs))
+    for n in range(HANDED_READS):
+        cs = S.game.try_rpc("state.combat")
+        if cs is None:  # a failed read says nothing; the fight's end reads {active=false}
+            time.sleep(0.5)
+            continue
+        mine = T.party_acting(cs, party)
+        later = round_ is not None and (cs.get("round") or 0) > round_
+        if not cs.get("active") or ui_screen() in ct._PROMPT_SCREENS or (mine and (who not in mine or later)):
+            log(f"end_turn's wait ran out; handed on at read {n + 1}")
             return True
         time.sleep(0.5)
     return False
@@ -174,14 +204,7 @@ def sec_combat() -> None:
             if hit or ("has no action called" not in ua and "out of range" not in ua):
                 break
         et, _ = act("end_turn", "end_turn", who=wh)
-        # end_turn blocks until a party member acts (with that member's actions) or the fight stops it
-        cs2 = S.game.try_rpc("state.combat") or {}
-        nxt = re.search(r"(?m)^now (e\d+)'s", et)
-        handed = (
-            "combat is over" in et
-            or "waiting stopped" in et
-            or bool(nxt and "YOUR ACTIONS" in et and who_u not in T.acting(cs2))
-        )
+        handed = handed_on(et, who_u, set(party), cs.get("round"))
         raws += outs
         log("RPCs: " + "; ".join(rows))
         played += 1

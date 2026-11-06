@@ -91,6 +91,76 @@ class HudEndReads(unittest.TestCase):
         self.assertEqual((out, counts["state.combat"], counts["ui.command"], hud_n), ("out", 5, 1, 3))
 
 
+PARTY = {"me", "wyll"}
+ENEMY = {"active": True, "round": 2, "turn_group": ["mephit"]}
+
+
+class HandedOn(unittest.TestCase):
+    STILL = "end_turn e4 Shadowheart: done — ended\nother combatants are still acting"
+
+    def _handed(self, out: str, reads: list[dict | None], screen: str = "?") -> tuple[bool, int]:
+        """handed_on on scripted state.combat reads (the last one repeats); returns it and the reads made."""
+        made: list[int] = []
+
+        def try_rpc(op, *a, **k):
+            made.append(1)
+            return reads[min(len(made), len(reads)) - 1]
+
+        fake_s = mock.Mock()
+        fake_s.game.try_rpc = try_rpc
+        with (
+            mock.patch.object(combat, "S", fake_s),
+            mock.patch.object(combat, "ui_screen", lambda: screen),
+            mock.patch.object(combat, "log", lambda s: None),
+            mock.patch.object(combat.time, "sleep", lambda s: None),
+        ):
+            return combat.handed_on(out, "me", PARTY, 2), len(made)
+
+    def test_the_wait_running_out_then_the_next_members_turn_is_handed_on(self):
+        got = self._handed(self.STILL, [ENEMY, ENEMY, {"active": True, "round": 2, "turn_group": ["wyll"]}])
+        self.assertEqual(got, (True, 3))
+
+    def test_the_wait_running_out_then_the_fights_end_is_handed_on(self):
+        self.assertEqual(self._handed(self.STILL, [ENEMY, {"active": False}]), (True, 2))
+
+    def test_the_wait_running_out_then_a_prompt_is_handed_on(self):
+        self.assertEqual(self._handed(self.STILL, [ENEMY], screen="reaction"), (True, 1))
+
+    def test_its_own_next_turn_in_a_later_round_is_handed_on(self):
+        self.assertEqual(self._handed(self.STILL, [{"active": True, "round": 3, "turn_group": ["me"]}]), (True, 1))
+
+    def test_an_enemy_phase_that_never_ends_fails_at_the_limit(self):
+        self.assertEqual(self._handed(self.STILL, [ENEMY]), (False, combat.HANDED_READS))
+
+    def test_a_turn_still_its_own_in_the_same_round_fails_at_the_limit(self):
+        stuck = {"active": True, "round": 2, "turn_group": ["me"]}
+        self.assertEqual(self._handed(self.STILL, [stuck]), (False, combat.HANDED_READS))
+
+    def test_a_failed_read_is_not_the_fights_end(self):
+        self.assertEqual(self._handed(self.STILL, [None, ENEMY]), (False, combat.HANDED_READS))
+
+    def test_every_read_failing_fails_at_the_limit(self):
+        self.assertEqual(self._handed(self.STILL, [None]), (False, combat.HANDED_READS))
+
+    def test_a_failed_read_then_the_next_members_turn_is_handed_on(self):
+        self.assertEqual(self._handed(self.STILL, [None, {"active": True, "turn_group": ["wyll"]}]), (True, 2))
+
+    def test_a_failed_read_after_a_named_next_turn_is_not_handed_on(self):
+        self.assertEqual(self._handed("now e8's turn\nYOUR ACTIONS", [None]), (False, 1))
+
+    def test_a_result_that_ends_the_wait_needs_no_read(self):
+        self.assertTrue(self._handed("combat is over", [None])[0])
+        self.assertTrue(self._handed("waiting stopped: reaction on screen", [None])[0])
+
+    def test_the_other_ends_of_the_wait_read_as_before(self):
+        now = "now e8's turn\nYOUR ACTIONS"
+        self.assertTrue(self._handed("combat is over", [ENEMY])[0])
+        self.assertTrue(self._handed("waiting stopped: reaction on screen", [ENEMY])[0])
+        self.assertTrue(self._handed(now, [{"active": True, "turn_group": ["wyll"]}])[0])
+        self.assertFalse(self._handed(now, [{"active": True, "turn_group": ["me"]}])[0])
+        self.assertFalse(self._handed("end_turn: done", [ENEMY])[0])
+
+
 class AttackLanded(unittest.TestCase):
     PAUSED = (
         "use_ability: INTERRUPTED — the cast started and the game paused it for a reaction decision (a reaction prompt "
