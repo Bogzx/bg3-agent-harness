@@ -141,6 +141,17 @@ def test_the_apt_step_has_a_limit_of_its_own_below_the_jobs(job: str) -> None:
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("job", ["test", "e2e"])
+def test_the_apt_step_moves_the_azure_mirror_last_before_apt_reads_the_list(
+    ci: dict[str, list[tuple[str, str]]], job: str
+) -> None:
+    run = block(ci[job], "apt-get")
+    move = "sudo sed -i '/azure\\.archive\\.ubuntu\\.com/s/priority:1/priority:9/' /etc/apt/apt-mirrors.txt"
+    assert move in run, job
+    assert all(run.index(move) < run.index(apt) for apt in ("apt-get", "install-deps") if apt in run)
+
+
+@pytest.mark.integration
 def test_quick_is_the_check_jobs_ruff_steps_and_the_test_jobs_pytest_collected(
     ci: dict[str, list[tuple[str, str]]],
 ) -> None:

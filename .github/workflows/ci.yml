@@ -64,8 +64,11 @@ jobs:
         # Slowest pass in 66 runs: 7.3 min. The rest of this job took up to 20.9 min, so past 8 it can't finish in 30.
         # A mirror serving 40 kB/s keeps sending bytes, so apt's own stall timeout doesn't end it.
         timeout-minutes: 8
+        # The sed: in the runs that hit the job limit azure.archive.ubuntu.com served .debs at 40-56 kB/s, while
+        # archive.ubuntu.com gave 1.4-9.5 MB/s on the same runners. Azure stays in the list, last.
         run: |
           command -v ffmpeg && exit 0
+          sudo sed -i '/azure\.archive\.ubuntu\.com/s/priority:1/priority:9/' /etc/apt/apt-mirrors.txt
           sudo apt-get update -q && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: pytest -m "not live and not e2e"
         run: uv run pytest -m "not live and not e2e" --cov --cov-report=
@@ -115,7 +118,9 @@ jobs:
       - name: Install chromium's system libraries and ffmpeg (the recorder test encodes with libx264)
         # The test job's ffmpeg limit scaled to this step's 84 MB. Six of 698 runs sat here until the job's 30 min ended.
         timeout-minutes: 10
+        # The sed: see the test job's ffmpeg step.
         run: |
+          sudo sed -i '/azure\.archive\.ubuntu\.com/s/priority:1/priority:9/' /etc/apt/apt-mirrors.txt
           uv run playwright install-deps chromium
           command -v ffmpeg || sudo apt-get install -y --no-install-recommends ffmpeg
       - name: pytest -m e2e
