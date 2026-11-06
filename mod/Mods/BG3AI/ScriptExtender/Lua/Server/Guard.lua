@@ -79,6 +79,8 @@ function G.entity(uuid)
 end
 
 function G.party()
+    local side = U.side()
+    if side then return (BG3AI.Arena.team(side)) end -- a side's party is its team
     local out = {}
     local ok, rows = pcall(function() return Osi.DB_PartyMembers:Get(nil) end)
     if ok and rows then
@@ -100,6 +102,8 @@ function G.is_party(uuid)
 end
 
 function G.host()
+    local side = U.side()
+    if side then return BG3AI.Arena.lead(side) end -- a side's default actor is its own (Arena.lead)
     return G.guid(G.q("GetHostCharacter"))
 end
 
@@ -277,19 +281,52 @@ G.TURN_BURST_MS = 1000            -- starts this close together are one turn (ne
 -- turn shut for good: this long after the other side's start, the flags decide again.
 G.TURN_MOVED_TTL_MS = 60000
 
+-- In an arena (listener time, the team tables): a team member's start is its own; for each side, a start by
+-- anyone not on that side is "the other side's", kept under "<combat>|<side>".
 function G.note_turn_started(char)
     local g = G.guid(char)
     if not g then return end
     local c = G.q("CombatGetGuidFor", g)
     if not c then return end
+    local Ar = BG3AI.Arena
+    if Ar and Ar.active() then
+        local mine = Ar.side_of(g)
+        if mine then G.turn_start[g] = { t = now_ms(), combat = c } end
+        for _, s in ipairs(Ar.SIDES) do
+            if s ~= mine then G.foe_start[c .. "|" .. s] = now_ms() end
+        end
+        return
+    end
     if G.is_party(g) then G.turn_start[g] = { t = now_ms(), combat = c } else G.foe_start[c] = now_ms() end
+end
+
+-- Its turn has passed: a foe's turn started after its own (not in one burst), recently.
+function G.turn_passed(uuid)
+    local g = G.guid(uuid) or uuid
+    local Ar = BG3AI.Arena
+    local side = Ar and Ar.active() and g and Ar.side_of(g)
+    local s = g and G.turn_start[g]
+    local f = s and G.foe_start[side and (s.combat .. "|" .. side) or s.combat]
+    return f ~= nil and f - s.t > G.TURN_BURST_MS and now_ms() - f < G.TURN_MOVED_TTL_MS
 end
 
 function G.turn_moved_on(uuid)
     local g = G.guid(uuid) or uuid
-    local s = g and G.turn_start[g]
-    local f = s and G.foe_start[s.combat]
-    return f ~= nil and f - s.t > G.TURN_BURST_MS and now_ms() - f < G.TURN_MOVED_TTL_MS
+    local Ar = BG3AI.Arena
+    if Ar and Ar.active() and g and Ar.side_of(g) and Ar.held(g) then return true end -- another phase acts first
+    return G.turn_passed(g)
+end
+
+-- The members a character's turn group can hold, as the mod lists them: in an arena both teams (the game groups
+-- adjacent player characters whatever their side), else the party.
+function G.turn_group_members()
+    local Ar = BG3AI.Arena
+    if not (Ar and Ar.active()) then return G.party() end
+    local out = {}
+    for _, s in ipairs(Ar.SIDES) do
+        for _, m in ipairs((Ar.team(s))) do out[#out + 1] = m end
+    end
+    return out
 end
 
 -- The game's own turn flags, without our pending bookkeeping.
@@ -349,12 +386,30 @@ function G.turn_is_over(uuid)
     return true
 end
 
+-- Someone else in g's turn group is still to act: G.still_to_act read from our records (an end of ours on record,
+-- whatever its age, counts as ended), since end_pending is part of still_to_act.
+local function others_still_to_act(g)
+    for _, m in ipairs(G.turn_group_members()) do
+        local mg = G.guid(m) or m
+        if not G.same(mg, g) and not G.end_requested[mg] and not G.turn_is_over(mg) and not G.turn_passed(mg) then
+            local active, req = tb_flags(mg)
+            if active and not req then return true end
+        end
+    end
+    return false
+end
+
 function G.end_pending(uuid)
     local g = G.guid(uuid) or uuid
     if g and G.turn_is_over(g) then return true end
     local t = g and G.end_requested[g]
     if not t then return false end
-    if now_ms() - t > G.END_REQUEST_TTL_MS or not G.in_combat(g) then
+    -- In an arena a team phase can outlast the TTL (the runner's cap is turn_cap_s per member): the earlier phase's
+    -- ends stay pending while anyone else in the group is still to act, or that phase reopens and takes the group back.
+    local Ar = BG3AI.Arena
+    local expired = now_ms() - t > G.END_REQUEST_TTL_MS
+        and not (Ar and Ar.active() and others_still_to_act(g))
+    if expired or not G.in_combat(g) then
         G.end_requested[g] = nil
         return false
     end
@@ -365,7 +420,9 @@ function G.end_pending(uuid)
     local active, req = tb_flags(g)
     if active and not req then
         local others = false
-        for _, m in ipairs(G.party()) do
+        -- in an arena the group holds both teams, whoever asks (each side must agree on the acting side): a held
+        -- member of the other side is still to act, so a side whose members all ended never takes the group back
+        for _, m in ipairs(G.turn_group_members()) do
             if not G.same(m, g) and not G.end_requested[G.guid(m) or m] then
                 local a2, r2 = tb_flags(m)
                 if a2 and not r2 then others = true break end
@@ -391,12 +448,18 @@ function G.end_pending(uuid)
     return true
 end
 
+-- Still to act in its turn group: the game shows its turn open, no end of ours is pending and its turn has not
+-- passed. A held arena member (another phase of its group acts first) is still to act, though not its turn yet.
+function G.still_to_act(uuid)
+    local active, req = tb_flags(uuid)
+    return active == true and not req and not G.end_pending(uuid) and not G.turn_passed(uuid)
+end
+
 function G.is_my_turn(uuid)
-    local e = G.entity(uuid)
-    local tb = e and U.comp(e, "TurnBased")
-    if not tb then return false end
-    local ok, v = pcall(function() return tb.IsActiveCombatTurn == true and tb.RequestedEndTurn ~= true end)
-    return ok and v == true and not G.end_pending(uuid) and not G.turn_moved_on(uuid)
+    if not G.still_to_act(uuid) then return false end
+    local Ar = BG3AI.Arena
+    local g = G.guid(uuid) or uuid
+    return not (Ar and Ar.active() and g and Ar.side_of(g) and Ar.held(g))
 end
 
 -- Has this character ended its turn while its turn group is still active?
@@ -410,15 +473,36 @@ function G.turn_requested_end(uuid)
     return (okr and r == true) or G.end_pending(uuid)
 end
 
+-- An argument that must be one of the caller's team (actor, leader, `to`, an item's holder): in an arena, a
+-- character of the other side (or no side) is refused, by name only when the side sees it (arena fairness audit
+-- S3-6: the name came before any visibility check, so any uuid answered with who it was).
+function G.on_my_side(g)
+    local side = U.side()
+    if side and BG3AI.Arena.side_of(g) ~= side then
+        local V = BG3AI.Visibility
+        local who = V and G.visible(g) and V.name(g) or "that character"
+        G.refuse(tostring(who) .. " is not on your side")
+    end
+end
+
 -- The actor must be a living, standing, on-stage party member.
 function G.actor(char)
     local g = G.guid(char)
     if not g then G.refuse("no character given") end
+    G.on_my_side(g)
     if not G.is_party(g) then G.refuse("not a party member") end
     if not b(G.q("IsOnStage", g)) then G.refuse("character is not present") end
     if G.is_dead(g) then G.refuse("character is dead") end
     if G.is_downed(g) then G.refuse("character is downed") end
     return g
+end
+
+-- A refusal the UI tools can get past: "(the UI tools can do it)", a fact about the tools (D630: no advice). A match
+-- side has none (both sides share one game screen, so the bridge makes no clicks or key presses with a side): with a
+-- side the text says that instead.
+G.SIDE_NO_UI = "(in a two-team match no clicks or key presses are made: both sides share one game screen)"
+function G.refuse_ui(text)
+    G.refuse(text .. " " .. (U.side() and G.SIDE_NO_UI or "(the UI tools can do it)"))
 end
 
 -- Combat gating.
@@ -430,9 +514,37 @@ function G.combat_gate(char, mode)
     if mode == "any" then return end
     if not G.in_combat(char) then return end
     if mode == "no_combat" then
-        G.refuse("not available during combat through this action (the UI tools can do it)")
+        G.refuse_ui("not available during combat through this action")
     end
+    G.side_gate()
     if not G.is_my_turn(char) then G.refuse("it is not this character's turn") end
+end
+
+-- In an arena, a side's action once the match has ended (the mod's own end or the runner's arena.end): refused as a
+-- fact. Window 6 seed-5 m2: B cast a Sneak Attack on downed Ash 9 s after arena_end, and it rolled.
+function G.match_over_gate()
+    if not U.side() then return end
+    local st = BG3AI.Arena and BG3AI.Arena.state
+    local e = st and st.ended
+    if e then
+        G.refuse("the match is over (" .. tostring(e.reason) .. (e.winner and (", side " .. e.winner .. " won") or "")
+            .. ")")
+    end
+end
+
+-- In an arena, a side's op while the other side acts: refused with the side that acts (never the actor's name: S10).
+function G.side_gate()
+    local side = U.side()
+    if not side then return end
+    G.match_over_gate()
+    local Ar = BG3AI.Arena
+    local acting = Ar.acting_side()
+    if acting and acting ~= side then
+        -- the side's last turn was ended at the runner's cap (Arena.note_forced): say so
+        local f = Ar.state and Ar.state.forced and Ar.state.forced[side]
+        local why = f and (": " .. tostring(f.name) .. "'s turn was ended at " .. f.why) or ""
+        G.refuse("not your turn (side " .. acting .. " is acting)" .. why)
+    end
 end
 
 function G.not_in_dialogue(char)

@@ -333,7 +333,10 @@ function G.in_blast(char, pt, r, skip)
         local u = G.guid(V.entityUuid(row[1]) or "")
         if u and u ~= skip and not G.is_dead(u)
             and (G.is_party(u) or V.characterVisible(ctx, u, row[1], row[2])) then
-            local side = (G.is_party(u) and "party") or (b(G.q("IsEnemy", char, u)) and "hostile")
+            -- an arena: the other team is hostile from the team tables, whatever the engine says
+            local Ar = BG3AI.Arena
+            local side = (G.is_party(u) and "party")
+                or ((b(G.q("IsEnemy", char, u)) or (U.side() and Ar.side_of(u))) and "hostile")
                 or (V.isAlly(ctx, u) and "ally") or "neutral"
             out[#out + 1] = { uuid = u, name = V.name(u), side = side, d = row[3] }
         end
@@ -562,6 +565,9 @@ local function flagset(v)
     return out
 end
 
+-- Prone (KNOCKED_DOWN, SG_Prone): BG3 lets a prone creature do nothing until it stands up at its turn start, which
+-- costs half its movement (REVIEW-5 F4; in a match Arena.lua's phase start does the standing up, REVIEW-12 (a)).
+
 G._disabling = G._disabling or {}  -- status id -> {effect, fix} or false (stats don't change in a session)
 
 function G.disabling_info(id)
@@ -628,16 +634,27 @@ function G.disabling(char)
         if ok and info then
             out = out or {}
             out[#out + 1] = { name = s.name, turns = s.turns, effect = info.effect, fix = info.fix, prone = info.prone,
-                prone_half = info.prone_half }
+                prone_half = info.prone_half, id = s.id }
         end
+    end
+    return out
+end
+
+-- char's prone statuses ({{name, id, ...}, ...} as G.disabling's), or nil.
+function G.prone(char)
+    local out
+    for _, d in ipairs(G.disabling(char) or {}) do
+        if d.prone then out = out or {}; out[#out + 1] = d end
     end
     return out
 end
 
 -- char's knocked-down status during its own combat turn ({name, effect, ...} as G.disabling's), or nil: a player can't
 -- walk or act with it until it stands up at a turn start (disabling_info). Outside its own turn nothing changes.
+-- still_to_act, not is_my_turn: in a match a member's turn is open from the round's burst while its phase waits, and
+-- it lies there until Arena.lua stands it up at its phase start (REVIEW-12 (a)); without a match they are the same.
 function G.prone_now(char)
-    if not (G.in_combat(char) and G.is_my_turn(char)) then return nil end
+    if not (G.in_combat(char) and G.still_to_act(char)) then return nil end
     for _, d in ipairs(G.disabling(char) or {}) do
         if d.prone then return d end
     end

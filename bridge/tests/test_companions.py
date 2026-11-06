@@ -155,6 +155,13 @@ class Hint(unittest.TestCase):
         # night 2026-11-04: the level-ups are said as a fact, with no call to make
         self.assertEqual(bits[-1], "camp level-ups: Wyll L3→4")
 
+    def test_a_tie_with_no_why_says_the_tie_alone(self):
+        # REVIEW-18l (bench b40fe5f6): a row with no why text printed '...: None' (no key) or a bare ': ' (empty cell)
+        for tie in ({"name": "Minsc", "regions": ["Lower City"], "quests": []},
+                    {"name": "Minsc", "regions": ["Lower City"], "quests": [], "why": ""}):
+            bits = companions.hint(PARTY[:1], [row(WYLL, "Minsc", "Ranger")], "Lower City", [], {"minsc": tie})
+            self.assertEqual(bits[:1], ["Minsc (camp, Ranger 5) is tied to Lower City"])
+
     def test_dead_member_is_named_with_no_revive_advice(self):
         # night 2026-11-04: 'dead: Wyll (Scroll of Revivify, or Withers at camp)' told the agent how to revive
         party = [*PARTY[:3], row(WYLL, "Wyll", "Warlock", dead=True)]

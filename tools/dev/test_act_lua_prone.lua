@@ -1,6 +1,7 @@
 -- Part of test_act_lua.lua (split for the 1000-line cap): knocked down in its own combat turn (w10 L6 ST-P5(d): a
 -- harness walk stood a prone character up at no cost beyond the metres walked). The game's PRONE (Shared
 -- Status_KNOCKED_DOWN.txt :1-20) keeps it down until its next turn start; the guard refuses walks and casts until then.
+-- In a match Arena.lua's phase start does the standing up (REVIEW-12 (a)), from G.prone's status ids.
 -- test_act_lua.lua runs it after its stubs and helpers, which it shares as globals.
 
 local PRONE_RC = "(HasActionResource('Movement', 50, 0, true) and not HasPassive('Athlete_StandUp'))"
@@ -71,4 +72,22 @@ test("the effect comes from the status data: OnTurn + half movement, OnTurn only
     eq(G.disabling_info("LAUGH_T").effect, "may stand up at its turn start", "HIDEOUS_LAUGHTER")
     eq(G.disabling_info("KD_T").effect, "stays down until the status ends", "KNOCKED_DOWN")
     G._disabling = {}
+end)
+
+test("G.prone lists the status ids in or out of its own turn (Arena.lua's stand-up removes them)", function()
+    for _, mine in ipairs({ true, false }) do
+        withProne(mine, function()
+            local p = G.prone(P1)
+            eq(p and #p, 1, "one prone status"); eq(p[1].id, "PRONE_GREASE", "its id")
+        end)
+    end
+end)
+
+test("G.movement reads Movement's amount and max", function()
+    combat_setup(9)
+    world[P1].comps.ActionResources.Resources.Movement[1].MaxAmount = 12
+    local a, m = G.movement(P1)
+    eq(a, 9, "amount"); eq(m, 12, "max")
+    world[P1].comps.ActionResources = nil
+    eq(G.movement(P1), nil, "unread")
 end)

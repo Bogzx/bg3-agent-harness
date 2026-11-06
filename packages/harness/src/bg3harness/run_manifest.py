@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from typing import Any
 
 from . import assemble, prompts, sandbox
@@ -53,6 +53,28 @@ def served_text(instructions: str, rules: str) -> str:
     return f"{instructions.strip()}\n\n=== RULES ===\n{rules.strip()}\n"
 
 
+def arena_cap(environ: Mapping[str, str]) -> float | None:
+    """A side's per-turn cap (its bridge serves the match's rules with it: bridge rules.load), None outside a match.
+    A side without one is a ValueError (its bridge doesn't start)."""
+    if not environ.get("BG3AI_SIDE"):
+        return None
+    cap = environ.get("BG3AI_ARENA_TURN_CAP_S")
+    if not cap:
+        raise ValueError("a side's rules state the arena's per-turn cap: BG3AI_ARENA_TURN_CAP_S is unset")
+    return float(cap)
+
+
+def arena_turn_order(environ: Mapping[str, str]) -> str | None:
+    """A side's turn order (its bridge serves the match's rules with it: bridge rules.load), None outside a match.
+    A side without one is a ValueError (its bridge doesn't start), as for the cap."""
+    if not environ.get("BG3AI_SIDE"):
+        return None
+    order = environ.get("BG3AI_ARENA_TURN_ORDER")
+    if not order:
+        raise ValueError("a side's rules state the arena's turn order: BG3AI_ARENA_TURN_ORDER is unset")
+    return order
+
+
 def manifest_fields(
     client: str,
     version: str | None,
@@ -60,6 +82,8 @@ def manifest_fields(
     tools: Collection[str],
     scenario: dict[str, Any] | None,
     instructions: str,
+    arena_turn_cap_s: float | None = None,
+    arena_turn_order: str | None = None,
 ) -> dict[str, Any]:
     """The run's manifest fields. tools: the bg3 tools every play process gets (the server's registry minus the
     session's BG3AI_TOOLS / BG3AI_TOOLS_OFF: client_setup.expected_tools' set); the prompt is assemble(condition,
@@ -69,14 +93,24 @@ def manifest_fields(
     assemble's. A coaching condition is served with every group's rules whatever tools are off, as the bg3 server
     serves it (bridge rules.load) and play/CLAUDE.md holds it (live9: a claude bench run with the memory tools off
     had an error instead of its hash). scenario: a v2 spec (packages/bench/scenarios); seed and timing are None
-    without one. Raises ValueError for an unknown condition or client, as assemble does."""
+    without one. arena_turn_cap_s: a session playing one side of a two-team match (arena_cap of its env): the
+    match's rules come in as the side's bridge serves them, with that cap and arena_turn_order (arena_turn_order of
+    its env). Raises ValueError for an unknown condition or client, as assemble does."""
     on = set(tools)
     p = prompts()
     if p.CONDITIONS.get(condition):
         caps = set(p.ALL_CAPS)
     else:
         caps = {c for c, names in p.CAPABILITIES.items() if set(names) <= on}
-    asm = assemble(condition, "mcp" if client not in p.CLIENTS else client, caps=caps)
+    arena = arena_turn_cap_s is not None
+    asm = assemble(
+        condition,
+        "mcp" if client not in p.CLIENTS else client,
+        caps=caps,
+        arena=arena,
+        turn_cap_s=arena_turn_cap_s,
+        turn_order=arena_turn_order,
+    )
     text = served_text(instructions, asm.text)
     parts = [{"file": INSTRUCTIONS_PART, "sha256": _sha(instructions.strip())}, *asm.parts]
     sc: dict[str, Any] = scenario or {}

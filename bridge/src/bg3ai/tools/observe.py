@@ -161,7 +161,7 @@ def get_inventory(who: str | None = None, filter: str = "") -> str:
     plumbing._remember_names(res)
     if not who and isinstance(res, dict):
         core.DELTA.observe({"inv": delta.snapshot(core.H, inventory=res)["inv"]})  # seen now; look() reports later changes
-    return reporting._finish("get_inventory", {"who": who, "filter": filter}, render.render_inventory(res, core.H, filter), t0)
+    return reporting._finish("get_inventory", {"who": who, "filter": filter}, render.render_inventory(res, core.H, filter, core.TOOLS_OFF), t0)
 
 
 @core.mcp.tool()

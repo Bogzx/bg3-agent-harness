@@ -1,0 +1,25 @@
+# Seat measurement after O1 (owner D637/D643: strict alternation inside the shared turn group; plan in the website
+# repo's ops/logs/arena-fight-analysis.md "Measurement plan after O1"). DeepSeek flash against itself on arena-v0, one
+# match per seed (`single`: a self-pair's m2 replays its m1), seeds 1..40 (the arena's seed 1 + repeat - 1). No paid
+# before-run (orchestrator 2026-11-04): seeds 1, 3, 5 and 7 pair with the matches on record. A self-pair is graded,
+# never rated: the table's first_actor, by_pattern and side_a are the measurement; tools/dev/arena_seat_tally.py
+# prints them with the void checks and the verdict. Played by `runner/play.py arena-matrix --matrix
+# packages/bench/matrices/arena-v0-seat-o1.toml` (--plan prints the 40 matches and the reserves).
+# Money: this run gets the seat measurement's whole $1.50. At run time (not before), set
+# runtime/budget-arena-v0.json's cap to its spent + 1.50. The per-match quote is $0.033 (6 DeepSeek self-matches,
+# 2026-11-03/04: $0.018-0.069), so 40 matches are ~$1.32; each side is capped at $0.15 per match (seed-7 m2, 6 rounds:
+# $0.032 / $0.037 a side). If the cap ends the run early, read the valid matches (n >= 30).
+# Decision at n = 40, a draw = half: opener wins >= 28 -> snake on (a snake re-run then needs new owner money); side A
+# or B wins >= 28 -> site/side audit, no turn-order change; opener 25-27 -> ambiguous; else keep O1.
+name = "arena-v0-seat-o1"
+pairs = [["profiles/deepseek-flash.toml", "profiles/deepseek-flash.toml"]]
+arenas = ["arena-v0"]
+repeats = 40
+single = true
+
+[budget]
+file = "runtime/budget-arena-v0.json"
+max_cost = { arena-v0 = 0.15 }               # USD per side per match: a paid side's reserve and cap
+
+[budget.models]
+"profiles/deepseek-flash.toml" = ["runtime/budget-deepseek.json"]

@@ -1,0 +1,10 @@
+{"v": 1, "kind": "mark", "t": 1000.0, "game_t": 0, "mark": "run_start", "detail": null}
+{"v": 1, "kind": "event", "t": 1001.0, "game_t": 1, "ev": "arena_start", "arena": "draft_open_field", "seed": 1001, "teams": {"A": ["Karlach", "Shadowheart", "Astarion", "Gale"], "B": ["Lae'zel", "Wyll", "Halsin", "Minthara"]}, "sides": {"A": "pi/model-x", "B": "pi/model-y"}}
+{"v": 1, "kind": "event", "t": 1002.0, "game_t": 2, "ev": "combat_started"}
+{"v": 1, "kind": "event", "t": 1003.0, "game_t": 3, "ev": "arena_turn", "side": "A", "character": "Karlach", "round": 1, "members": ["Karlach"], "names": ["Karlach"], "phase": 1, "group": "g1", "shared": true}
+{"v": 1, "kind": "event", "t": 1010.0, "game_t": 10, "ev": "arena_turn", "side": "B", "character": "Wyll", "round": 1, "members": ["Wyll"], "names": ["Wyll"], "phase": 2, "group": "g1", "shared": true}
+{"v": 1, "kind": "event", "t": 1020.0, "game_t": 20, "ev": "downed", "name": "Wyll", "party": false}
+{"v": 1, "kind": "event", "t": 1030.0, "game_t": 30, "ev": "arena_turn", "side": "A", "character": "Gale", "round": 2, "members": ["Gale"], "names": ["Gale"], "phase": 1, "group": "g2", "shared": true}
+{"v": 1, "kind": "event", "t": 1040.0, "game_t": 40, "ev": "arena_end", "winner": "A", "rounds": 2, "hp_left_A": 0.75, "hp_left_B": 0, "reason": "wipe"}
+{"v": 1, "kind": "event", "t": 1040.0, "game_t": 40, "ev": "combat_ended"}
+{"v": 1, "kind": "mark", "t": 1041.0, "game_t": 41, "mark": "run_end", "detail": null}

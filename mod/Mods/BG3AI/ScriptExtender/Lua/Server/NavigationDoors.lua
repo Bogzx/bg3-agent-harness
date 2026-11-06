@@ -8,7 +8,9 @@
 -- LINK_MIN_M or more from it within LINK_WAIT_MS, on the same level, keeps the link {door, name, from = its position,
 -- to = the arrival} in the level's breadcrumb store (saved with them). nav.route names one (door_link) when the goal
 -- is not walkable from here and the link's arrival is far nearer the goal. Fair: only doors the party went through,
--- and only what using them did.
+-- and only what using them did. In a match (two teams in one game) a link is also its user's side's own
+-- (NavigationSides.lua's side store, cleared at the match's end), and a side's route reads only its own: a door only
+-- side A went through never shows in side B's route.
 
 local U = BG3AI.Util
 local V = BG3AI.Visibility
@@ -42,12 +44,12 @@ function N.noteUse(char, item, success)
     local p = e and V.pos(e)
     local lvl = I.currentLevel()
     if p and lvl then
-        N.uses[c] = { item = u, name = V.name(u), pos = U.vec(p, 1), level = lvl, t = Ext.Utils.MonotonicTime() }
+        N.uses[c] = { item = u, name = V.name(u), pos = U.vec(p, 1), level = lvl, t = Ext.Utils.MonotonicTime(),
+            char = c }
     end
 end
 
-function N.addLink(level, use, to)
-    local l = I.levelStore(level)
+local function putLink(l, use, to)
     l.links = l.links or {}
     for i, k in ipairs(l.links) do
         if k.door == use.item then
@@ -57,6 +59,16 @@ function N.addLink(level, use, to)
     end
     l.links[#l.links + 1] = { door = use.item, name = use.name, from = use.pos, to = to }
     while #l.links > N.LINKS_CAP do table.remove(l.links, 1) end
+end
+
+-- The level's store (the harness's view, saved with the game) and, in a match, the user's side's own.
+function N.addLink(level, use, to)
+    putLink(I.levelStore(level), use, to)
+    local R, Ar = BG3AI.RPC, BG3AI.Arena
+    local side = R and R.arena_active and R.arena_active() and use.char and Ar.side_of(use.char)
+    if side then
+        U.with_side(side, function() putLink(N.walkedStore(level), use, to) end)
+    end
 end
 
 -- Tick: a pending use that moved its user LINK_MIN_M from the item becomes a link; another level or a late move
@@ -79,7 +91,7 @@ end
 -- The link that helps most toward `goal` from `from` (the shortest door walk + arrival-to-goal), or nil:
 -- {uuid, name, door, to, door_m, dir (from here to the door), to_goal_m (from its arrival)}.
 function N.doorLink(level, from, goal)
-    local l = level and I.store().levels[level]
+    local l = level and I.walkedStore(level) -- a side's own links in a match
     if not (l and l.links and from and goal) then return nil end
     local d0 = hdist(from, goal)
     local best, bc

@@ -125,6 +125,39 @@ class Streams(unittest.TestCase):
         self.assertEqual((res.subtype, res.is_error, res.api_error), ("error_context_overflow", True, False))
         self.assertEqual([e.api_error for e in events if e.kind == "error"], [False])
 
+    def test_only_a_full_context_counts_in_a_match(self):
+        # a match forfeits on it (A6): a throttle or a 400 on a parameter stays the client's failure
+        for text in (
+            "400 maximum context length is 200000 tokens",
+            "prompt is too long: 213462 tokens > 200000 maximum",
+            "Please reduce the length of the messages",
+            "input length and `max_tokens` exceed context limit: 190000 + 20000 > 200000",
+        ):
+            self.assertTrue(pc.context_full(text), text)
+        for text in (
+            "ThrottlingException: Too many tokens, please wait before trying again.",
+            "Too many tokens, please wait before trying again.",
+            "429 Too many tokens per minute",
+            "429 Request too large: too many tokens, limit 40000 TPM",
+            "429 quota exceeded: too many tokens",
+            "429 rate limit: too many tokens per minute",
+            "400 max_tokens exceeds the model's output limit",
+            "400 invalid_request_error: tools.0.name: bad name",
+        ):
+            self.assertFalse(pc.context_full(text), text)
+
+    def test_the_parser_keeps_its_wider_overflow_for_bench_and_playthrough_runs(self):
+        # context_full is the arena's: outside a match an overflow only ends the session, as it always did
+        for text in (
+            "ThrottlingException: Too many tokens, please wait before trying again.",
+            "400 max_tokens exceeds the model's output limit",
+        ):
+            _, events = parse([TOOLS, SYSTEM, assistant("error", text), ev("agent_settled")])
+            self.assertEqual(result(events).subtype, "error_context_overflow", text)
+        text = "input length and `max_tokens` exceed context limit: 190000 + 20000 > 200000"
+        _, events = parse([TOOLS, SYSTEM, assistant("error", text), ev("agent_settled")])
+        self.assertEqual(result(events).subtype, "error_during_execution")
+
     def test_malformed_arguments_are_counted(self):
         p, events = parse(lines("malformed"))
         self.assertEqual(p.malformed, 1)

@@ -508,6 +508,16 @@ def alerts(status: dict | None, inv: dict | None, name: Callable[[str], str] = l
     return out
 
 
+def without_off_tools(alerts: list[str], off: frozenset[str] | set[str]) -> list[str]:
+    """The alerts that name no tool in `off` (the tools the server has switched off, capabilities.py): an alert that
+    points at a tool the session can't call (a match with no trade: "sell junk: trade sell=junk") is left out. A
+    tool counts as named where its name stands as a word of its own, as the rules lint reads it."""
+    if not off:
+        return alerts
+    pat = re.compile(r"(?<![\w/.-])(?:" + "|".join(re.escape(t) for t in sorted(off)) + r")(?![\w-])")
+    return [a for a in alerts if not pat.search(a)]
+
+
 class AlertTracker:
     """ALERTS line: always in a full get_status; in deltas only when the set of alerts changed."""
 

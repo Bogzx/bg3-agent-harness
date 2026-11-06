@@ -14,6 +14,9 @@ every candidate during the rolls the live worker makes, so the fix can read the 
       HitNotification, HitNotificationRequest
   components that live longer, polled every tick (new entities only): SpellCastRolls (a cast's per-target rolls),
     RequestedRoll, ServerRollInProgress, RollModifiers, ServerSpellHitRegister, UnresolvedHitNotification
+  third pass (2026-11-03, arena 32 of 32 attacks hit): the hit entities (HitTarget: AttackFlags,
+    ConditionRollResults; HitAttacker; HitMeta), the interrupt data (ServerSpellCastInterrupt, InterruptData: an
+    attack roll an interrupt such as Shield could change keeps its NaturalRoll) and CombatParticipant.InitiativeRoll
   Osiris (timeline only, they carry no natural): RollResult/6, DialogRollResult/5, AttackedBy/7, CastedSpell/5
 Second pass (Window B 2026-10-24: no source above had natural/DC for the save or the attack; SpellCastRolls read
 {"Rolls":[]} when first seen; bg3le never fires DealDamage/ExecuteFunctor, so a HitDesc is reachable only through
@@ -63,9 +66,10 @@ local ONE_FRAME = { "SavingThrowRolledEvent", "HitResultEvent", "SpellCastTarget
     "PassiveConditionalRollInterruptEvent", "ConcentrationDamageCheck", "ServerStatusDispelRollCheck",
     "HitNotification", "HitNotificationRequest" }
 local LASTING = { "SpellCastRolls", "RequestedRoll", "ServerRollInProgress", "RollModifiers", "ServerSpellHitRegister",
-    "UnresolvedHitNotification" }
+    "UnresolvedHitNotification", "HitTarget", "HitAttacker", "HitMeta", "ServerSpellCastInterrupt", "InterruptData",
+    "CombatParticipant" }
 local KEYS = { NaturalRoll = 1, Difficulty = 1, DC = 1, Total = 1, Success = 1, RollType = 1, Ability = 1, Skill = 1,
-    AC = 1, Critical = 1 }
+    AC = 1, Critical = 1, AttackFlags = 1, ConditionRollResults = 1, InitiativeRoll = 1 }
 local function ser(x)
     local ok, t = pcall(Ext.Types.Serialize, x)
     if ok and t ~= nil then return t end

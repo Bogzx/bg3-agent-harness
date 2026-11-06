@@ -300,6 +300,8 @@ def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
     rx = ui.get("reaction")
     if rx:
         lines.append("REACTION " + compact(rx, H))
+    if ui.get("waiting"):  # a two-team match: the other side's prompt (sideview.py)
+        lines.append(f"WAITING {ui['waiting']}")
     p = ui.get("popup")
     if p and ui.get("screen") == "book" and len(str(p.get("text") or "")) > BOOK_SHOWN:
         # a whole book in every status line while it is open: the start, the rest is kept for recall()
@@ -315,7 +317,7 @@ def render_ui(ui: dict, H: Handles, brief: bool = False) -> list[str]:
     if c:
         lines.append("CONTAINER " + compact(c, H))
     if not brief:
-        rest = {k: v for k, v in ui.items() if k not in ("dialogue", "roll", "reaction", "popup", "container", "ms", "region")}
+        rest = {k: v for k, v in ui.items() if k not in ("dialogue", "roll", "reaction", "popup", "container", "ms", "region", "waiting")}
         if rest:
             lines.append("UI " + compact(rest, H))
     elif ui.get("notifications"):
@@ -410,7 +412,10 @@ def render_combat(res: dict, H: Handles) -> str:
             n = str(o.get("name") or "?")
             objs[n] = objs.get(n, 0) + 1
         else:
-            lines.append("  " + compact({k: v for k, v in o.items() if k != "disabled"}, H))  # DISABLED lines
+            # an ended row was in the current group (the mod sets ended only there): "current" on it read as acting
+            # (arena live 8: every member of the one shared group showed "ended current" next to COMBAT current=e2)
+            drop = ("disabled", "is_current") if o.get("ended") else ("disabled",)  # disabled: the DISABLED lines
+            lines.append("  " + compact({k: v for k, v in o.items() if k not in drop}, H))
     if objs:
         lines.append("OBJECTS on the turn order (props): "
                      + ", ".join(n + (f" x{c}" if c > 1 else "") for n, c in sorted(objs.items(), key=lambda x: -x[1])))
@@ -554,9 +559,10 @@ _SKIP_SLOTS = {"Underwear", "VanityBody", "VanityBoots"}
 _RARE = {"uncommon": 1, "rare": 2, "very_rare": 3, "legendary": 4, "story": 5}
 
 
-def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
+def render_inventory(inv: Any, H: Handles, filter: str = "", off: frozenset[str] | set[str] = frozenset()) -> str:
     """Per owner: equipment, then notable items (story/magic/consumables/tools/bags); junk summarised.
-    filter: 'equipped' | 'consumables' | 'all' | any words to match item names."""
+    filter: 'equipped' | 'consumables' | 'all' | any words to match item names. off: the tools the server switched off
+    (core.TOOLS_OFF): a note naming one is left out, as in ALERTS (economy.without_off_tools)."""
     if not isinstance(inv, dict) or "items" not in inv:
         return compact(inv, H)
     f = (filter or "").strip().lower()
@@ -639,16 +645,19 @@ def render_inventory(inv: Any, H: Handles, filter: str = "") -> str:
     if f in ("", "notable", "gear", "equipped"):
         ups = economy.upgrades(inv)
         if ups:
-            lines.append("BETTER GEAR IN BAGS (equip_best equips all): " + "; ".join(
+            how = economy.without_off_tools(["equip_best equips all"], off)
+            lines.append("BETTER GEAR IN BAGS" + (f" ({how[0]})" if how else "") + ": " + "; ".join(
                 f"{H.names.get(H.get(u['who'])) or H.get(u['who'])}: {H.get(u['uuid'])} {u['name']} → {u['slot']} ({u['why']})"
                 for u in ups))
         elif f == "gear":
             lines.append("No better gear in the bags.")
     if junk_ids and f in ("", "notable", "junk"):
         js = [it for it in items if it["uuid"] in junk_ids]
+        how = economy.without_off_tools(["trade sell=junk sells it to a trader with gold",
+                                         "manage_inventory op=camp item=junk sends it to camp"], off)
         lines.append(f"JUNK {len(js)} items ~{sum((i.get('value') or 0) * (i.get('count') or 1) for i in js)}g "
-                     f"{sum((i.get('weight') or 0) * (i.get('count') or 1) for i in js):.1f}kg (trade sell=junk sells it to a "
-                     "trader with gold; manage_inventory op=camp item=junk sends it to camp)" + economy.junk_in_bags(js))
+                     f"{sum((i.get('weight') or 0) * (i.get('count') or 1) for i in js):.1f}kg"
+                     + (f" ({'; '.join(how)})" if how else "") + economy.junk_in_bags(js))
     if by_name and not matched:
         lines.append(f"No item in the party's bags matches {filter.strip()!r} (names; separate alternatives with "
                      "commas: 'misty,scroll').")

@@ -323,11 +323,13 @@ class RingFeed:
     run, or before a runner restart, isn't this run's. A failed poll marks the referee not live, so the poll diff
     writes REFEREE_KINDS again until it answers. Each change is a facts mark (REVIEW-16 A1): `referee_down` with the
     error, `referee_up` when it answers again; while it is down trade, theft, crime, kill, loot and approval events
-    are not in facts.jsonl."""
+    are not in facts.jsonl. translate (a match's referee, bg3harness.arena): each referee fact before it is written,
+    None drops it."""
 
     def __init__(self, rpc: referee.Rpc, writer: FactsWriter, rolls_path: Path,
-                 wall: Callable[[], float] = time.time):
+                 wall: Callable[[], float] = time.time, translate: Callable[[dict], dict | None] | None = None):
         self.rpc, self.writer, self.rolls_path, self.wall = rpc, writer, Path(rolls_path), wall
+        self.translate = translate
         self.ref: referee.RingReader | None = None
         self.roll: referee.RingReader | None = None
         self.live: bool | None = None  # the referee's last poll answered (None: no poll yet)
@@ -342,7 +344,10 @@ class RingFeed:
         n_facts = n_rolls = 0
         try:
             self.ref = self.ref or self._reader(referee.referee)
-            n_facts = len(self.writer.timed_events([referee.to_fact(r) for r in self.ref.poll()]))
+            facts = [referee.to_fact(r) for r in self.ref.poll()]
+            if self.translate is not None:
+                facts = [f for f in map(self.translate, facts) if f is not None]
+            n_facts = len(self.writer.timed_events(facts))
             if self.live is False:
                 self.writer.mark("referee_up")
             self.live = self.writer.referee_live = True

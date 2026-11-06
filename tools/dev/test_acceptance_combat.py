@@ -91,5 +91,50 @@ class HudEndReads(unittest.TestCase):
         self.assertEqual((out, counts["state.combat"], counts["ui.command"], hud_n), ("out", 5, 1, 3))
 
 
+class AttackLanded(unittest.TestCase):
+    PAUSED = (
+        "use_ability: INTERRUPTED — the cast started and the game paused it for a reaction decision (a reaction prompt "
+        "is open): answer it (react); the cast goes on after it and its outcome shows in the events"
+    )
+
+    def _landed(self, out: str, rows: list[dict], foe: dict | None = None) -> tuple[bool, list]:
+        reads, screens, calls = iter(rows), iter(["reaction"]), []
+        last: list[dict] = [{}]
+
+        def try_rpc(op, *a, **k):
+            last[0] = next(reads, last[0])
+            return {"characters": [last[0]]}
+
+        fake_s = mock.Mock()
+        fake_s.game.try_rpc = try_rpc
+        with (
+            mock.patch.object(combat, "S", fake_s),
+            mock.patch.object(combat, "ui_screen", lambda: next(screens, "?")),
+            mock.patch.object(combat, "call", lambda name, **kw: calls.append((name, kw)) or f"{name}: done"),
+            mock.patch.object(combat.time, "sleep", lambda s: None),
+        ):
+            return combat.attack_landed(out, foe or {"uuid": "u9", "hp": 9}), calls
+
+    def test_a_done_attack_landed_without_a_read(self):
+        self.assertEqual(self._landed("use_ability: done", []), (True, []))
+
+    def test_a_paused_cast_that_then_hurts_the_target_counts(self):
+        landed, calls = self._landed(self.PAUSED, [{"uuid": "u9", "hp": 9}, {"uuid": "u9", "hp": 3}])
+        self.assertTrue(landed)
+        self.assertEqual(calls, [("react", {"use": False})])
+
+    def test_a_paused_cast_that_kills_the_target_counts(self):
+        self.assertTrue(self._landed(self.PAUSED, [{"uuid": "u9", "dead": True}])[0])
+
+    def test_a_paused_cast_that_misses_does_not_count(self):
+        self.assertFalse(self._landed(self.PAUSED, [{"uuid": "u9", "hp": 9}])[0])
+
+    def test_a_paused_cast_with_no_hp_to_read_does_not_count(self):
+        self.assertFalse(self._landed(self.PAUSED, [{"uuid": "u9"}], {"uuid": "u9"})[0])
+
+    def test_another_failure_does_not_count(self):
+        self.assertEqual(self._landed("use_ability: FAILED — target is out of range", []), (False, []))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,7 +37,9 @@ IGNORED = {"name", "type", "amount", "target", "resource", "max_hp", "spell", "c
            # statuses=[target=e2 status=Dash] -> statuses=[e2 Dash] (ACTION_DUPS)
            "status"}
 _FROM = re.compile(r"(e\d+)=\[(-?[\d.]+),([01])\]")
-_CAST_SPELL = re.compile(r"^(\s+cast\b.*?) spell=\S+(.*name=.*)$")
+_CAST = re.compile(r"\s+cast\b")
+_SPELL = re.compile(r" spell=\S+")
+_BRACES = re.compile(r"\{[^{}]*\}")
 _PIECE = re.compile(r"[A-Za-z]{1,8}|\d{1,3}|[^\sA-Za-z\d]|\n")
 TOKENS_PER_PIECE = 1.6  # fitted on naut/claude-run-2 usage deltas (research/impl-vis.md "Observation size")
 
@@ -47,6 +49,12 @@ def est_tokens(text: str) -> int:
     Fitted on the context growth per tool result in 6 recorded sessions (chars/token varies 1.6-2.4 by content;
     pieces track punctuation-dense game text better)."""
     return round(TOKENS_PER_PIECE * len(_PIECE.findall(text or "")))
+
+
+def cast_without_id(line: str) -> str:
+    """A cast event without its engine spell id, whatever the key order, when the event has its own display name. A
+    caster's name in its braces is no such name: an id with only that beside it stays a fact."""
+    return _SPELL.sub("", line) if _CAST.match(line) and " name=" in _BRACES.sub("", line) else line
 
 
 def strip_hints(text: str) -> str:
@@ -76,7 +84,7 @@ def strip_hints(text: str) -> str:
     text = re.sub(r"^  \d+\. (?=[\d.]+m [NESW]{1,2}$)", "  ", text, flags=re.M)
     for rx, _r in compact.phrases():
         text = rx.sub(lambda m: " " + " ".join(v for v in m.groups() if v) + " ", text)
-    return "\n".join(_CAST_SPELL.sub(r"\1\2", ln) for ln in text.split("\n"))
+    return "\n".join(cast_without_id(ln) for ln in text.split("\n"))
 
 
 def atoms(text: str) -> set[str]:

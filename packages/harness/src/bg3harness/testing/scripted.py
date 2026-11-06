@@ -9,6 +9,15 @@ responder (recorded fixtures) or the mod's "unknown op" refusal.
 A test drives the game between tool calls with the scenario methods (add_gold, start_fight, open_dialogue,
 change_area, add_item, referee, roll, load_save, ...): each changes the state and pushes the events the mod would push.
 Time comes from a FakeClock the test advances; nothing here sleeps or reads the wall clock.
+
+A two-team match (start_arena): calls whose envelope names a side (FakeMod -> reply_side) are answered from that
+team's view, as the mod's arena module does with Ctx.side: its own team is the party, the other team are hostile
+combatants it sees only while they aren't hidden (hide), the acting combatant is named only when seen, events come in
+the side's own view (an unseen source is "Someone", a spell id only for the side's own caster), a job is its side's
+(the other side's reads "no such job"), and acting out of turn, with the other team's character or on the other side's
+reaction prompt is refused with the mod's texts. The reaction prompt is on the one game client's screen: a side's
+ui.state shows its own prompt's rows and marks the other side's ({other_side: true}, no rows). Calls without a side
+get today's answers.
 """
 
 from __future__ import annotations
@@ -19,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .fakemod import Reply
+from .scripted_arena import SIDE_OPS, Arena
 
 SCENARIO_SWITCH = "BG3AI_SCENARIO_SETUP"
 FULL_TURN = {"action": 1, "bonus": 1, "reaction": 1, "movement": 9.0}  # a party member's resources at its turn start
@@ -146,6 +156,7 @@ class GameModel:
         self.rolls = Ring()
         self.ref_fired: dict[str, int] = {}
         self.jobs: dict[int, dict[str, Any]] = {}
+        self.job_sides: dict[int, str] = {}  # in a match, the side that started a job (RPC.start_job job.side)
         self.next_job = 1
         self.scn_seed: int | None = None
         self.scn_renames: list[dict[str, Any]] = []
@@ -157,6 +168,10 @@ class GameModel:
         self.difficulty = "Balanced"
         self.names: dict[str, str] = {}
         self.chosen: list[int] = []
+        self.arena: Arena | None = None
+        self.reaction: dict[str, Any] | None = None  # the reaction prompt on the client's screen
+        self.reacted: list[tuple[str, bool]] = []  # (who, use) of each answered prompt
+        self.moves: list[tuple[str, str, list[float]]] = []  # arena moves done: (side, uuid, pos)
         self.res: dict[str, dict[str, Any]] = {}  # uuid -> this turn's action/bonus/reaction/movement (a fight)
 
     # ---- helpers ----
@@ -174,9 +189,19 @@ class GameModel:
     def name(self, uuid: str, default: str) -> str:
         return self.names.get(uuid, default)
 
-    def push(self, kind: str, data: dict[str, Any] | None = None, ctx: str = "server") -> int:
-        """An event in the mod's events ring (what the bridge's EVENTS sections and get_events read)."""
-        ev = self.events[ctx].add({"t": self.clock.ms, "kind": kind, "data": data or {}})
+    def push(
+        self,
+        kind: str,
+        data: dict[str, Any] | None = None,
+        ctx: str = "server",
+        views: dict[str, dict[str, Any]] | None = None,
+    ) -> int:
+        """An event in the mod's events ring (what the bridge's EVENTS sections and get_events read). views: in a
+        match, each side's own data for it (a side without one doesn't see it); `data` is the view without a side."""
+        rec: dict[str, Any] = {"t": self.clock.ms, "kind": kind, "data": data or {}}
+        if views is not None:
+            rec["views"] = views
+        ev = self.events[ctx].add(rec)
         return int(ev["seq"])
 
     def ref_record(self, ev: str, **data: Any) -> dict[str, Any]:
@@ -270,7 +295,7 @@ class GameModel:
         }
         self.push("combat_started", {})
         self.push("round_started", {"round": 1})
-        self.push("turn_started", self._ref_of(order[0]["uuid"], order[0]["name"]))
+        self.push("turn_started", {**self._ref_of(order[0]["uuid"], order[0]["name"]), "round": 1})
         self.ref_record("combat_started", combat=f"combat-{self.boots}-{len(self.ref.records)}")
 
     def kill(self, name: str) -> None:
@@ -316,6 +341,100 @@ class GameModel:
     def change_area(self, region: str, level: str) -> None:
         self.region, self.level = region, level
         self.push("level_changed", {"region": region})
+
+    def start_arena(self, team_a: list[str], team_b: list[str], order: list[str] | None = None) -> Arena:
+        """A two-team match in turn-based combat: team A ~20 m from team B; the turn order alternates A, B, A, B ...
+        unless `order` (names) gives it. Pushes combat_started, round_started and the first turn_started."""
+        n = 500
+        teams: dict[str, list[Member]] = {}
+        for side, names, x in (("A", team_a, 0.0), ("B", team_b, 20.0)):
+            teams[side] = []
+            for i, name in enumerate(names):
+                teams[side].append(Member(_uuid(n), name, pos=(x, 0.0, float(i))))
+                n += 1
+        by_name = {m.name: m.uuid for team in teams.values() for m in team}
+        if order is None:
+            pairs = zip(teams["A"], teams["B"], strict=False)
+            uuids = [m.uuid for pair in pairs for m in pair]
+            uuids += [m.uuid for team in teams.values() for m in team if m.uuid not in uuids]
+        else:
+            uuids = [by_name[name] for name in order]
+        self.arena = Arena(teams, uuids, {s: team[0].uuid for s, team in teams.items()})
+        self.push("combat_started", {})
+        self.push("round_started", {"round": 1})
+        self._push_turn("turn_started")
+        return self.arena
+
+    def hide(self, name: str, hidden: bool = True) -> None:
+        """A match character the other side can't see (or sees again)."""
+        assert self.arena is not None, "no match"
+        uuid = self.arena.member(name).uuid
+        if hidden:
+            self.arena.hidden.add(uuid)
+        else:
+            self.arena.hidden.discard(uuid)
+
+    def _push_turn(self, kind: str, who: Member | None = None, rnd: int | None = None) -> None:
+        """turn_started/turn_ended of `who` (the acting one), tagged with the round its turn belongs to (Events.lua)."""
+        a = self.arena
+        assert a is not None
+        m = who or a.acting
+        ref = {**self._ref_of(m.uuid, m.name), "round": a.round if rnd is None else rnd}
+        self.push(kind, ref, views={s: ref for s in a.teams if a.sees(s, m.uuid)})
+
+    def arena_cast(self, caster: str, spell: str, name: str) -> None:
+        """A cast (Events.lua CastedSpell): seen by the sides that see the caster; the spell id only for its own."""
+        a = self.arena
+        assert a is not None, "no match"
+        m = a.member(caster)
+        ref = self._ref_of(m.uuid, m.name)
+        views = {
+            s: {"caster": ref, "name": name, **({"spell": spell} if a.side_of(m.uuid) == s else {})}
+            for s in a.teams
+            if a.sees(s, m.uuid)
+        }
+        self.push("cast", {"caster": ref, "spell": spell, "name": name}, views=views)
+
+    def arena_damage(self, target: str, source: str, amount: int, dtype: str = "Fire") -> None:
+        """Damage (Events.lua AttackedBy): seen by the sides that see the target; an unseen source is "Someone"."""
+        a = self.arena
+        assert a is not None, "no match"
+        t, src = a.member(target), a.member(source)
+        t.hp = max(0, t.hp - amount)
+        tref, sref = self._ref_of(t.uuid, t.name), self._ref_of(src.uuid, src.name)
+        views = {
+            s: {
+                "target": tref,
+                "amount": amount,
+                "type": dtype,
+                "source": sref if a.sees(s, src.uuid) else {"name": "Someone"},
+            }
+            for s in a.teams
+            if a.sees(s, t.uuid)
+        }
+        self.push("damage", {"target": tref, "amount": amount, "type": dtype, "source": sref}, views=views)
+
+    def open_reaction(self, who: str, reactions: tuple[str, ...] = ("Shield",)) -> None:
+        """A reaction prompt for `who` on the game client's screen (UIState.lua S.reaction: rows name the reactor)."""
+        rows = [{"i": i + 1, "who": who, "name": r, "level": 1} for i, r in enumerate(reactions)]
+        self.reaction = {"prompt": " | ".join([who, *reactions, "Choose how to react."]), "options": rows}
+
+    def arena_end_turn(self) -> None:
+        """The acting character's turn ends; the next in the order acts (a new round after the last). At a round
+        change the events come in the game's order (phases4 load1): round_started, the new round's turn_started, then
+        the old round's turn_ended."""
+        a = self.arena
+        assert a is not None, "no match"
+        ended, old = a.acting, a.round
+        if a.turn + 1 < len(a.order):
+            self._push_turn("turn_ended")
+            a.turn += 1
+            self._push_turn("turn_started")
+            return
+        a.turn, a.round = 0, a.round + 1
+        self.push("round_started", {"round": a.round})
+        self._push_turn("turn_started")
+        self._push_turn("turn_ended", ended, old)
 
     def add_quest(self, title: str, text: str) -> None:
         self.journal.append({"title": title, "steps": [text], "id": title.replace(" ", "_")})
@@ -372,6 +491,16 @@ class GameModel:
             return None
         try:
             return {"ok": True, "result": copy.deepcopy(fn(self, ctx, args))}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def reply_side(self, ctx: str, op: str, args: dict[str, Any], side: str) -> Reply | None:
+        """A call with a side in its envelope: in a match, answered from that team's view; else as without one."""
+        fn = SIDE_OPS.get(op) if self.arena is not None else None
+        if fn is None:
+            return self.reply(ctx, op, args)
+        try:
+            return {"ok": True, "result": copy.deepcopy(fn(self, ctx, args, side))}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -441,6 +570,15 @@ class GameModel:
         }
 
     def op_ui_state(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
+        if self.reaction is not None:
+            return {
+                "screen": "reaction",
+                "page": "ReactionDecisionPopup",
+                "reaction": copy.deepcopy(self.reaction),
+                "region": self.region,
+                "blocking": True,
+                "ms": 1,
+            }
         if self.dialogue is not None:
             return {
                 "screen": "dialogue",
@@ -463,13 +601,30 @@ class GameModel:
             return {"can": True}
         self.chosen.append(i)
         self.close_dialogue()
-        return self._job("ui.dialogue_choose", {"screen": "game", "ended": True, "lines": []})
+        return self.settled_job("ui.dialogue_choose", {"screen": "game", "ended": True, "lines": []})
 
-    def _job(self, kind: str, result: dict[str, Any]) -> dict[str, Any]:
-        """A job that settles in the call (RPC.start_job + finish_job in one tick)."""
+    def failed_job(self, kind: str, error: str, side: str | None = None) -> dict[str, Any]:
+        """A guard refusal (Actions.lua guarded): a job that settled failed in the call."""
+        jid = self.next_job
+        self.next_job += 1
+        self.jobs[jid] = {"id": jid, "kind": kind, "status": "failed", "error": error, "elapsed_ms": 0}
+        if side:
+            self.job_sides[jid] = side
+        return {"job": jid, "status": "failed", "error": error}
+
+    # ---- a match, from one side's view ----
+
+    def match(self) -> Arena:
+        assert self.arena is not None
+        return self.arena
+
+    def settled_job(self, kind: str, result: dict[str, Any], side: str | None = None) -> dict[str, Any]:
+        """A job that settles in the call (RPC.start_job + finish_job in one tick); `side`: the side that started it."""
         jid = self.next_job
         self.next_job += 1
         self.jobs[jid] = {"id": jid, "kind": kind, "status": "done", "result": result, "elapsed_ms": 0}
+        if side:
+            self.job_sides[jid] = side
         return {"job": jid, "status": "done", "result": result}
 
     # ---- a fight played one action per call (act.*; Server/Actions*.lua) ----
@@ -514,7 +669,7 @@ class GameModel:
             for n in self.nearby:
                 if n.get("relation") == "hostile" and not n.get("dead"):
                     n["dist"] = round(sum((a - b) ** 2 for a, b in zip(m.pos, n["pos"], strict=True)) ** 0.5, 1)
-        return self._job("act.move_to", {"dist": 0.0, "after": self._after(m.uuid)})
+        return self.settled_job("act.move_to", {"dist": 0.0, "after": self._after(m.uuid)})
 
     def op_cast(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         """A weapon attack on a target: 7 damage (a 7-HP enemy dies), the action spent."""
@@ -537,7 +692,9 @@ class GameModel:
         )
         if row["hp"] == 0 and self.combat is not None:
             self.kill(row["name"])
-        return self._job("act.cast", {"cast": args.get("spell"), "target": row["uuid"], "after": self._after(m.uuid)})
+        return self.settled_job(
+            "act.cast", {"cast": args.get("spell"), "target": row["uuid"], "after": self._after(m.uuid)}
+        )
 
     def op_end_turn(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         """The member's turn ends; each enemy left hits the first party member for 3, then the next party member's
@@ -573,7 +730,7 @@ class GameModel:
             self.push("turn_ended", self._ref_of(o["uuid"], o["name"]))
         for o in order:
             o["is_current"] = o["uuid"] == self.combat["current"]
-        return self._job("act.end_turn", {"after": self._after(m.uuid)})
+        return self.settled_job("act.end_turn", {"after": self._after(m.uuid)})
 
     def op_job_poll(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         job = self.jobs.get(int(args.get("id") or 0))
@@ -583,7 +740,8 @@ class GameModel:
 
     def op_events(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         ring = self.events[ctx]
-        return {"latest": ring.seq, "events": ring.since(args.get("seq"), args.get("limit"), 200)}
+        evs = ring.since(args.get("seq"), args.get("limit"), 200)
+        return {"latest": ring.seq, "events": [{k: v for k, v in e.items() if k != "views"} for e in evs]}
 
     def ring_reply(self, ring: Ring, args: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -658,7 +816,7 @@ class GameModel:
     def op_new_game(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         """ui.new_game: a new game at the difficulty the bridge asked for (the Options name); character creation."""
         self.difficulty = str(args.get("difficulty") or "Explorer")
-        return self._job("ui.new_game", {"screen": "character_creation", "difficulty": self.difficulty})
+        return self.settled_job("ui.new_game", {"screen": "character_creation", "difficulty": self.difficulty})
 
     def op_scn_difficulty(self, ctx: str, args: dict[str, Any]) -> dict[str, Any]:
         self._scn()

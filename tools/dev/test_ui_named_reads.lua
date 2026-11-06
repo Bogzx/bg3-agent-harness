@@ -9,7 +9,8 @@ Ext = {
     UI = {},
     Log = { PrintError = function(...) error("logged an error: " .. table.concat({ ... }, " ")) end },
 }
-BG3AI = { RPC = { register = function() end, now_ms = function() return 0 end } }
+local ops = {}
+BG3AI = { RPC = { register = function(n, f) ops[n] = f end, now_ms = function() return 0 end, Ctx = {} } }
 dofile(ui_path)
 local UI = BG3AI.UI
 
@@ -87,6 +88,14 @@ check("press does not enumerate", enumerated == 0, enumerated)
 -- props() still works on view models
 local vm = element("ls.VMAnswer", { Enabled = true })
 check("props on a VM", UI.props(vm).Enabled == true)
+
+-- Audit S3-3: the raw screen ops are the harness's (no side); a side's reads go through the side-filtered UIState
+BG3AI.RPC.Ctx.side = "A"
+for _, op in ipairs({ "ui.dump", "ui.widgets", "ui.props" }) do
+    local okS, errS = pcall(ops[op], { widget = "x" })
+    check(op .. " refuses a side", not okS and tostring(errS) == op .. " is the harness's (no side)", errS)
+end
+BG3AI.RPC.Ctx.side = nil
 
 if failures > 0 then
     print(failures .. " FAILED")

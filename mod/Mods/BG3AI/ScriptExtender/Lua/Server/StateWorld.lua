@@ -460,6 +460,16 @@ function S.combat(ctx)
                         if h and h.max_hp and h.max_hp > 0 and (ctx.is_party[u] or not ctx.rules.HIDE_NPC_HP) then
                             o.hp_pct = S.hp_pct(h.hp, h.max_hp)
                         end
+                        if truthy(osi(Osi.IsDead, u)) then o.dead = true end
+                        -- the game's own downed state (bridge turn.is_downed), never a rounded hp_pct. 0 HP counts for
+                        -- a party member and, in a match, for the other team's member whose HP this row shows (both
+                        -- sides read the same tag: arena C5); anyone else by the status only: 0 HP would show hidden
+                        -- HP (HIDE_NPC_HP), and an NPC reads 0 HP before it counts as dead.
+                        local zero = h and h.hp == 0 and (ctx.is_party[u]
+                            or (U.side() and BG3AI.Arena.side_of(u) and o.hp_pct ~= nil))
+                        if not o.dead and (truthy(osi(Osi.HasActiveStatus, u, "DOWNED")) or zero) then
+                            o.downed = true
+                        end
                         if tb then
                             pcall(function()
                                 -- A turn group (party members with equal initiative)
@@ -470,6 +480,8 @@ function S.combat(ctx)
                                 -- whatever its flags show (Guard.turn_moved_on)
                                 local over = ctx.is_party[u] and BG3AI.Guard and BG3AI.Guard.turn_moved_on
                                     and BG3AI.Guard.turn_moved_on(u)
+                                -- an arena: the other team's member waiting in a turn group across the teams
+                                if not over and U.side() then over = BG3AI.Arena.held(u) end
                                 -- S087: a stunned (INCAPACITATED) member's open turn passes by itself (Guard.turn_passes)
                                 local passes = tb.IsActiveCombatTurn and ctx.is_party[u] and not tb.RequestedEndTurn
                                     and not pending and not over and BG3AI.Guard and BG3AI.Guard.turn_passes
@@ -487,19 +499,16 @@ function S.combat(ctx)
                                     end
                                 end
                                 if tb.ActedThisRoundInCombat then o.acted = true end
+                                -- a downed member doesn't act (CanActInCombat ignores it: arena C5); nor, in an
+                                -- arena, one held for another's phase or whose turn moved on (O1 audit S3)
+                                local open_end = tb.IsActiveCombatTurn and (tb.RequestedEndTurn or pending)
                                 if ctx.is_party[u] and tb.CanActInCombat and not tb.ActedThisRoundInCombat
-                                    and not (tb.IsActiveCombatTurn and (tb.RequestedEndTurn or pending)) then
+                                    and not o.downed and not open_end and not (over and U.side()) then
                                     o.can_act = true
                                     out.party_can_act = out.party_can_act or {}
                                     table.insert(out.party_can_act, u)
                                 end
                             end)
-                        end
-                        if truthy(osi(Osi.IsDead, u)) then o.dead = true end
-                        -- the game's own downed state (bridge turn.is_downed), never a rounded hp_pct
-                        if ctx.is_party[u] and not o.dead and (truthy(osi(Osi.HasActiveStatus, u, "DOWNED"))
-                            or (h and h.hp == 0)) then
-                            o.downed = true
                         end
                         if ctx.is_party[u] then
                             o.light_in_hand = heldLight(u)
@@ -759,7 +768,7 @@ function S.nearby(ctx, args)
                         statuses = V.statuses(e) }
                     if #o.statuses == 0 then o.statuses = nil end
                     -- the concentration icon over a visible creature (bridge CHANGES: "concentrating on Cloudkill")
-                    o.concentration = concentration(e, false) -- not the party's (the loop's own check)
+                    o.concentration = concentration(e, false) -- not the side's team (the loop's own check)
                     if o.concentration then noteConcentration(ctx, u, e) end
                     local dead = truthy(osi(Osi.IsDead, u))
                     if dead then o.dead = true end

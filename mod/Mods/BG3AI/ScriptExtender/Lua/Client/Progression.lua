@@ -256,7 +256,54 @@ local function widgetDC(name)
     return el and try(function() return el.DataContext end) or nil
 end
 
-P.ccDC = function() return widgetDC("CharacterCreation") end
+-- The pages the CC driver (ui.cc_options / cc_scan / cc_apply / cc_finish) drives, in this order: the game's
+-- character creation, and the respec page Osi.StartRespec opens on a real party member (route H,
+-- ops/briefs/arena/route-h-probe.md: a respecced hireling is an arena build's reference). Per page: widget; finish,
+-- the command that ends it; complete, the property that enables finish; tabs, "same" (CharacterCreation's tab element
+-- names) or {cc tab name = this page's}; naming, whether it has the naming page; keeps, the plan keys the page has no
+-- list for (CharacterRespec.xaml binds class, subclass, deity, abilities, skills and the race's selectors, but no
+-- origin, race or subrace: respec keeps the race). A name left nil is TODO: CharacterRespec's are what the route-H
+-- probe's page dump reads (probe_route_h.py respec, its `names`), and every op that needs one fails at the call,
+-- naming the page and the name, before anything on the page changes.
+P.CC_PAGES = {
+    { widget = "CharacterCreation", finish = "FinishCreating", complete = "IsCharacterComplete", tabs = "same",
+      naming = true, keeps = {} },
+    { widget = "CharacterRespec", finish = nil, complete = nil, tabs = nil, -- TODO: the route-H probe's names
+      naming = false, keeps = { origin = true, race = true, subrace = true } },
+}
+
+-- The first open page of P.CC_PAGES and its DataContext, or nil.
+function P.ccPage()
+    for _, pg in ipairs(P.CC_PAGES) do
+        local dc = widgetDC(pg.widget)
+        if dc then return pg, dc end
+    end
+    return nil
+end
+
+-- The page's name for `role` (finish, complete), or an error naming the page and the role while it is TODO.
+function P.ccName(pg, role)
+    local n = pg[role]
+    if type(n) ~= "string" or n == "" then
+        error(("%s: its %s name is not known yet"):format(pg.widget, role), 0)
+    end
+    return n
+end
+
+-- The page's element name for character creation's tab `tab`, or an error while the page's tabs are TODO.
+function P.ccTab(pg, tab)
+    if pg.tabs == "same" then return tab end
+    local n = type(pg.tabs) == "table" and pg.tabs[tab] or nil
+    if type(n) ~= "string" then
+        error(("%s: its %s name is not known yet"):format(pg.widget, tab), 0)
+    end
+    return n
+end
+
+P.ccDC = function()
+    local _, dc = P.ccPage()
+    return dc
+end
 P.luDC = function() return widgetDC("CharacterLevelUp") end
 
 -- VM identity -> the first text its list item renders, for every realized list item on a page. Selectable

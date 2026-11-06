@@ -1,0 +1,975 @@
+# pyright: basic
+"""Arenas: two models fight each other in one turn-based fight. Arena files, the match grader and the ratings.
+
+An arena file (`arenas/<name>.json`, schema/arena.v1.schema.json; `load`, `validate`) fixes one fight: the start save
+(name + sha1), the game level and the two spawn points, each side's team (display names, optional templates and
+uuids: arena.setup fails when a name and its uuid disagree), the character level every member is set to (`level`,
+default 2), the dice seed, Karmic Dice off (`karmic: false`), the round cap (default 20), the wall-clock cap in minutes (default 30), the
+model-time cap per turn in seconds (`turn_cap_s`), the condition and the name of the bridge's tools-off list
+(TOOLS_OFF_LISTS). The spawns must stand both teams on the same terms (check_geometry: the mod's arena.setup
+refuses them otherwise), unless the arena is a draft. A mirror arena adds `mirror {pairs: [{class, build?, template, race, stats, names {A, B}, kit}]}` (1 to
+TEAM_MAX pairs, tools/dev/make_arena_save.py mirror writes it): arena.setup makes each pair's twins per match, so its
+team entries are names only, pair i's names at index i of each team (the uuids come from the setup); each pair may
+have its own template and race (a build's: A1, orchestrator D411), and its kit's race part must be for that race, as
+arena.setup refuses it otherwise; `build` names the build file's build it came from. `draft` says why an arena can't be played yet (its spots are placeholders, or null: TODO until a live height read); the pairing planner
+(arena_matrix) gives a draft arena no matches. Arena files are not suite files: nothing here moves a bench-vX.Y score.
+
+A **match** is one fight: model X plays side A, model Y side B. A **pairing** is two matches of one arena, seed and
+teams with the sides swapped, so the side advantage cancels.
+
+`grade(records, arena, record=None, rolls=None)` grades a match from its facts.jsonl: the referee's events (schema/
+arena-facts.v1.schema.json) `arena_start {arena, seed, teams, sides, uuids?}`, `arena_turn {side, character,
+members, round, phase, group, shared}`, `arena_turn_forced {side, character}` and `arena_end {winner, reason, rounds,
+hp_left_A, hp_left_B, forfeit?, cause?, capped?}`. A turn is a phase: one same-side run of the rolled order inside a turn group
+(the game puts both teams' adjacent characters into one shared group, which the mod plays side by side). A phase is
+off its side only when it names a character of the other team; a name on neither team (a summon) counts on the
+phase's side. A side wins when every character of the other side is down or dead (`wipe`) or when the other side forfeits
+(`forfeit`: three of its turns in a row forced to an end at the per-turn cap, cause `forced_turns`, which the grader
+checks against the arena_turn_forced events; its model ending its session again after three resumes, cause
+`client_exit`; or its conversation outgrowing its model's context after its first tool call, cause
+`context_overflow`, owner A6). The round
+cap and the wall cap are draws (`round_cap`, `wall_cap`; the HP fractions are recorded, never a tiebreak). A match is
+invalid, rerun and never rated when its run record is (results.validity: runner error, harness failure, operator, off
+route, unseeded), when a side is the harness's scripted no-model client (`scripted`: a live check, not a model's
+play), when the harness ended it (`abort`), the game failed (`fault`: a crash or hang), a side's client failed again
+after its resume (`client_fault`: an API or provider error, a 400 that is no context overflow included, an overflow
+before the side's first tool call (cause `kickoff_overflow`: the harness's prompt filled the context), our bg3 MCP
+server, a hang or a crash; `failed` names the
+side, `cause` the failure; owner D459: the model's infrastructure, not its play) or the match reached its money
+cap (`over_budget`: no winner; `capped` names the sides over their cap), or when the facts
+don't match the arena or contradict themselves (INVALID). With the match's rolls.jsonl rows, `luck` is each side's
+stats.luck_z over its own characters' d20 faces (a row's `roller` uuid in arena_start's `uuids`).
+
+`results(matches, seed)` is the v1 table, over valid matches with the pairing as the resampled unit:
+
+- `pairs`: per model pair over complete pairings (both matches valid; a pairing short of one is `incomplete` and left
+  out, its side advantage doesn't cancel): pairings won / split / lost by the first model (more, equal or fewer of
+  the pairing's two points: a 2-0 is won, a 1-1 split), matches w/d/l, the match win rate (a draw = half a win) with
+  its `ci` (a bootstrap over the pair's pairings, like every rate interval here: a pairing's two matches share the
+  seed's initiative and its dice per seat, docs/ARENA-RESULTS.md "Dice", so the pairing is one sample), n_pairings, n_matches, and `rated` (n_pairings >= MIN_PAIRINGS; else a pilot row);
+  `pentanomial` counts the pairings by the first model's points ("2", "1.5", "1", "0.5", "0"), `draws` the cap
+  draws by reason, `sign_p` is the exact two-sided sign test on won vs lost pairings, and `provisional` marks a
+  rated row under PROVISIONAL_PAIRINGS.
+- `side_a`: side A's win rate over every valid match (a model against itself too) with a bootstrap interval over
+  pairings: an interval that excludes 0.5 says the arena favours a side. A self-pair's second valid match in a
+  pairing is left out here and in the next two (same seed, mirror twins, same model: a replay, REVIEW-7 f2).
+- `by_pattern`: per round-1 phase pattern (grade's `r1_pattern`, e.g. "A1|B2|A1"; "none" without one): n_matches,
+  n_pairings, side A's win rate and round 1's first actor's win rate, each {rate, ci} (a draw = half):
+  if one pattern decides most matches, the seed's initiative order outweighs the models' play.
+- `first_actor`: round 1's first actor's win rate (a draw = half) with its ci, n_matches and n_pairings, over valid matches
+  with a pattern: the seat measure for any turn order, an alternation rule's too (seat fix O3/O3a).
+- `favoured`: the pair side's win rate the same way, over the matches whose round 1 gives one side alone a
+  back-to-back pair (`favoured`; REVIEW-7 a: from the order alone, never the result); none under an alternation rule.
+- `seat`: the order advantage the rating fits (below): the seat side's win probability between equal models (the
+  seat side: round 1's pair side, else its first actor) with its bootstrap interval, and n_games (rated games with
+  a pattern, plus `n_self_games`: each self-pairing's first valid match with a pattern, pure seat evidence since
+  the strengths cancel, pre-registered in docs/ARENA-RESULTS.md); None with no rated pair.
+- `prior`: the priors of the refits (PRIORS virtual draws) and the largest Elo shift any rated model takes from
+  them; None with no rated pair.
+- `failures`: per model, over every graded match it played a side of (valid or not), the matches its own client
+  failed (`client_fault` with `failed` = its side): n_matches, client_faults, rate and the causes counted; and the
+  matches it ended over budget (`capped` names its side): over_budget, over_budget_rate, and over_budget_flag above
+  OVER_BUDGET_FLAG (owner R4: over-budget counts are published, and only a flagged model reopens a rerun).
+- `models`: per model its matches and points over complete pairings; a model in a rated pair has a Bradley-Terry
+  strength fit over the rated pairs' pairings (a draw = half a win to each; one virtual draw against a fixed
+  reference player keeps an undefeated model finite; a first-seat factor multiplies the seat side's strength in
+  each game that has a pattern, chess's white advantage, with one virtual draw of its own: REVIEW-7 f1) with a percentile bootstrap interval over those pairings
+  (seeded), shown on the Elo scale (400 log10 strength, centred on 1500 over the rated models); any other model is a
+  pilot row with no rating. A rated model also has `provisional` (fewer than PROVISIONAL_PAIRINGS rated pairings),
+  `rank` with `rank_ci` (its rank's percentile range over the bootstrap replicates), `prior_shift` (its largest Elo
+  move under PRIORS) and `prior_flag` (that move is over half its interval). A match a model plays against itself is
+  graded but never rated. docs/ARENA-RESULTS.md documents every field for the site.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import random
+import re
+from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
+from typing import Any, TypeGuard
+
+from bg3bench import conditions, scenario, stats
+from bg3bench.results import validity
+
+SCHEMA = "arena.v1"
+PACKAGE_ROOT = Path(__file__).resolve().parents[2]  # packages/bench
+ARENA_DIR = PACKAGE_ROOT / "arenas"
+SIDES = ("A", "B")
+TEAM_MAX = 4
+# Spawn geometry, as the mod's arena.setup refuses it (Server/ArenaSetup.lua Setup.check_geometry, F2): each team on a
+# line along x through its spawn, LINE_GAP_M apart; the two spawns under SPAWN_DY_MAX_M apart in height; every
+# distance across the lines the same both ways (A's member i to B's member j = B's i to A's j) within PAIR_DIST_TOL_M.
+LINE_GAP_M, SPAWN_DY_MAX_M, PAIR_DIST_TOL_M = 1.5, 0.3, 0.1
+ROUND_CAP, WALL_CAP_MIN = 20, 30
+LEVEL, LEVEL_MAX = 2, 12  # every member's character level after arena.setup
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+MIN_PAIRINGS = 15  # a pair's pairings before its models are rated; below it, a pilot row
+PROVISIONAL_PAIRINGS = 50  # a rated pair or model's pairings before its rating is no longer provisional
+PRIORS = (0.5, 2.0)  # the virtual-draw counts the prior-sensitivity refits use (the rating's own is 1)
+PENTANOMIAL = ("2", "1.5", "1", "0.5", "0")  # a pairing's points for the first model
+FORFEIT_TURNS = 3  # forced turns in a row that forfeit the match
+TOOLS_OFF_LISTS = ("arena-v1",)  # the bridge's named arena tools-off lists (BG3AI_TOOLS_OFF values)
+KEYS = {
+    "schema", "name", "title", "about", "draft", "save", "location", "teams", "level", "seed", "karmic",
+    "round_cap", "wall_cap_min", "turn_cap_s", "condition", "tools_off", "mirror", "turn_order",
+}  # fmt: skip
+# Inside a shared turn group the sides alternate one character at a time (seat fix, owner D643): "alternate" opens
+# every round with the side of the group's first living member in the rolled order, "snake" swaps the opening side
+# each round. Read by the mod (Server/Arena.lua) and recorded in arena_start / arena_turn.
+TURN_ORDERS, TURN_ORDER = ("alternate", "snake"), "alternate"
+PAIR_KEYS = {"class", "template", "race", "stats", "names", "kit"}  # a mirror pair (class: informational)
+PAIR_OPTIONAL = {"build"}  # the build file's build id (tools/dev/arena_builds.py): informational
+SHA1_LEN = 40
+END_REASONS = ("wipe", "forfeit", "round_cap", "wall_cap", "abort", "fault", "client_fault", "over_budget")
+CAP_REASONS = ("round_cap", "wall_cap")  # draws
+# the harness ended it, the game failed, a side's client failed past its resume, the money ran out: invalid
+FAULT_REASONS = ("abort", "fault", "client_fault", "over_budget")
+FORFEIT_CAUSES = ("forced_turns", "client_exit", "context_overflow")
+OVER_BUDGET_FLAG = 0.05  # a model's over-budget rate above this is flagged (owner R4: "above a few percent")
+INVALID = (
+    "no_start", "wrong_arena", "scripted", "unseeded", "off_side_turn", "inconsistent_turns", "no_end",
+    "past_round_cap", "inconsistent_end",
+)  # fmt: skip
+SCRIPTED = "scripted"  # a player "scripted/..." is the harness's no-model client (play.py arena --a scripted)
+# A cap's ends at their longest, per member (bg3harness.arena.match.cap_phase): act.end_turn's answer and the last
+# job.poll's (EVAL_TIMEOUT, 15 s each) around END_SETTLE_S (22 s). Only a phase begun in that time can precede its
+# arena_turn_forced.
+CAP_END_S = 52.0
+ELO_BASE, ELO_SCALE = 1500.0, 400.0
+
+
+class ArenaError(ValueError):
+    pass
+
+
+def _num(v: Any) -> TypeGuard[float]:
+    return isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _int(v: Any) -> TypeGuard[int]:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _str(v: Any) -> bool:
+    return isinstance(v, str) and bool(v.strip())
+
+
+def _check_save(save: Any, draft: bool) -> list[str]:
+    if not isinstance(save, dict) or set(save) - {"name", "sha1"}:
+        return ["save must be {name, sha1}"]
+    name, sha1 = save.get("name"), save.get("sha1")
+    errs = []
+    if (name is None or sha1 is None) and not draft:
+        errs.append("save.name and save.sha1 are required unless the arena is a draft")
+    if name is not None and scenario.save_owner(name) is None:
+        errs.append(f"save.name {name!r} is not a save folder name (<owner>-<id>__<label>)")
+    if sha1 is not None and not (
+        isinstance(sha1, str) and len(sha1) == SHA1_LEN and all(c in "0123456789abcdef" for c in sha1)
+    ):
+        errs.append("save.sha1 must be 40 lowercase hex digits")
+    return errs
+
+
+def _check_location(loc: Any, draft: bool) -> list[str]:
+    if not isinstance(loc, dict) or set(loc) != {"level", "spawns"}:
+        return ["location must be {level, spawns}"]
+    errs = [] if _str(loc["level"]) else ["location.level must be the level name"]
+    spawns = loc["spawns"]
+    if not isinstance(spawns, dict) or set(spawns) != set(SIDES):
+        return [*errs, "location.spawns must give A and B a point"]
+    if draft and spawns["A"] is None and spawns["B"] is None:
+        return errs  # a draft's spawns, TODO until a live height read
+    for side in SIDES:
+        p = spawns[side]
+        if not (isinstance(p, list) and len(p) == 3 and all(_num(x) for x in p)):
+            errs.append(f"location.spawns.{side} must be [x, y, z] in metres")
+    if not errs and spawns["A"] == spawns["B"]:
+        errs.append("location.spawns: A and B start on the same point")
+    return errs
+
+
+def _line(spot: Sequence[float], n: int) -> list[tuple[float, float, float]]:
+    return [(spot[0] + (i - (n - 1) / 2) * LINE_GAP_M, spot[1], spot[2]) for i in range(n)]
+
+
+def check_geometry(spawns: Mapping[str, Sequence[float]], n: int) -> list[str]:
+    """What puts one team on other terms than the other for n members a side (the mod's F2 rule); [] = fair."""
+    a, b = spawns["A"], spawns["B"]
+    if (dy := abs(a[1] - b[1])) >= SPAWN_DY_MAX_M:
+        return [f"location.spawns A and B are {dy:.2f} m apart in height (y); they must be under {SPAWN_DY_MAX_M} m"]
+    la, lb = _line(a, n), _line(b, n)
+    for i in range(n):
+        for j in range(n):
+            ab, ba = math.dist(la[i], lb[j]), math.dist(lb[i], la[j])
+            if abs(ab - ba) > PAIR_DIST_TOL_M:
+                why = (
+                    f"location.spawns: A's member {i + 1} is {ab:.2f} m from B's member {j + 1}, B's member {i + 1} "
+                    f"{ba:.2f} m from A's member {j + 1}; they must be the same within {PAIR_DIST_TOL_M} m"
+                )
+                return [why]
+    return []
+
+
+def _check_teams(teams: Any) -> list[str]:
+    if not isinstance(teams, dict) or set(teams) != set(SIDES):
+        return ["teams must list side A's and side B's characters"]
+    errs, seen, uuids = [], set(), set()
+    for side in SIDES:
+        team = teams[side]
+        if not isinstance(team, list) or not 1 <= len(team) <= TEAM_MAX:
+            errs.append(f"teams.{side} must list 1 to {TEAM_MAX} characters")
+            continue
+        for m in team:
+            if not isinstance(m, dict) or not _str(m.get("name")) or set(m) - {"name", "template", "uuid"}:
+                errs.append(f"teams.{side}: a character is {{name, template?, uuid?}}: {m!r}")
+                continue
+            if "template" in m and not _str(m["template"]):
+                errs.append(f"teams.{side}: {m['name']}'s template must be a template id")
+            if "uuid" in m:
+                if not (isinstance(m["uuid"], str) and UUID_RE.match(m["uuid"])):
+                    errs.append(f"teams.{side}: {m['name']}'s uuid must be a lowercase uuid")
+                elif m["uuid"] in uuids:
+                    errs.append(f"teams: uuid {m['uuid']} is listed twice")
+                uuids.add(m.get("uuid"))
+            if m["name"] in seen:
+                errs.append(f"teams: {m['name']} is listed twice")
+            seen.add(m["name"])
+    return errs
+
+
+def _check_mirror(mirror: Any, teams: Any) -> list[str]:
+    """A mirror arena's pairs, and its teams as names only, pair i's at index i."""
+    if not isinstance(mirror, dict) or set(mirror) != {"pairs"}:
+        return ["mirror must be {pairs}"]
+    pairs = mirror["pairs"]
+    if not isinstance(pairs, list) or not 1 <= len(pairs) <= TEAM_MAX:
+        return [f"mirror.pairs must list 1 to {TEAM_MAX} pairs"]
+    errs: list[str] = []
+    for i, p in enumerate(pairs):
+        if not isinstance(p, dict) or not PAIR_KEYS <= set(p) <= PAIR_KEYS | PAIR_OPTIONAL:
+            errs.append(f"mirror.pairs[{i}] must be {{{', '.join(sorted(PAIR_KEYS))}, build?}}")
+            continue
+        if "build" in p and not _str(p["build"]):
+            errs.append(f"mirror.pairs[{i}].build must name a build")
+        errs += [f"mirror.pairs[{i}].{k} must be a non-empty string" for k in ("class", "template", "race", "stats")
+                 if not _str(p[k])]  # fmt: skip
+        names = p["names"]
+        if not isinstance(names, dict) or set(names) != set(SIDES) or not all(_str(names[s]) for s in SIDES):
+            errs.append(f"mirror.pairs[{i}].names must name the A and the B twin")
+        if not isinstance(p["kit"], dict):
+            errs.append(f"mirror.pairs[{i}].kit must be an object")
+        elif (kr := r.get("race") if isinstance(r := p["kit"].get("race"), dict) else None) != p["race"]:
+            errs.append(f"mirror.pairs[{i}].kit's race part is for race {kr}, the pair's race is {p['race']}")
+    if errs or not isinstance(teams, dict):
+        return errs
+    for s in SIDES:
+        team = teams.get(s)
+        rows: list[Any] = team if isinstance(team, list) else []
+        want = [p["names"][s] for p in pairs]
+        got = [m.get("name") if isinstance(m, dict) else m for m in rows]
+        if got != want:
+            errs.append(f"teams.{s} must name the mirror's pairs in order: {want}, not {got}")
+        elif any(set(m) != {"name"} for m in rows):
+            errs.append(f"teams.{s}: a mirror arena's characters are names only (arena.setup makes them)")
+    return errs
+
+
+# An arena's name: a scenario-style slug, optionally with one .N version (arena-v0.1: arena-v0 with the race identity
+# fields, while arena-v0.json stays as its released seat run played it)
+ARENA_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}(?:\.[0-9]+)?$")
+
+
+def validate(a: Any, name: str) -> list[str]:
+    """What is wrong with an arena file named `name` (its file stem); [] = valid."""
+    if not isinstance(a, dict):
+        return ["an arena file is a JSON object"]
+    errs = []
+    if a.get("schema") != SCHEMA:
+        errs.append(f"schema must be {SCHEMA!r}")
+    if unknown := sorted(set(a) - KEYS):
+        errs.append(f"unknown keys: {', '.join(unknown)}")
+    if a.get("name") != name or not ARENA_NAME_RE.match(name):
+        errs.append(f"name must be the file's name {name!r} (a lowercase slug, optionally with a .N version)")
+    for k in ("title", "about"):
+        if not _str(a.get(k)):
+            errs.append(f"{k} must be a non-empty string")
+    if "draft" in a and not _str(a["draft"]):
+        errs.append("draft must say why the arena can't be played yet")
+    errs += _check_save(a.get("save"), "draft" in a)
+    errs += (loc_errs := _check_location(a.get("location"), "draft" in a))
+    errs += (team_errs := _check_teams(a.get("teams")))
+    if "mirror" in a:
+        errs += _check_mirror(a["mirror"], a.get("teams"))
+    if not (loc_errs or team_errs or "draft" in a):  # a draft's spots are placeholders
+        pairs = a.get("mirror", {}).get("pairs") if isinstance(a.get("mirror"), dict) else None
+        n = len(pairs) if isinstance(pairs, list) and pairs else len(a["teams"]["A"])
+        errs += check_geometry(a["location"]["spawns"], n)
+    level = a.get("level", LEVEL)
+    if not _int(level) or not 1 <= level <= LEVEL_MAX:
+        errs.append(f"level must be an integer 1..{LEVEL_MAX}")
+    seed = a.get("seed")
+    if not _int(seed) or not 0 <= seed <= scenario.SEED_MAX:
+        errs.append(f"seed must be an integer 0..{scenario.SEED_MAX}")
+    rc = a.get("round_cap", ROUND_CAP)
+    if not _int(rc) or rc < 1:
+        errs.append("round_cap must be an integer >= 1")
+    wc = a.get("wall_cap_min", WALL_CAP_MIN)
+    if not _num(wc) or wc <= 0:
+        errs.append("wall_cap_min must be a number of minutes > 0")
+    tc = a.get("turn_cap_s")
+    if not _num(tc) or tc <= 0:
+        errs.append("turn_cap_s must be the model seconds a turn may take (> 0)")
+    if a.get("turn_order", TURN_ORDER) not in TURN_ORDERS:
+        errs.append(f"turn_order must be one of {', '.join(TURN_ORDERS)}")
+    if a.get("karmic") is not False:
+        errs.append("karmic must be false: Karmic Dice are off in every arena")
+    try:
+        if conditions.parse(a.get("condition", "rules")).reloads:
+            errs.append("condition: a match has no reloads")
+    except (ValueError, AttributeError) as e:
+        errs.append(f"condition: {e}")
+    if a.get("tools_off") not in TOOLS_OFF_LISTS:
+        errs.append(f"tools_off must name one of the bridge's arena lists: {', '.join(TOOLS_OFF_LISTS)}")
+    return errs
+
+
+def with_defaults(a: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "level": LEVEL,
+        "round_cap": ROUND_CAP,
+        "wall_cap_min": WALL_CAP_MIN,
+        "condition": "rules",
+        "turn_order": TURN_ORDER,
+        **a,
+    }
+
+
+def load(path: str | Path) -> dict[str, Any]:
+    """An arena file, validated, with its defaults filled in; ArenaError names the file and every problem."""
+    path = Path(path)
+    try:
+        a = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise ArenaError(f"{path}: {e}") from None
+    if errs := validate(a, path.stem):
+        raise ArenaError(f"{path}: " + "; ".join(errs))
+    return with_defaults(a)
+
+
+def load_named(name: str, root: Path = ARENA_DIR) -> dict[str, Any]:
+    return load(root / f"{name}.json")
+
+
+def team_names(arena: Mapping[str, Any]) -> dict[str, list[str]]:
+    return {side: [m["name"] for m in arena["teams"][side]] for side in SIDES}
+
+
+# ---------------------------------------------------------------------------------------------------- the grader
+
+
+def _events(records: Iterable[dict], ev: str) -> list[dict]:
+    return [r for r in records if r.get("kind") == "event" and r.get("ev") == ev]
+
+
+def _other(side: Any) -> str | None:
+    return {"A": "B", "B": "A"}.get(side)
+
+
+def _forced_turn(turns: list[dict], r: Mapping[str, Any]) -> dict | None:
+    """The turn arena_turn_forced `r` ended: that character's latest turn, which an event naming a side and character
+    can only mean. None when it has none, it was forced already, or a later phase began too long before `r` for the
+    cap's ends to have been settling then (CAP_END_S a member)."""
+    named = (r.get("side"), r.get("character"))
+    i = next((i for i in reversed(range(len(turns))) if (turns[i]["side"], turns[i]["character"]) == named), None)
+    if i is None or turns[i]["forced"]:
+        return None
+    members = turns[i]["members"]
+    limit = CAP_END_S * (len(members) if isinstance(members, list) else 1)
+    return None if i + 1 < len(turns) and r["t"] - turns[i + 1]["t"] > limit else turns[i]
+
+
+def _turns(records: list[dict], end_t: float) -> list[dict] | None:
+    """The turns up to the end, in order, each {side, character, members, forced, t}; None when an arena_turn_forced
+    fits no turn (_forced_turn). The runner writes it once the cap's ends went through, so a later phase may have
+    opened before it (bg3harness.arena.match.Referee.forced)."""
+    turns: list[dict] = []
+    for r in records:
+        if r["t"] > end_t or r.get("kind") != "event":
+            continue
+        if r.get("ev") == "arena_turn":
+            turns.append(
+                {
+                    "side": r.get("side"),
+                    "character": r.get("character"),
+                    "members": r.get("members"),
+                    "forced": False,
+                    "t": r["t"],
+                }
+            )
+        elif r.get("ev") == "arena_turn_forced":
+            turn = _forced_turn(turns, r)
+            if turn is None:
+                return None
+            turn["forced"] = True
+    return turns
+
+
+def r1_pattern(records: Iterable[dict]) -> str | None:
+    """The first round's phases in order, each its side and how many characters it moves: "A1|B2|A1" (fairness audit
+    2026-11-03: under seed 1 side B acted with both twins before A's second, and B won both pilot matches). From the
+    arena_turn records of the lowest round any has; None without one."""
+    turns = [r for r in _events(records, "arena_turn") if isinstance(r.get("round"), int)]
+    if not turns:
+        return None
+    first = min(r["round"] for r in turns)
+    return "|".join(f"{r.get('side')}{len(r.get('members') or [r.get('character')])}" for r in turns
+                    if r["round"] == first)  # fmt: skip
+
+
+def _phases(pattern: str | None) -> list[tuple[str, int]]:
+    return [(x[:1], int(x[1:])) for x in (pattern or "").split("|") if x[:1] in SIDES and x[1:].isdigit()]
+
+
+def favoured(pattern: str | None) -> dict | None:
+    """{side, why "pair"}: the side the round-1 pattern gives a phase of two or more characters, when only one side has
+    one; None otherwise (no pattern, no pair, both sides paired). Read from the order alone, before any result
+    (REVIEW-7 a: the rule is fixed, not fitted to who won). The first actor is first_actor's."""
+    paired = {side for side, n in _phases(pattern) if n >= 2}
+    return {"side": paired.pop(), "why": "pair"} if len(paired) == 1 else None
+
+
+def first_actor(pattern: str | None) -> str | None:
+    """The side of round 1's first phase, None without a pattern."""
+    phases = _phases(pattern)
+    return phases[0][0] if phases else None
+
+
+def round_first(records: Iterable[dict]) -> list[dict]:
+    """Each round's first phase in round order, {round, first (its side), how}: the mod's arena_round records (how
+    "turn" or "passed", the seat audit for a rule that sets who moves first); a match without any (recorded before
+    them) from each round's first arena_turn, how None."""
+    records = list(records)
+    rounds = {r["round"]: r for r in _events(records, "arena_round") if isinstance(r.get("round"), int)}
+    if rounds:
+        return [{"round": k, "first": rounds[k].get("first"), "how": rounds[k].get("how")} for k in sorted(rounds)]
+    out: dict[int, dict] = {}
+    for r in _events(records, "arena_turn"):
+        if isinstance(r.get("round"), int) and r["round"] not in out:
+            out[r["round"]] = {"round": r["round"], "first": r.get("side"), "how": None}
+    return [out[k] for k in sorted(out)]
+
+
+def _forced_out(turns: list[dict]) -> str | None:
+    """The first side whose own turns were forced to an end FORFEIT_TURNS times in a row, None if neither."""
+    streak = dict.fromkeys(SIDES, 0)
+    for turn in turns:
+        streak[turn["side"]] = streak[turn["side"]] + 1 if turn["forced"] else 0
+        if streak[turn["side"]] >= FORFEIT_TURNS:
+            return turn["side"]
+    return None
+
+
+def _end_problem(end: dict, ends: int, arena: Mapping[str, Any], forced_out: str | None) -> str | None:
+    if (
+        ends > 1
+        or end.get("reason") not in END_REASONS
+        or end.get("winner", "-") not in (*SIDES, None)
+        or not _int(end.get("rounds"))
+        or not all(_num(end.get(f"hp_left_{s}")) and 0 <= end[f"hp_left_{s}"] <= 1 for s in SIDES)
+    ):
+        return "inconsistent_end"
+    if end["rounds"] > arena["round_cap"]:
+        return "past_round_cap"
+    reason, winner = end["reason"], end["winner"]
+    if reason == "forfeit":
+        side, cause = end.get("forfeit"), end.get("cause")
+        if side not in SIDES or cause not in FORFEIT_CAUSES or winner != _other(side):
+            return "inconsistent_end"
+        if cause == "forced_turns" and forced_out != side:
+            return "inconsistent_end"
+        return None if forced_out in (None, side) else "inconsistent_end"
+    if forced_out is not None:  # the match went on past a forfeit
+        return "inconsistent_end"
+    if reason == "wipe":
+        loser = _other(winner)
+        return None if loser is not None and end[f"hp_left_{loser}"] == 0 else "inconsistent_end"
+    return None if winner is None else "inconsistent_end"  # a cap: a draw
+
+
+def _facts_problem(records: list[dict], arena: Mapping[str, Any]) -> str | None:
+    """The first INVALID reason the facts give, None when they are a whole, consistent match of this arena."""
+    starts = _events(records, "arena_start")
+    if not starts:
+        return "no_start"
+    st = starts[0]
+    teams = {s: list((st.get("teams") or {}).get(s) or []) for s in SIDES}
+    sides = st.get("sides") or {}
+    if (
+        len(starts) > 1
+        or st.get("arena") != arena["name"]
+        or teams != team_names(arena)
+        or not all(_str(sides.get(s)) for s in SIDES)
+    ):
+        return "wrong_arena"
+    if any(str(sides[s]).split("/")[0] == SCRIPTED for s in SIDES):
+        return "scripted"
+    if st.get("seed") != arena["seed"]:
+        return "unseeded"
+    ends = _events(records, "arena_end")
+    turns = _turns(records, ends[0]["t"] if ends else math.inf)
+    if turns is None:
+        return "inconsistent_turns"
+    if any(
+        turn["side"] not in SIDES
+        or not isinstance(turn["members"], list)
+        or any(n in teams[_other(turn["side"]) or ""] for n in [turn["character"], *turn["members"]])
+        for turn in turns
+    ):
+        return "off_side_turn"
+    if not ends:
+        return "no_end"
+    if ends[0].get("reason") in FAULT_REASONS:
+        return None  # the harness's own end or the game's failure: graded as such
+    return _end_problem(ends[0], len(ends), arena, _forced_out(turns))
+
+
+def _counted(roll: Mapping[str, Any]) -> bool:
+    """A roll whose d20 face is uniform: seen, without advantage or disadvantage (bg3bench.luck's rule)."""
+    return roll.get("natural") is not None and not roll.get("advantage") and not roll.get("disadvantage")
+
+
+def luck(rolls: Iterable[Mapping[str, Any]], uuids: Mapping[str, Sequence[str]]) -> dict:
+    """{A: {n, z}, B: {n, z}, other}: each side's stats.luck_z over the counted d20 faces its own characters rolled
+    (a row's `roller` in that side's uuids); other = counted rows that neither side rolled."""
+    faces: dict[str, list[int]] = {s: [] for s in SIDES}
+    other = 0
+    for r in rolls:
+        if not _counted(r):
+            continue
+        side = next((s for s in SIDES if r.get("roller") in uuids.get(s, ())), None)
+        if side is None:
+            other += 1
+        else:
+            faces[side].append(r["natural"])
+    return {**{s: {"n": len(f), "z": round(stats.luck_z(f), 4)} for s, f in faces.items()}, "other": other}
+
+
+def grade(
+    records: Iterable[dict],
+    arena: Mapping[str, Any],
+    record: Mapping[str, Any] | None = None,
+    rolls: Iterable[Mapping[str, Any]] | None = None,
+) -> dict:
+    """One match from its facts records (facts.check'd), its run record when given (results.validity with the
+    arena's seed) and its rolls.jsonl rows when given: {arena, seed (the arena's: the queue grades each repeat on its
+    own), valid, invalid_reason, sides {A, B: player}, result
+    (A, B, draw; None when invalid), reason, forfeit {side, cause} or None, fault {side, cause} (a client_fault end:
+    the side whose client failed) or None, over_budget (an over_budget end: the sides over their cap, both for an end
+    from before `capped`) or None, rounds, hp_left {A, B}, turns {A, B}, forced {A, B}, r1_pattern (round 1's
+    phases: r1_pattern), first_actor and favoured (of r1_pattern), round_first (round_first), luck (None without rolls or arena_start uuids)}."""
+    records = list(records)
+    valid, why = validity(dict(record), arena["seed"]) if record is not None else (True, None)
+    if valid:
+        why = _facts_problem(records, arena)
+    starts, ends = _events(records, "arena_start"), _events(records, "arena_end")
+    start, end = starts[0] if starts else {}, ends[0] if ends else {}
+    if why is None and end.get("reason") in FAULT_REASONS:
+        why = end["reason"]
+    turns = _turns(records, end.get("t", math.inf)) or []
+    ok = why is None
+    uuids = start.get("uuids")
+    return {
+        "arena": arena["name"],
+        "seed": arena["seed"],
+        "valid": ok,
+        "invalid_reason": why,
+        "sides": {s: (start.get("sides") or {}).get(s) for s in SIDES},
+        "result": (end["winner"] or "draw") if ok else None,
+        "reason": end.get("reason"),
+        "forfeit": {"side": end["forfeit"], "cause": end["cause"]} if ok and end["reason"] == "forfeit" else None,
+        "fault": {"side": end.get("failed"), "cause": end.get("cause")}
+        if end.get("reason") == "client_fault"
+        else None,
+        "over_budget": end.get("capped", list(SIDES)) if end.get("reason") == "over_budget" else None,
+        "rounds": end.get("rounds"),
+        "hp_left": {s: end.get(f"hp_left_{s}") for s in SIDES},
+        "turns": {s: sum(1 for turn in turns if turn["side"] == s) for s in SIDES},
+        "forced": {s: sum(1 for turn in turns if turn["side"] == s and turn["forced"]) for s in SIDES},
+        "r1_pattern": r1_pattern(records),
+        "first_actor": first_actor(r1_pattern(records)),
+        "favoured": favoured(r1_pattern(records)),
+        "round_first": round_first(records),
+        "luck": luck(rolls, uuids) if rolls is not None and isinstance(uuids, dict) else None,
+    }
+
+
+# ---------------------------------------------------------------------------------------------------- the ratings
+
+
+def _points(m: Mapping[str, Any], side: str) -> float:
+    """A side's points in a valid match: 1 for a win, 0.5 for a draw."""
+    return 1.0 if m["result"] == side else 0.5 if m["result"] == "draw" else 0.0
+
+
+def _score(m: Mapping[str, Any]) -> dict[str, float]:
+    """{player: points} of a valid match between two players."""
+    return {m["sides"][s]: _points(m, s) for s in SIDES}
+
+
+def pairings(matches: Iterable[Mapping[str, Any]]) -> tuple[dict[str, list[dict]], dict[str, int]]:
+    """(complete, counts): complete = pairing id -> its two valid matches (the sides swapped); counts = matches,
+    invalid, self (a player against itself), incomplete (pairings short of a valid match). A pairing with two valid
+    matches that don't swap the same two players, or that were played on two seeds, raises."""
+    by: dict[str, list[dict]] = {}
+    counts = {"matches": 0, "invalid": 0, "self": 0, "incomplete": 0}
+    for m in matches:
+        counts["matches"] += 1
+        if not m["valid"]:
+            counts["invalid"] += 1
+        elif m["sides"]["A"] == m["sides"]["B"]:
+            counts["self"] += 1
+        else:
+            by.setdefault(m["pairing"], []).append(dict(m))
+    complete = {}
+    for pid, ms in sorted(by.items()):
+        if len(ms) == 1:
+            counts["incomplete"] += 1
+            continue
+        a, b = ms[0]["sides"], ms[-1]["sides"]
+        if len(ms) != 2 or a["A"] != b["B"] or a["B"] != b["A"] or ms[0]["arena"] != ms[1]["arena"]:
+            raise ArenaError(f"pairing {pid}: its valid matches are not one arena with the sides swapped")
+        if ms[0].get("seed") != ms[1].get("seed"):  # audit S1-4: one seed per pairing (same opening dice per seat)
+            raise ArenaError(
+                f"pairing {pid}: its valid matches were played on two seeds ({ms[0].get('seed')}, {ms[1].get('seed')})"
+            )
+        complete[pid] = ms
+    return complete, counts
+
+
+def bradley_terry_seat(
+    games: Sequence[tuple[str, str, float] | tuple[str, str, float, int]],
+    tol: float = 1e-10,
+    max_iter: int = 10000,
+    prior: float = 1.0,
+) -> tuple[dict, float]:
+    """({player: log strength}, log seat factor) from (i, j, i's points[, f]) games by Hunter's MM iteration. f: 1 when
+    i had the favoured side, -1 when j had it, 0 or absent when neither; the favoured player's strength counts times
+    the seat factor in that game. Each player has `prior` virtual draws against a reference player of strength 1, and
+    the seat factor `prior` virtual draws of its own (so every value is finite and the scale is fixed). A game of a
+    player against itself (i == j) is seat evidence only: the two strengths cancel, so it moves the seat factor and no
+    player's strength, and a player seen only there gets none. Without any f the strengths are the plain fit and the
+    factor is 1."""
+    players = sorted({g[k] for g in games if g[0] != g[1] for k in (0, 1)})
+    wins = {p: prior / 2 for p in players}  # the virtual draws' half points
+    seat_pts = prior / 2  # the seat's virtual draws
+    rows = []
+    for g in games:
+        i, j, s = g[0], g[1], g[2]
+        f = g[3] if len(g) > 3 else 0
+        if i != j:
+            wins[i] += s
+            wins[j] += 1.0 - s
+        elif not f:
+            continue
+        if f:
+            seat_pts += s if f > 0 else 1.0 - s
+        rows.append((i, j, f))
+    mine = {k: [r for r in rows if k in r[:2] and r[0] != r[1]] for k in players}
+    p, gamma = dict.fromkeys(players, 1.0), 1.0
+    for _ in range(max_iter):
+        new = {}
+        for k in players:
+            den = prior / (p[k] + 1.0)  # the virtual games
+            for i, j, f in mine[k]:
+                ci, cj = (gamma if f > 0 else 1.0), (gamma if f < 0 else 1.0)
+                den += (ci if k == i else cj) / (ci * p[i] + cj * p[j])
+            new[k] = wins[k] / den
+        den = prior / (gamma + 1.0)
+        for i, j, f in rows:
+            if i == j:
+                den += 1.0 / (gamma + 1.0)
+            elif f:
+                fav, oth = (new[i], new[j]) if f > 0 else (new[j], new[i])
+                den += fav / (gamma * fav + oth)
+        g_new = seat_pts / den
+        done = all(abs(new[k] - p[k]) <= tol * p[k] for k in players) and abs(g_new - gamma) <= tol * gamma
+        p, gamma = new, g_new
+        if done:
+            break
+    return {k: math.log(v) for k, v in p.items()}, math.log(gamma)
+
+
+def bradley_terry(
+    games: Sequence[tuple[str, str, float] | tuple[str, str, float, int]], tol: float = 1e-10, max_iter: int = 10000
+) -> dict:
+    """{player: log strength}: bradley_terry_seat's strengths."""
+    return bradley_terry_seat(games, tol, max_iter)[0]
+
+
+def _elo(theta: Mapping[str, float]) -> dict[str, float]:
+    mean = sum(theta.values()) / len(theta)
+    return {k: ELO_BASE + ELO_SCALE * (v - mean) / math.log(10) for k, v in theta.items()}
+
+
+def _seat_flag(m: Mapping[str, Any]) -> int:
+    """1 when side A held the seat (from the match's r1_pattern: the pair side, else the first actor), -1 when side
+    B, 0 without a pattern."""
+    fav = favoured(m.get("r1_pattern"))
+    seat = fav["side"] if fav else first_actor(m.get("r1_pattern"))
+    return 0 if seat is None else 1 if seat == "A" else -1
+
+
+def _games(pairs: Iterable[Sequence[Mapping[str, Any]]]) -> list[tuple[str, str, float, int]]:
+    return [(m["sides"]["A"], m["sides"]["B"], _points(m, "A"), _seat_flag(m)) for ms in pairs for m in ms]
+
+
+def _distinct(matches: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """Valid matches with each self-pair pairing's later valid matches left out: a model against itself with the same
+    seed and mirror twins replays the first match (fight analysis seed-5 m1/m2: the same naturals in the same order),
+    so it is one sample, not two (REVIEW-7 f2)."""
+    out, seen = [], set()
+    for m in matches:
+        if not m["valid"]:
+            continue
+        if m["sides"]["A"] == m["sides"]["B"]:
+            if m["pairing"] in seen:
+                continue
+            seen.add(m["pairing"])
+        out.append(m)
+    return out
+
+
+def _rate(ms: Sequence[tuple[str, Mapping[str, Any]]], rng: random.Random, b: int, alpha: float) -> dict:
+    """{n_matches, n_pairings, rate, ci}: the named side's win rate (a draw = half) over (side, match) pairs, its
+    interval from a bootstrap over the matches' pairings: a pairing's two matches share the seed's initiative and its
+    dice per seat (docs/ARENA-RESULTS.md, "Dice"), so the pairing is the sample, not the match."""
+    by: dict[str, list[float]] = {}
+    for side, m in ms:
+        by.setdefault(m["pairing"], []).append(_points(m, side))
+    ids = sorted(by)
+    n = sum(len(v) for v in by.values())
+    rate = sum(sum(v) for v in by.values()) / n if n else None
+    draws = []
+    for _ in range(b if ids else 0):
+        picked = [by[i] for i in rng.choices(ids, k=len(ids))]
+        draws.append(sum(sum(v) for v in picked) / sum(len(v) for v in picked))
+    return {"n_matches": n, "n_pairings": len(ids), "rate": rate, "ci": _ci(draws, alpha)}
+
+
+def _favoured(matches: list[Mapping[str, Any]], rng: random.Random, b: int, alpha: float) -> dict:
+    """The pair side's win rate over matches whose round 1 gives one side alone a pair."""
+    return _rate([(fav["side"], m) for m in matches if (fav := favoured(m.get("r1_pattern")))], rng, b, alpha)
+
+
+def _first_actor(matches: list[Mapping[str, Any]], rng: random.Random, b: int, alpha: float) -> dict:
+    """Round 1's first actor's win rate over matches with a pattern."""
+    return _rate([(side, m) for m in matches if (side := first_actor(m.get("r1_pattern")))], rng, b, alpha)
+
+
+def _seat_p(log_gamma: float) -> float:
+    """The favoured side's win probability between two equal models under seat factor exp(log_gamma)."""
+    return 1.0 / (1.0 + math.exp(-log_gamma))
+
+
+def _ci(draws: list[float], alpha: float) -> list[float] | None:
+    return [stats.quantile(draws, alpha / 2), stats.quantile(draws, 1 - alpha / 2)] if draws else None
+
+
+def _side_a(matches: list[Mapping[str, Any]], rng: random.Random, b: int, alpha: float) -> dict:
+    """Side A's win rate over valid matches, its interval from a bootstrap over their pairings."""
+    return _rate([("A", m) for m in matches], rng, b, alpha)
+
+
+def _by_pattern(matches: list[Mapping[str, Any]], rng: random.Random, b: int, alpha: float) -> dict[str, dict]:
+    """Per round-1 phase pattern ("none" without one): n_matches, n_pairings, side A's and the first actor's win rate
+    (a draw = half), each {rate, ci} (bootstrap over pairings); first_actor None under "none"."""
+    by: dict[str, list[Mapping[str, Any]]] = {}
+    for m in matches:
+        by.setdefault(m.get("r1_pattern") or "none", []).append(m)
+    out = {}
+    for k, ms in sorted(by.items()):
+        first = first_actor(k if k != "none" else None)
+        a = _rate([("A", m) for m in ms], rng, b, alpha)
+        f = _rate([(first, m) for m in ms], rng, b, alpha) if first else None
+        out[k] = {
+            "n_matches": len(ms),
+            "n_pairings": a["n_pairings"],
+            "side_a": {"rate": a["rate"], "ci": a["ci"]},
+            "first_actor": {"rate": f["rate"], "ci": f["ci"]} if f else None,
+        }
+    return out
+
+
+def sign_test(won: int, lost: int) -> float:
+    """The exact two-sided sign test's p-value for won vs lost pairings (split pairings left out): the chance under
+    equal models of a split at least this lopsided; 1.0 with none."""
+    n = won + lost
+    return min(1.0, 2 * sum(math.comb(n, i) for i in range(min(won, lost) + 1)) / 2**n) if n else 1.0
+
+
+def _pair_rows(complete: dict[str, list[dict]], min_pairings: int) -> dict[tuple[str, str], dict]:
+    rows: dict[tuple[str, str], dict] = {}
+    for ms in complete.values():
+        x, y = sorted(_score(ms[0]))
+        row = rows.setdefault(
+            (x, y),
+            {"won": 0, "split": 0, "lost": 0, "pentanomial": dict.fromkeys(PENTANOMIAL, 0), "w": 0, "d": 0, "l": 0,
+             "draws": dict.fromkeys(CAP_REASONS, 0), "ids": []},
+        )  # fmt: skip
+        pts = sum(_score(m)[x] for m in ms)
+        row["won" if pts > 1 else "split" if pts == 1 else "lost"] += 1
+        row["pentanomial"][f"{pts:g}"] += 1
+        row["ids"].append(ms[0]["pairing"])
+        for m in ms:
+            s = _score(m)[x]
+            row["w" if s == 1.0 else "d" if s == 0.5 else "l"] += 1
+            if s == 0.5 and m.get("reason") in CAP_REASONS:
+                row["draws"][m["reason"]] += 1
+    for row in rows.values():
+        n = row["w"] + row["d"] + row["l"]
+        k = row["w"] + row["d"] / 2
+        row.update(n_matches=n, n_pairings=len(row["ids"]), win_rate=k / n)
+        row["sign_p"] = sign_test(row["won"], row["lost"])
+        row["rated"] = row["n_pairings"] >= min_pairings
+        row["provisional"] = row["rated"] and row["n_pairings"] < PROVISIONAL_PAIRINGS
+    return rows
+
+
+def _ranks(elo: Mapping[str, float]) -> dict[str, int]:
+    """{player: rank}: 1 for the highest Elo."""
+    return {p: k + 1 for k, p in enumerate(sorted(elo, key=lambda q: -elo[q]))}
+
+
+def _rank_ci(ranks: list[int], alpha: float) -> list[int] | None:
+    """The alpha/2 and 1 - alpha/2 quantiles of a model's bootstrap ranks, rounded outward to whole ranks."""
+    ci = _ci([float(r) for r in ranks], alpha)
+    return [math.floor(ci[0]), math.ceil(ci[1])] if ci else None
+
+
+def results(
+    matches: Iterable[Mapping[str, Any]],
+    seed: int,
+    b: int = 2000,
+    alpha: float = 0.05,
+    min_pairings: int = MIN_PAIRINGS,
+    attempts: Iterable[Mapping[str, Any]] | None = None,
+) -> dict:
+    """Matches (grade's dicts, each with its `pairing` id) -> {seed, b, alpha, min_pairings, counts, pairs, side_a,
+    by_pattern, first_actor, favoured, seat, failures, models}: the v1 table (module docstring). attempts: every graded attempt (a rerun match's invalid ones
+    too) for `failures`; without it, `matches`. The bootstraps (side A's rate, then the ratings, then the
+    pairs', patterns', first actor's and favoured side's rates) draw from one random.Random(seed)."""
+    matches = list(matches)
+    complete, counts = pairings(matches)
+    rng = random.Random(seed)
+    distinct = _distinct(matches)
+    side_a = _side_a(distinct, rng, b, alpha)
+    rows = _pair_rows(complete, min_pairings)
+    per: dict[str, dict[str, Any]] = {}
+    for pid, ms in complete.items():
+        for m in ms:
+            for p, s in _score(m).items():
+                row = per.setdefault(p, {"n_matches": 0, "pairings": set(), "points": 0.0, "w": 0, "d": 0, "l": 0})
+                row["n_matches"] += 1
+                row["pairings"].add(pid)
+                row["points"] += s
+                row["w" if s == 1.0 else "d" if s == 0.5 else "l"] += 1
+    rated = sorted(pid for row in rows.values() if row["rated"] for pid in row["ids"])
+    rated_games = _games(complete[i] for i in rated)
+    # pre-registered (docs/ARENA-RESULTS.md): each self-pairing's first valid match with a pattern is seat evidence
+    self_games = [g for g in _games([m] for m in distinct if m["sides"]["A"] == m["sides"]["B"]) if g[3]]
+    theta, lg = bradley_terry_seat(rated_games + self_games) if rated else ({}, 0.0)
+    elo = _elo(theta) if theta else {}
+    draws: dict[str, list[float]] = {p: [] for p in theta}
+    rank_draws: dict[str, list[int]] = {p: [] for p in theta}
+    seat_draws: list[float] = []
+    for _ in range(b if rated else 0):
+        picked = _games(complete[i] for i in rng.choices(rated, k=len(rated)))
+        picked += rng.choices(self_games, k=len(self_games)) if self_games else []
+        boot_theta, boot_lg = bradley_terry_seat(picked)
+        boot_elo = _elo(boot_theta)
+        for p, e in boot_elo.items():  # a model whose every pairing missed this draw has no rating in it
+            draws[p].append(e)
+        for p, k in _ranks(boot_elo).items():
+            rank_draws[p].append(k)
+        seat_draws.append(_seat_p(boot_lg))
+    for (x, _), row in sorted(rows.items()):  # the rate intervals draw after the ratings, which keep their numbers
+        ms = [("A" if m["sides"]["A"] == x else "B", m) for i in row["ids"] for m in complete[i]]
+        row["ci"] = _rate(ms, rng, b, alpha)["ci"]
+    ranks = _ranks(elo)
+    refits = [_elo(bradley_terry_seat(rated_games + self_games, prior=q)[0]) for q in PRIORS] if rated else []
+    shift = {p: max(abs(e[p] - elo[p]) for e in refits) for p in theta}
+    rated_n = {p: sum(1 for i in rated if p in _score(complete[i][0])) for p in theta}
+    models = [
+        {
+            "player": p,
+            "n_matches": row["n_matches"],
+            "n_pairings": len(row["pairings"]),
+            "points": row["points"],
+            "w": row["w"],
+            "d": row["d"],
+            "l": row["l"],
+            "rated": p in theta,
+            "bt": theta.get(p),
+            "elo": elo.get(p),
+            "elo_ci": (ci := _ci(draws[p], alpha) if p in theta else None),
+            "provisional": p in theta and rated_n[p] < PROVISIONAL_PAIRINGS,
+            "rank": ranks.get(p),
+            "rank_ci": _rank_ci(rank_draws[p], alpha) if p in theta else None,
+            "prior_shift": shift.get(p),
+            "prior_flag": bool(ci and shift[p] > (ci[1] - ci[0]) / 2),  # moves more than half its interval
+        }
+        for p, row in per.items()
+    ]
+    models.sort(key=lambda r: (not r["rated"], -(r["elo"] or 0.0), -r["points"] / r["n_matches"], r["player"]))
+    return {
+        "seed": seed,
+        "b": b,
+        "alpha": alpha,
+        "min_pairings": min_pairings,
+        "counts": {**counts, "pairings": len(complete)},
+        "pairs": [
+            {"a": x, "b": y, **{k: v for k, v in row.items() if k != "ids"}} for (x, y), row in sorted(rows.items())
+        ],
+        "side_a": side_a,
+        "by_pattern": _by_pattern(distinct, rng, b, alpha),
+        "first_actor": _first_actor(distinct, rng, b, alpha),
+        "favoured": _favoured(distinct, rng, b, alpha),
+        "seat": {
+            "log_factor": lg,
+            "p_favoured": _seat_p(lg),
+            "ci": _ci(seat_draws, alpha),
+            "n_games": sum(1 for g in rated_games if g[3]) + len(self_games),
+            "n_self_games": len(self_games),
+        }
+        if rated
+        else None,
+        "prior": {"priors": list(PRIORS), "max_shift": max(shift.values())} if rated else None,
+        "failures": failures(matches if attempts is None else attempts),
+        "models": models,
+    }
+
+
+def failures(matches: Iterable[Mapping[str, Any]]) -> list[dict]:
+    """Per model over every graded match it played a side of (valid or not, a match against itself once): {player,
+    n_matches, client_faults (matches invalid because its own client failed: grade's `fault` on its side), rate,
+    causes {cause: n}, over_budget (matches ended with its side over its cap: grade's `over_budget`),
+    over_budget_rate, over_budget_flag (that rate above OVER_BUDGET_FLAG)}, by player."""
+    per: dict[str, dict[str, Any]] = {}
+    for m in matches:
+        fault = m.get("fault") or {}
+        for p in {m["sides"][s] for s in SIDES}:
+            row = per.setdefault(p, {"player": p, "n_matches": 0, "client_faults": 0, "causes": {}, "over_budget": 0})
+            row["n_matches"] += 1
+            row["over_budget"] += any(m["sides"].get(s) == p for s in m.get("over_budget") or ())
+            if fault and m["sides"].get(fault.get("side")) == p:
+                row["client_faults"] += 1
+                cause = str(fault.get("cause"))
+                row["causes"][cause] = row["causes"].get(cause, 0) + 1
+    for row in per.values():
+        row["rate"] = round(row["client_faults"] / row["n_matches"], 4)
+        row["over_budget_rate"] = round(row["over_budget"] / row["n_matches"], 4)
+        row["over_budget_flag"] = row["over_budget_rate"] > OVER_BUDGET_FLAG
+    return [per[p] for p in sorted(per)]

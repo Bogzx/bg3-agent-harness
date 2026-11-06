@@ -97,7 +97,7 @@ local function item(tag, n) return string.format("%s_%08x-0000-0000-0000-0000000
 for _, key in ipairs({ "RequestTrade/4", "TradeEnds/2", "GoldChanged/2", "AddedTo/3", "TemplateAddedTo/4",
     "RemovedFrom/2", "RequestPickpocket/2", "CharacterPickpocketFailed/2", "CrimeIsRegistered/8", "KilledBy/4",
     "AttackedBy/7", "Died/1", "CombatStarted/1", "CombatEnded/1", "CombatRoundStarted/2", "EnteredCombat/2", "LeftCombat/2",
-    "ApprovalRatingChanged/3" }) do
+    "ApprovalRatingChanged/3", "StatusApplied/4", "StatusRemoved/4", "TurnStarted/1", "TurnEnded/1" }) do
     check("listens " .. key, listeners[key] ~= nil)
 end
 check("ref.since quiet", BG3AI.RPC.QUIET_OPS["ref.since"] == true)
@@ -431,6 +431,57 @@ do
     check("members: characters only", #m == 2, #m)
     fire("CombatEnded/1", G1)
     check("combat_ended", lastOf("combat_ended") and lastOf("combat_ended").combat == G1)
+end
+
+-- Status timing probe (status-tick-timing.md section 5): with BG3AI_STATUS_LOG=1 every status on a character, hidden
+-- ones too, and the turn events go to the ring with their ms time and the status's runtime fields; without it nothing.
+do
+    local realGetenv = os.getenv
+    local env = {}
+    os.getenv = function(n) return env[n] end ---@diagnostic disable-line: duplicate-set-field
+    entities[GOB] = { uuid = GOB, ServerCharacter = { StatusManager = { Statuses = {
+        { StatusId = "DAZED", TurnTimer = 6.0, LifeTime = 12.0, CurrentLifeTime = 12.0, TickType = "EndTurn",
+            Flags = { RequestDeleteAtTurnEnd = true, Started = true, IsOnSourceSurface = false } },
+        { StatusId = "SG_TECHNICAL_THING", TurnTimer = 0.0, LifeTime = -1.0, Flags2 = { "Started" } } } } } }
+    local before = R.seq
+    fire("StatusApplied/4", "S_GOB_" .. GOB, "DAZED", HOST, 0)
+    fire("TurnStarted/1", "S_GOB_" .. GOB)
+    fire("CombatRoundStarted/2", "combat-1", 2)
+    check("status log off by default", R.seq == before, R.seq - before)
+    env.BG3AI_STATUS_LOG = "1"
+    local t0 = clock
+    fire("StatusApplied/4", "S_GOB_" .. GOB, "DAZED", HOST, 0)
+    local a = lastOf("status_log")
+    check("applied logged", a and a.on == "applied" and a.char == GOB and a.id == "DAZED" and a.cause == HOST,
+        a and a.id)
+    check("ms time", a and a.ms == t0 + 1 and a.t == a.ms, a and a.ms)
+    local f = a and a.fields and a.fields[1] or {}
+    check("runtime fields at apply", f.id == "DAZED" and f.TurnTimer == 6.0 and f.LifeTime == 12.0
+        and f.CurrentLifeTime == 12.0 and f.TickType == "EndTurn", f.TickType)
+    check("flags", f.RequestDeleteAtTurnEnd == true and f.Started == true and #f.flags == 2, f.flags and #f.flags)
+    fire("StatusApplied/4", "S_GOB_" .. GOB, "SG_TECHNICAL_THING", NULL, 0)
+    local h = lastOf("status_log")
+    check("a hidden status logged too", h.id == "SG_TECHNICAL_THING" and h.cause == nil)
+    fire("StatusRemoved/4", "S_GOB_" .. GOB, "DAZED", NULL, 0)
+    local r = lastOf("status_log")
+    check("removed logged", r.on == "removed" and r.id == "DAZED" and r.fields == nil)
+    fire("TurnStarted/1", "S_GOB_" .. GOB)
+    local ts = lastOf("turn_log")
+    check("TurnStarted logged with the char's statuses",
+        ts.what == "TurnStarted" and ts.char == GOB and #ts.statuses == 2)
+    fire("TurnEnded/1", "S_GOB_" .. GOB)
+    check("TurnEnded logged", lastOf("turn_log").what == "TurnEnded")
+    fire("CombatRoundStarted/2", "combat-1", 3)
+    local rs = lastOf("turn_log")
+    check("round logged", rs.what == "CombatRoundStarted" and rs.round == 3 and rs.combat == "combat-1")
+    fire("StatusApplied/4", item("BOOK_Tablet", 9), "BURNING", NULL, 0)
+    check("an item's status not logged", lastOf("status_log").id ~= "BURNING")
+    local op = ops["ref.status_fields"]({ char = GOB, id = "DAZED" })
+    check("probe op reads one status", #op.statuses == 1 and op.statuses[1].TurnTimer == 6.0)
+    env.BG3AI_STATUS_LOG = nil
+    check("probe op refused without the flag", not pcall(ops["ref.status_fields"], { char = GOB }))
+    os.getenv = realGetenv
+    entities[GOB] = nil
 end
 
 -- Self-check: fired listeners leave `never`; ones that didn't fire stay.

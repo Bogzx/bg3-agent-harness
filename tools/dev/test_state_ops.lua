@@ -58,7 +58,7 @@ Osi = {
 }
 
 local handlers = {} -- RPC name -> handler
-BG3AI = { RPC = { register = function(name, fn) handlers[name] = fn end, push = function() end } }
+BG3AI = { RPC = { register = function(name, fn) handlers[name] = fn end, push = function() end, Ctx = {} } }
 dofile(LUA .. "/Shared/Util.lua")
 Ext.Require = function(p) return dofile(LUA .. "/" .. p) end -- the modules load their parts
 dofile(LUA .. "/Server/Visibility.lua")
@@ -190,6 +190,38 @@ test("the camp roster lists the recruited companion waiting at camp", function()
     eq(camp[1].uuid, KARLACH, "uuid")
     eq(camp[1].name, "Karlach", "name")
 end)
+
+test("the dev probes refuse a side (the harness's: REVIEW-18c)", function()
+    for _, op in ipairs({ "dev.fairness_probe", "dev.perception_probe" }) do
+        BG3AI.RPC.Ctx.side = "B"
+        local ok, err = pcall(handlers[op], {})
+        BG3AI.RPC.Ctx.side = nil
+        eq(ok, false, op)
+        eq(tostring(err), op .. " is the harness's (no side)", op)
+    end
+end)
+
+test("a concentration name that doesn't read: the id for the reader's own, 'a spell' for another's (REVIEW-18c)",
+    function()
+        local warned, saved, savedStats = {}, Ext.Utils and Ext.Utils.PrintWarning, Ext.Stats
+        Ext.Utils = Ext.Utils or {}
+        Ext.Utils.PrintWarning = function(m) warned[#warned + 1] = m end
+        local CK = "Target_SHA_Necromancer_Cloudkill"
+        local e = { Concentration = { SpellId = { Prototype = CK } } }
+        local ok, err = pcall(function()
+            Ext.Stats = { Get = function(id) return { DisplayName = id == CK and "hCK" } end }
+            names.hCK = "Cloudkill"
+            eq(S.inner.concentration(e, false), "Cloudkill", "the shown name, anyone's")
+            names.hCK = nil
+            eq(S.inner.concentration(e, true), CK, "the id for the reader's own")
+            eq(S.inner.concentration(e, false), "a spell", "not the id for another's")
+            eq(S.inner.concentration(e), "a spell", "nor without `own`")
+            eq(#warned, 1, "logged once")
+            assert(warned[1]:find(CK .. " didn't read", 1, true), warned[1])
+        end)
+        Ext.Utils.PrintWarning, Ext.Stats, S.nameMiss = saved, savedStats, {}
+        if not ok then error(err, 0) end
+    end)
 
 test("the op's time goes to S.lastMs (state.timings)", function()
     status()

@@ -21,6 +21,7 @@ from typing import Any, Protocol, cast
 from bg3ai.difficulty import option_name
 
 SETUP_ENV = "BG3AI_SCENARIO_SETUP"  # the game process's env switch for every scn.* op
+ARENA_ENV = "BG3AI_ARENA"  # the game process's env switch for a two-team match (the mod's arena.* ops and sides)
 _ENTRY = re.compile(
     r'value="(?P<key>[A-Za-z0-9_]+)"\s*/>\s*<attribute id="Type"[^>]*/>\s*'
     r'<attribute id="Value" type="[a-z0-9]+" value="(?P<value>[^"]*)"'

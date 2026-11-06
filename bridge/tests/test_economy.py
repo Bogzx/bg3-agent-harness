@@ -6,17 +6,19 @@ Run: cd bridge && uv run python -m unittest discover -s tests
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from typing import Any, ClassVar
 from unittest import mock
 
 _RUNTIME_TMP = tempfile.TemporaryDirectory(prefix="bg3ai-test-")  # removed at exit
 os.environ.setdefault("BG3AI_RUNTIME", _RUNTIME_TMP.name)
 
-from bg3ai import economy, render  # noqa: E402
+from bg3ai import capabilities, economy, render  # noqa: E402
 from bg3ai.game import GameError, JobResult  # noqa: E402,F401  (F401: the test_economy_*.py parts import from here)
 from bg3ai.hotbar import HotbarCastResult  # noqa: F401
 from bg3ai.render import Handles  # noqa: E402
@@ -34,6 +36,7 @@ from bg3ai.tools import (  # noqa: E402,F401
     world_tools,
 )
 
+GOLDEN = Path(__file__).resolve().parent / "golden" / "tools_list.json"
 CLAUDE = "11111111-0000-0000-0000-000000000001"
 GALE = "11111111-0000-0000-0000-000000000002"
 
@@ -211,6 +214,28 @@ class Upgrades(unittest.TestCase):
 
 
 class Alerts(unittest.TestCase):
+    def test_an_alert_naming_an_off_tool_is_left_out(self):
+        al = economy.alerts(STATUS, s026_inventory())
+        self.assertEqual(economy.without_off_tools(al, frozenset()), al)
+        gear = [a for a in al if "(equip_best)" in a]
+        self.assertTrue(gear)
+        kept = economy.without_off_tools(al, {"equip_best", "wiki_page"})
+        self.assertEqual(kept, [a for a in al if a not in gear])
+        # a name inside another word or tool name is not the tool: "short_rest" stays with "rest" off
+        self.assertEqual(economy.without_off_tools(["short rests left 2: short_rest"], {"rest"}),
+                         ["short rests left 2: short_rest"])
+        self.assertEqual(economy.without_off_tools(["short rests left 2: short_rest"], {"short_rest"}), [])
+
+    def test_the_status_line_follows_the_servers_off_tools(self):
+        saved = core.TOOLS_OFF
+        self.addCleanup(setattr, core, "TOOLS_OFF", saved)
+        line = lambda: overview._alerts_line(STATUS, s026_inventory(), force=True)  # noqa: E731
+        core.TOOLS_OFF = frozenset()
+        self.assertIn("(equip_best)", line())
+        core.TOOLS_OFF = frozenset({"equip_best"})
+        self.assertNotIn("equip_best", line())
+        self.assertIn("low HP Claude 34/88", line())
+
     def test_camp_chest_counts_toward_supplies(self):
         inv = s026_inventory()
         inv["camp_supplies"] = 30
@@ -311,7 +336,29 @@ class RenderInventory(unittest.TestCase):
         out = render.render_inventory(s026_inventory(), self.H, "junk")
         self.assertIn("Skull", out)
         self.assertNotIn("Potion of Healing", out)
-        self.assertRegex(out, r"JUNK 5 items ~\d+g")
+        self.assertRegex(out, r"JUNK 5 items ~\d+g [\d.]+kg \(trade sell=junk sells it to a trader with gold; "
+                              r"manage_inventory op=camp item=junk sends it to camp\)")
+
+    def test_junk_and_gear_notes_leave_out_the_servers_off_tools(self):
+        # REVIEW-18f NOTE 2: a side's server (arena-v1 off: trade, camp, ...) printed 'trade sell=junk' and 'op=camp'
+        # on the JUNK line, which ALERTS already leaves out (economy.without_off_tools: a tool's name as a word)
+        names = {t["name"] for t in json.loads(GOLDEN.read_text(encoding="utf-8"))}
+        off = capabilities.disabled(names, {"BG3AI_TOOLS_OFF": "arena-v1"})
+        out = render.render_inventory(s026_inventory(), self.H, "junk", off)
+        self.assertRegex(out, r"JUNK 5 items ~\d+g [\d.]+kg$")
+        self.assertNotRegex(out, r"\b(trade|camp)\b")
+        out = render.render_inventory(s026_inventory(), self.H, "junk", {"trade"})
+        self.assertRegex(out, r"JUNK 5 items ~\d+g [\d.]+kg \(manage_inventory op=camp item=junk sends it to camp\)$")
+        gear = render.render_inventory(s026_inventory(), self.H, "gear", {"equip_best"})
+        self.assertIn("BETTER GEAR IN BAGS: ", gear)
+        self.assertIn("BETTER GEAR IN BAGS (equip_best equips all): ", render.render_inventory(s026_inventory(), self.H,
+                                                                                                "gear"))
+        # get_inventory passes the server's own off set
+        saved = core.TOOLS_OFF
+        self.addCleanup(setattr, core, "TOOLS_OFF", saved)
+        core.TOOLS_OFF = frozenset(off)
+        with mock.patch.object(reporting, "_read", return_value=(({}, s026_inventory()), [])):
+            self.assertNotIn("trade", observe.get_inventory(filter="junk"))
 
     def test_junk_in_bags_is_marked_and_counted(self):
         # w11 L1 act3_gold_max: the junk preview listed 23 items, 22 inside Claude's Pouch / Alchemy Pouch, and

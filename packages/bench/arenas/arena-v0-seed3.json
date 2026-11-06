@@ -1,0 +1,228 @@
+{
+  "schema": "arena.v1",
+  "name": "arena-v0-seed3",
+  "title": "Arena v0: crash site, Fighter and Rogue mirror twins, two against two",
+  "about": "The crash_site_grove start save. Each side plays two twins that arena.setup makes for every match from the mirror pairs (pairs 1-2 of tools/dev/make_arena_save.py mirror on ops/briefs/arena/live-mirror-3-spec.json): a Fighter and a Rogue, one hireling template, Half-Elf, the same kit and gear on both sides, level 2. Side A plays Ash and Cedar, side B their twins Birch and Dune. The spawns are site 2 of the arena site search (2026-11-03, tools/dev/probe_arena_site.py, ops/logs/live.md '# arena site search'), as landed: the members (x 212.25 and 213.75, Setup.line) landed at the asked x/z with y A 10.975 / 10.980, B 11.019 / 10.949 (all four within 0.069 m), lines 8 m apart, no one-sided high ground within 9 m, no character or prop that can join a fight within 26 m, the sitters 10 m or more off. The crash-site strip live 15 used favours side A (the wreck's deck, the Nautiloid Tank). The kits hold no knock-down source: character creation's grease bottles and Arrow of Ice are left out (Fable REVIEW-12 option (d), 2026-11-04: Prone can cost a whole phase in the shared turn group).",
+  "save": {
+    "name": "Tav-34221263934__SCN-crash_site_grove",
+    "sha1": "d7b0749e1dc6febb477f302d2a30b25770329213"
+  },
+  "location": {
+    "level": "WLD_Main_A",
+    "spawns": {
+      "A": [
+        213.0,
+        10.98,
+        288.0
+      ],
+      "B": [
+        213.0,
+        10.98,
+        296.0
+      ]
+    }
+  },
+  "teams": {
+    "A": [
+      {
+        "name": "Ash"
+      },
+      {
+        "name": "Cedar"
+      }
+    ],
+    "B": [
+      {
+        "name": "Birch"
+      },
+      {
+        "name": "Dune"
+      }
+    ]
+  },
+  "level": 2,
+  "seed": 3,
+  "karmic": false,
+  "round_cap": 20,
+  "wall_cap_min": 60,
+  "turn_cap_s": 90,
+  "condition": "rules",
+  "tools_off": "arena-v1",
+  "mirror": {
+    "pairs": [
+      {
+        "class": "Fighter",
+        "template": "d9401d40-453b-4512-84ee-d1c6ab29afea",
+        "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
+        "stats": "BG3AI_Arena_Fighter_L1",
+        "names": {
+          "A": "Ash",
+          "B": "Birch"
+        },
+        "kit": {
+          "race": {
+            "boosts": "ActionResource(Movement,9,0)",
+            "passives": [
+              "HumanMilitia",
+              "Darkvision",
+              "FeyAncestry"
+            ]
+          },
+          "player": {
+            "passives": [
+              "DeathSavingThrows"
+            ]
+          },
+          "ability_bonus": [
+            "Strength",
+            "Constitution"
+          ],
+          "choices": [
+            {
+              "kind": "skills",
+              "list": "6a4f8598-3a17-42d1-beac-d7ced582bafa",
+              "n": 2,
+              "exact": true,
+              "ids": [
+                "Athletics",
+                "Intimidation"
+              ]
+            },
+            {
+              "kind": "passives",
+              "list": "da3203d8-750a-4de1-b8eb-1eccfccddf46",
+              "n": 1,
+              "exact": true,
+              "ids": [
+                "FightingStyle_Defense"
+              ]
+            }
+          ],
+          "items": [
+            {
+              "item": "WPN_Longsword",
+              "root": "1865323f-b428-4791-a0a9-578841e57463",
+              "count": 1,
+              "equip": true
+            },
+            {
+              "item": "WPN_Shortbow",
+              "root": "c5403c1d-f372-43e1-927a-9189e9e3545d",
+              "count": 1,
+              "equip": true
+            },
+            {
+              "item": "ARM_ScaleMail_Body",
+              "root": "ca0aafad-0f1e-4d76-8e3b-925397bb436b",
+              "count": 1,
+              "equip": true
+            },
+            {
+              "item": "ARM_Boots_Leather",
+              "root": "969bab00-b269-46a5-a7e9-dd4887814719",
+              "count": 1,
+              "equip": true
+            },
+            {
+              "item": "OBJ_Potion_Healing",
+              "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
+              "count": 2,
+              "equip": false
+            }
+          ]
+        }
+      },
+      {
+        "class": "Rogue",
+        "template": "d9401d40-453b-4512-84ee-d1c6ab29afea",
+        "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
+        "stats": "BG3AI_Arena_Rogue_L1",
+        "names": {
+          "A": "Cedar",
+          "B": "Dune"
+        },
+        "kit": {
+          "race": {
+            "boosts": "ActionResource(Movement,9,0)",
+            "passives": [
+              "HumanMilitia",
+              "Darkvision",
+              "FeyAncestry"
+            ]
+          },
+          "player": {
+            "passives": [
+              "DeathSavingThrows"
+            ]
+          },
+          "ability_bonus": [
+            "Dexterity",
+            "Constitution"
+          ],
+          "choices": [
+            {
+              "kind": "skills",
+              "list": "a1c2b712-2ed6-4e5b-820f-c5db654fe006",
+              "n": 4,
+              "exact": true,
+              "ids": [
+                "Stealth",
+                "Acrobatics",
+                "Perception",
+                "SleightOfHand"
+              ]
+            },
+            {
+              "kind": "expertise",
+              "list": "f974ebd6-3725-4b90-bb5c-2b647d41615d",
+              "n": 2,
+              "exact": true,
+              "ids": [
+                "Stealth",
+                "Perception"
+              ]
+            }
+          ],
+          "items": [
+            {
+              "item": "WPN_Shortsword",
+              "root": "467ddb4f-6791-41fa-99f7-ee8620d63bbe",
+              "count": 1,
+              "equip": true
+            },
+            {
+              "item": "WPN_Shortbow",
+              "root": "c5403c1d-f372-43e1-927a-9189e9e3545d",
+              "count": 1,
+              "equip": true
+            },
+            {
+              "item": "ARM_Leather_Body_Rogue",
+              "root": "4c4396db-fa4a-4541-9b2a-23e43211dde7",
+              "count": 1,
+              "equip": true
+            },
+            {
+              "item": "ARM_Boots_Leather",
+              "root": "969bab00-b269-46a5-a7e9-dd4887814719",
+              "count": 1,
+              "equip": true
+            },
+            {
+              "item": "OBJ_Kit_ThievesTools",
+              "root": "e32a200c-5b63-414d-ae57-00e7b38f125b",
+              "count": 1,
+              "equip": false
+            },
+            {
+              "item": "OBJ_Potion_Healing",
+              "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
+              "count": 2,
+              "equip": false
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

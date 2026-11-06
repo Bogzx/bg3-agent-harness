@@ -36,6 +36,9 @@ def counted(name: str, **kw) -> tuple[str, float, dict, int]:
     return out, dt, counts, hud_n[0]
 
 
+REACTION_PAUSE = "the game paused it for a reaction decision"
+
+
 def _action_row(tool: str, out: str, dt: float, counts: dict) -> tuple[str, bool]:
     """One counted combat action's evidence and whether its RPCs kept to the job push (one job.poll per short job)."""
     jobs = sum(v for k, v in counts.items() if k.startswith("act."))
@@ -45,6 +48,27 @@ def _action_row(tool: str, out: str, dt: float, counts: dict) -> tuple[str, bool
         f"{counts.get('state.combat', 0)} state.combat)",
         polls <= 2 * jobs + 2,
     )
+
+
+def attack_landed(out: str, foe: dict) -> bool:
+    """use_ability's `out` on the row `foe` read before it: done, or a cast a reaction prompt paused (REACTION_PAUSE)
+    that went on to hurt it. The paused cast goes on once the prompt is answered, so this answers it and any next one
+    without the reaction and reads the result, not the status: such a cast can still miss (live 2026-11-05: Karlach's
+    Ranged Attack, INTERRUPTED by the Executioner prompt, e9 9 -> 3 after it)."""
+    if re.search(r"(?m)^use_ability[^\n]*: done", out):
+        return True
+    if REACTION_PAUSE not in out:
+        return False
+    hp = foe.get("hp")
+    for _ in range(30):
+        if ui_screen() == "reaction":
+            call("react", use=False)
+        nb = S.game.try_rpc("state.nearby", {"radius": 40}) or {}
+        now = next((c for c in nb.get("characters") or [] if c.get("uuid") == foe["uuid"]), {})
+        if now.get("dead") or (hp is not None and now.get("hp") is not None and now["hp"] < hp):
+            return True
+        time.sleep(0.5)
+    return False
 
 
 def sec_combat() -> None:
@@ -146,7 +170,7 @@ def sec_combat() -> None:
             unknown = unknown or (ability == "Main Hand Attack" and "has no action called" in ua)
             # the walk reached melee reach: the swing is not refused for range
             range_miss = range_miss or (reached and ability == "Main Hand Attack" and "out of range" in ua)
-            hit = bool(re.search(r"(?m)^use_ability[^\n]*: done", ua))
+            hit = attack_landed(ua, foe)
             if hit or ("has no action called" not in ua and "out of range" not in ua):
                 break
         et, _ = act("end_turn", "end_turn", who=wh)

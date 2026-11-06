@@ -11,7 +11,7 @@ from . import core, queueing
 
 def _downed_text(u: str) -> str:
     return (f"{queueing._label(u)} is downed: nothing to play, its turn passes by itself (the game rolls its death "
-            "saving throw). Healing Word, Help (adjacent) or a potion from an ally gets it up.")
+            "saving throw). Healing Word or Help (adjacent) from an ally gets it up.")
 
 
 # S087: a stunned member's open turn the game itself passes; if it is still open this long with nothing else moving,
@@ -28,7 +28,7 @@ def _end_passing(cs: dict, since: float, done: set, notes: list | None) -> None:
         if u in done:
             continue
         done.add(u)
-        r = core.game.run_job("act.end_turn", {"char": u}, wait_s=5)
+        r = core.game.run_job("act.end_turn", {"char": u}, wait_s=combat._end_wait_s(5))
         if notes is not None:
             why = rows.get(u, {}).get("passes") or "can't act"
             notes.append(f"ended {queueing._label(u)}'s turn ({why}: it can't act)" if r.status == "done"
@@ -49,5 +49,5 @@ def _disabled_lines(only: str | None = None) -> list[str]:
 # The next module (and so the rest, in file order) loads after this one; later ones used here.
 # isort: off
 from . import (  # noqa: E402, F401
-    macro_tools,
+    combat, macro_tools,
 )

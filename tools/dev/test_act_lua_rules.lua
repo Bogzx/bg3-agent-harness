@@ -364,6 +364,19 @@ test("interact on a living character states what interact does, no 'use talk_to'
     eq(j.status, "failed", "refused"); eq(j.error, "interact doesn't talk to characters (talk_to does)", "words")
 end)
 
+test("a corpse in a two-team match: loot_corpse is off there, so a side reads the no-clicks note", function()
+    osiv[key("IsCharacter", NPC)], osiv[key("IsDead", NPC)] = 1, 1
+    local side, arena = BG3AI.RPC.side, BG3AI.Arena
+    BG3AI.RPC.side = function() return "A" end
+    BG3AI.Arena = { side_of = function() return "A" end, active = function() return false end,
+        team = function() return { P1 }, { [P1] = true } end }
+    local ok, j = pcall(function() return job(op("interact", { char = P1, target = NPC })) end)
+    BG3AI.RPC.side, BG3AI.Arena = side, arena
+    osiv[key("IsDead", NPC)] = 0
+    if not ok then error(j, 0) end
+    eq(j.error, "looting corpses is not supported by this action yet " .. G.SIDE_NO_UI, "side")
+end)
+
 test("tool facts stay facts: loot_corpse loots a corpse, a give in a fight needs the UI tools", function()
     osiv[key("IsCharacter", NPC)], osiv[key("IsDead", NPC)] = 1, 1
     local j = job(op("interact", { char = P1, target = NPC }))

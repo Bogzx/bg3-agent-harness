@@ -211,11 +211,13 @@ local function abilitiesView(dc)
     }
 end
 
-function P.ccOptions(dc)
+function P.ccOptions(dc, pg)
+    pg = pg or P.CC_PAGES[1]
     local function sel(name) return UI.prop(dc, name) end
     return {
+        page = pg.widget,
         step = str(UI.prop(dc, "CharacterCreationStep")),
-        complete = UI.prop(dc, "IsCharacterComplete"),
+        complete = pg.complete and UI.prop(dc, pg.complete) or nil,
         complete_except_name = UI.prop(dc, "IsCharacterCompleteExceptName"),
         name = str(UI.prop(dc, "CharacterName")),
         can_edit_name = UI.prop(dc, "CanEditName"),
@@ -236,19 +238,26 @@ end
 
 -- ui.cc_scan: show every gameplay tab once so all list labels are read (cc_options can then name them).
 RPC.register("ui.cc_scan", function()
-    if not P.ccDC() then error("character creation is not open") end
-    local ctx = { result = {}, widget = "CharacterCreation" }
+    local pg = P.ccPage()
+    if not pg then error("character creation is not open") end
+    local ctx = { result = {}, widget = pg.widget }
     local stages = {}
     local tabs = { "originTab", "raceTab", "subRaceTab", "classTab", "subClassTab", "deityTab", "backgroundTab", "abilityTab" }
+    local first
     for _, tab in ipairs(tabs) do
-        stages[#stages + 1] = { tab, tabStage(ctx, tab) }
-        stages[#stages + 1] = { tab .. "?", function()
-            P.refreshLabels("CharacterCreation")
-            return "next", 0
-        end }
+        local key = tab:gsub("Tab$", ""):gsub("^subR", "subr"):gsub("^subC", "subc")
+        if not pg.keeps[key] then
+            local name = P.ccTab(pg, tab)
+            first = first or name
+            stages[#stages + 1] = { tab, tabStage(ctx, name) }
+            stages[#stages + 1] = { tab .. "?", function()
+                P.refreshLabels(pg.widget)
+                return "next", 0
+            end }
+        end
     end
     stages[#stages + 1] = { "back", function()
-        selectTab("CharacterCreation", "originTab")
+        selectTab(pg.widget, first)
         local n = 0
         for _ in pairs(P.rendered or {}) do n = n + 1 end
         ctx.result.labels = n
@@ -258,10 +267,10 @@ RPC.register("ui.cc_scan", function()
 end)
 
 RPC.register("ui.cc_options", function(args)
-    local dc = P.ccDC()
+    local pg, dc = P.ccPage()
     if not dc then error("character creation is not open (pages: " .. table.concat(pages(), ",") .. ")") end
-    P.refreshLabels("CharacterCreation")
-    local o = P.ccOptions(dc)
+    P.refreshLabels(pg.widget)
+    local o = P.ccOptions(dc, pg)
     if args.descriptions then
         o.classes = view(UI.prop(dc, "SelectableClasses"), UI.prop(dc, "SelectedClass"), { desc = true })
         o.backgrounds = view(UI.prop(dc, "SelectableBackgrounds"), UI.prop(dc, "SelectedBackground"), { desc = true })
@@ -633,8 +642,9 @@ function P.nameView(want)
 end
 
 RPC.register("ui.cc_name", function(args)
-    local dc = P.ccDC()
+    local pg, dc = P.ccPage()
     if not dc then error("character creation is not open (pages: " .. table.concat(pages(), ",") .. ")") end
+    if not pg.naming then error(pg.widget .. " has no naming page", 0) end
     if args.set then error("set is not supported: type the name (bg3ai.naming.ensure_name)") end
     local out = {}
     if args.page then
@@ -655,8 +665,10 @@ RPC.register("ui.cc_name", function(args)
 end)
 
 RPC.register("ui.cc_finish", function(args)
-    local dc = P.ccDC()
+    local pg, dc = P.ccPage()
     if not dc then error("character creation is not open (pages: " .. table.concat(pages(), ",") .. ")") end
+    local finish, complete = P.ccName(pg, "finish"), P.ccName(pg, "complete")
+    if args.name ~= nil and not pg.naming then error(pg.widget .. " has no naming page", 0) end
     if args.name ~= nil then
         local v = P.nameView(args.name)
         if not v.ok then
@@ -664,12 +676,12 @@ RPC.register("ui.cc_finish", function(args)
                 .. "' and the character is '" .. tostring(v.name or v.name_handle) .. "'; not finishing")
         end
     end
-    if UI.prop(dc, "IsCharacterComplete") ~= true then
+    if UI.prop(dc, complete) ~= true then
         error("character is not complete; not finishing (see ui.cc_options validity)")
     end
-    local ok, err = UI.command(dc, "FinishCreating", nil)
-    if not ok then error("FinishCreating: " .. tostring(err)) end
-    return { finished = true, name = args.name }
+    local ok, err = UI.command(dc, finish, nil)
+    if not ok then error(finish .. ": " .. tostring(err)) end
+    return { finished = true, name = args.name, page = pg.widget }
 end)
 
 ------------------------------------------------------------------------
@@ -739,7 +751,7 @@ local function abilityBonusStage(ctx, plan)
         if type(want) ~= "table" or #want == 0 then return "next", 0 end
         if not state.tabbed then
             state.tabbed = true
-            selectTab("CharacterCreation", "abilityTab")
+            selectTab(ctx.widget, P.ccTab(ctx.page, "abilityTab"))
             return "wait", 500
         end
         local dc = P.ccDC()
@@ -757,7 +769,7 @@ local function abilityBonusStage(ctx, plan)
             ctx.result.problems[#ctx.result.problems + 1] = "bonus " .. tostring(name) .. ": not offered"
             return "wait", 0
         end
-        local ok, err = pressFor("CharacterCreation", { "button" }, target)
+        local ok, err = pressFor(ctx.widget, { "button" }, target)
         if not ok then ctx.result.problems[#ctx.result.problems + 1] = "bonus " .. tostring(name) .. ": " .. tostring(err) end
         return "wait", 300
     end
@@ -786,15 +798,35 @@ end
 
 RPC.register("ui.cc_apply", function(args)
     local plan = args.plan or {}
-    if not P.ccDC() then error("character creation is not open (pages: " .. table.concat(pages(), ",") .. ")") end
-    local ctx = { result = { set = {}, problems = {} }, widget = "CharacterCreation" }
+    local pg = P.ccPage()
+    if not pg then error("character creation is not open (pages: " .. table.concat(pages(), ",") .. ")") end
+    -- Every page name the plan needs, at the call: a TODO name (P.CC_PAGES) fails before the page changes.
+    for key in pairs(pg.keeps) do
+        if plan[key] ~= nil then error(("%s keeps the %s: the plan can't set it"):format(pg.widget, key), 0) end
+    end
+    if plan.name ~= nil and not pg.naming then error(pg.widget .. " has no naming page", 0) end
+    local tab = {}
+    for _, t in ipairs({ "originTab", "raceTab", "subRaceTab", "classTab", "subClassTab", "deityTab", "backgroundTab",
+        "abilityTab" }) do
+        local key = t:gsub("Tab$", ""):gsub("^subR", "subr"):gsub("^subC", "subc")
+        if not pg.keeps[key] then tab[t] = P.ccTab(pg, t) end
+    end
+    local complete = P.ccName(pg, "complete")
+    local finish = args.finish ~= false and P.ccName(pg, "finish") or nil
+    local ctx = { result = { set = {}, problems = {} }, widget = pg.widget, page = pg }
+    ctx.result.page = pg.widget
     ctx.fast = P.CC_STATE_WAITS ~= false and not args.paced
     ctx.result.pacing = ctx.fast and "state" or "fixed"
     local get = P.ccDC
     local custom = plan.origin == nil and (plan.race or plan.class)
+    local kept = {}
+    local function unless(key, stage) -- a stage the page has (not one of its keeps)
+        if pg.keeps[key] then return kept end
+        return stage
+    end
     local stages = {
-        { "origin_tab", tabStage(ctx, "originTab") },
-        { "origin", function()
+        unless("origin", { "origin_tab", tabStage(ctx, tab.originTab) }),
+        unless("origin", { "origin", function()
             local dc = get()
             if plan.origin == nil and not custom then return "next", 0 end
             if plan.origin ~= nil then
@@ -811,24 +843,25 @@ RPC.register("ui.cc_apply", function(args)
                 end
             end
             return "fail", "no custom origin offered"
-        end },
-        { "origin?", verifyStage(get, ctx) },
-        { "race_tab", tabStage(ctx, "raceTab") },
-        { "race", selectStage(get, ctx, "race", "SelectedRace", "SelectableRaces", plan.race) },
-        { "race?", verifyStage(get, ctx) },
-        { "subrace_tab", tabStage(ctx, "subRaceTab") },
-        { "subrace", selectStage(get, ctx, "subrace", "SelectedSubRace", "SelectableSubRaces", plan.subrace, true) },
-        { "subrace?", verifyStage(get, ctx) },
-        { "class_tab", tabStage(ctx, "classTab") },
+        end }),
+        unless("origin", { "origin?", verifyStage(get, ctx) }),
+        unless("race", { "race_tab", tabStage(ctx, tab.raceTab) }),
+        unless("race", { "race", selectStage(get, ctx, "race", "SelectedRace", "SelectableRaces", plan.race) }),
+        unless("race", { "race?", verifyStage(get, ctx) }),
+        unless("subrace", { "subrace_tab", tabStage(ctx, tab.subRaceTab) }),
+        unless("subrace", { "subrace", selectStage(get, ctx, "subrace", "SelectedSubRace", "SelectableSubRaces",
+            plan.subrace, true) }),
+        unless("subrace", { "subrace?", verifyStage(get, ctx) }),
+        { "class_tab", tabStage(ctx, tab.classTab) },
         { "class", selectStage(get, ctx, "class", "SelectedClass", "SelectableClasses", plan.class) },
         { "class?", verifyStage(get, ctx) },
-        { "subclass_tab", tabStage(ctx, "subClassTab") },
+        { "subclass_tab", tabStage(ctx, tab.subClassTab) },
         { "subclass", selectStage(get, ctx, "subclass", "SelectedSubClass", "SelectableSubClasses", plan.subclass, true) },
         { "subclass?", verifyStage(get, ctx) },
-        { "deity_tab", tabStage(ctx, "deityTab") },
+        { "deity_tab", tabStage(ctx, tab.deityTab) },
         { "deity", selectStage(get, ctx, "deity", "SelectedDeity", "SelectableDeities", plan.deity, true) },
         { "deity?", verifyStage(get, ctx) },
-        { "background_tab", tabStage(ctx, "backgroundTab") },
+        { "background_tab", tabStage(ctx, tab.backgroundTab) },
         { "background", selectStage(get, ctx, "background", "SelectedBackground", "SelectableBackgrounds", plan.background) },
         { "background?", verifyStage(get, ctx) },
         { "abilities", abilitiesStage(ctx, plan), 30000 },
@@ -840,7 +873,7 @@ RPC.register("ui.cc_apply", function(args)
         { "skills", skillsStage(get, ctx, plan.skills) },
         { "skills?", skillsReport(get, ctx) },
         { "passives", passivesStage(get, ctx, plan.passives, true) },
-        { "spells", spellsStage("CharacterCreation", get, ctx, plan.spells, plan.cantrips) },
+        { "spells", spellsStage(pg.widget, get, ctx, plan.spells, plan.cantrips) },
         { "spells?", spellsReport(get, ctx) },
         { "name?", function()
             if plan.name == nil then return "next", 0 end
@@ -861,7 +894,7 @@ RPC.register("ui.cc_apply", function(args)
         { "check", function()
             local dc = get()
             ctx.result.set.name = P.readableName(str(UI.prop(dc, "CharacterName")))
-            ctx.result.complete = UI.prop(dc, "IsCharacterComplete")
+            ctx.result.complete = UI.prop(dc, complete)
             ctx.result.validity = validity(dc)
             return "next", 0
         end },
@@ -875,11 +908,11 @@ RPC.register("ui.cc_apply", function(args)
                     .. "naming page (bg3ai.naming.ensure_name), then ui.cc_finish {name}"
             end
             local dc = get()
-            if UI.prop(dc, "IsCharacterComplete") ~= true then
+            if UI.prop(dc, complete) ~= true then
                 return "fail", "character is not complete; not finishing (see problems/validity)"
             end
-            local ok, err = UI.command(dc, "FinishCreating", nil)
-            if not ok then return "fail", "FinishCreating: " .. tostring(err) end
+            local ok, err = UI.command(dc, finish, nil)
+            if not ok then return "fail", finish .. ": " .. tostring(err) end
             ctx.result.finished = true
             return "next", 1500
         end },
@@ -889,7 +922,11 @@ RPC.register("ui.cc_apply", function(args)
             return "done"
         end },
     }
-    return runJob("ui.cc_apply", stages, ctx, 120000)
+    local open = {}
+    for _, st in ipairs(stages) do
+        if st ~= kept then open[#open + 1] = st end
+    end
+    return runJob("ui.cc_apply", open, ctx, 120000)
 end)
 
 P.inner.runJob, P.inner.selectStage, P.inner.verifyStage = runJob, selectStage, verifyStage

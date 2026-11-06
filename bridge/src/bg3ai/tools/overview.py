@@ -215,7 +215,7 @@ def _alerts_line(st: Any, inv: Any, force: bool = False) -> str:
             plumbing._remember_names(inv)
         al = economy.alerts(st, inv, _name_of, ALERTS.partial_rest, ALERTS.short_rests, _dead_allies())
         area = _area_alert(st)
-        return ALERTS.line(al + ([area] if area else []), force=force)
+        return ALERTS.line(economy.without_off_tools(al + ([area] if area else []), core.TOOLS_OFF), force=force)
     except Exception:
         return ""
 

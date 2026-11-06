@@ -923,7 +923,7 @@ function S.state(args)
     elseif scr == "roll" then
         res.roll = S.roll(wmap)
     elseif scr == "reaction" then
-        res.reaction = S.reaction(wmap)
+        res.reaction = S.sideReaction(S.reaction(wmap)) -- Client/UIStateArena.lua
     elseif scr == "popup" then
         res.popup = S.popup(wmap[res.page].el)
         if S.isGameOver(res.popup) then res.screen = "game_over" end

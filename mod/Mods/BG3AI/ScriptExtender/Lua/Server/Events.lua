@@ -13,13 +13,17 @@ BG3AI.Events = E
 local truthy = U.truthy
 local osi = V.osi
 
+-- What the stream remembers between events (the combats announced, approvals, a party Use, the open container, the
+-- rest flow, gold, traps) is kept per side in an arena (U.sided / U.sget): every listener runs once per side.
 E.openContainer = E.openContainer or nil
 E.approval = E.approval or {}
+E.approvalAsked = E.approvalAsked or {}
 E.combats = E.combats or {}
 
 -- Per-event visibility context, cached for one game tick's worth of events.
 local ctxCache, ctxTime = nil, 0
 local function ctx()
+    if U.side() then return V.context() end -- a side's context (V.context caches it per frame and side)
     local t = Ext.Utils.MonotonicTime()
     if not ctxCache or t - ctxTime > 250 then
         ctxCache, ctxTime = V.context(), t
@@ -54,9 +58,10 @@ local function partyInCombat(combatGuid)
     return false
 end
 
+-- Each event runs fn once with no side and, in an arena, once per side: what fn pushes then is that side's.
 local function listen(name, arity, fn)
     local ok, err = pcall(Ext.Osiris.RegisterListener, name, arity, "after", function(...)
-        local ok2, err2 = pcall(fn, ...)
+        local ok2, err2 = pcall(U.each_side, fn, ...)
         if not ok2 then Ext.Utils.PrintWarning("[BG3AI] event " .. name .. ": " .. tostring(err2)) end
     end)
     if not ok then Ext.Utils.PrintWarning("[BG3AI] cannot listen to " .. name .. ": " .. tostring(err)) end
@@ -68,26 +73,29 @@ end
 
 listen("CombatStarted", 1, function(combat)
     -- Party involvement may be registered a frame later; remember and check on round start too.
-    E.combats[combat] = { announced = false }
+    local combats = U.sided(E, "combats")
+    combats[combat] = { announced = false }
     if partyInCombat(combat) then
-        E.combats[combat].announced = true
+        combats[combat].announced = true
         RPC.push("combat_started", {})
     end
 end)
 
 listen("CombatRoundStarted", 2, function(combat, round)
-    local c = E.combats[combat]
+    local combats = U.sided(E, "combats")
+    local c = combats[combat]
     if not partyInCombat(combat) then return end
     if not c or not c.announced then
-        E.combats[combat] = { announced = true }
+        combats[combat] = { announced = true }
         RPC.push("combat_started", {})
     end
     RPC.push("round_started", { round = round })
 end)
 
 listen("CombatEnded", 1, function(combat)
-    local c = E.combats[combat]
-    E.combats[combat] = nil
+    local combats = U.sided(E, "combats")
+    local c = combats[combat]
+    combats[combat] = nil
     if c and c.announced then RPC.push("combat_ended", {}) end
 end)
 
@@ -97,13 +105,13 @@ end)
 -- Actions.dispatch after its TurnStarted/TurnEnded pairing (Guard.turn_open / end_owed), not by a listener here, so
 -- the round never depends on which listener runs first.
 function E.turn(kind, char, round)
-    local ok, err = pcall(function()
-        local u = visibleChar(char)
+    local ok, err = pcall(U.each_side, function(c)
+        local u = visibleChar(c)
         if not u then return end
         local d = ref(u)
         d.round = round
         RPC.push(kind, d)
-    end)
+    end, char)
     if not ok then Ext.Utils.PrintWarning("[BG3AI] event " .. kind .. ": " .. tostring(err)) end
 end
 
@@ -331,7 +339,8 @@ end
 
 E.spellInfo = E.spellInfo or {} -- spell id .. "|" .. caster -> its text, or false (nothing to show)
 function E.spell_info(id, caster)
-    local key = tostring(id) .. "|" .. tostring(caster)
+    -- in an arena the side too: everyoneHas reads that side's own members (ctx() is the side's context)
+    local key = tostring(id) .. "|" .. tostring(caster) .. "|" .. tostring(U.side())
     local c = E.spellInfo[key]
     if c ~= nil then return c or nil end
     c = false
@@ -387,12 +396,16 @@ function E.spell_info(id, caster)
 end
 
 -- The first sight of a spell in a fight (keyed by the caster's combat; out of combat, "none"): push spell_info.
+-- In an arena it is a side's own (its listener run or its op: the event is tagged with that side, and each side's
+-- first sight is its own); the harness's no-side run reads both teams, which no side sees, so it pushes none.
 E.spellSeen = E.spellSeen or {}
 function E.note_spell(caster, id)
     if not id or id == "" then return end
+    if RPC.arena_active and RPC.arena_active() and not RPC.side() then return end
     local combat = tostring(osi(Osi.CombatGetGuidFor, caster) or "none")
-    local seen = E.spellSeen[combat] or {}
-    E.spellSeen[combat] = seen
+    local fights = U.sided(E, "spellSeen")
+    local seen = fights[combat] or {}
+    fights[combat] = seen
     if seen[id] then return end
     local text = E.spell_info(id, caster)
     if not text then return end
@@ -443,7 +456,17 @@ end)
 -- Dialogue: speakers only (never the dialog resource).
 ------------------------------------------------------------------------
 
+-- instance -> its NPC speakers' uuids: E.dialogs with no side (Referee.lua reads it: a dialogue that offers Trade), a
+-- side's own in an arena (audit S3-1: one shared table gave the first side's DialogEnded the entry, so the other run
+-- never said dialogue_ended).
+local function dialogs()
+    if U.side() then return U.sided(E, "dialogs") end
+    E.dialogs = E.dialogs or {}
+    return E.dialogs
+end
+
 listen("DialogStarted", 2, function(_, instance)
+    local side = U.side()
     local speakers, npcs = {}, {}
     local n = osi(Osi.DialogGetNumberOfInvolvedNPCs, instance) or 0
     for i = 1, n do
@@ -456,6 +479,8 @@ listen("DialogStarted", 2, function(_, instance)
     for i = 1, np do
         local p = osi(Osi.DialogGetInvolvedPlayer, instance, i)
         local u = p and V.uuid(p)
+        -- in an arena both teams are players of one party: a side's dialogue is one of its own members (audit S3-1)
+        if u and side and BG3AI.Arena.side_of(u) ~= side then u = nil end
         if u then
             party[#party + 1] = ref(u)
             if not at then
@@ -465,8 +490,7 @@ listen("DialogStarted", 2, function(_, instance)
         end
     end
     if #party == 0 then return end -- not our dialogue (ambient NPC chatter)
-    E.dialogs = E.dialogs or {} -- instance -> its NPC speakers' uuids (Referee.lua: a dialogue that offers Trade)
-    E.dialogs[instance] = npcs
+    dialogs()[instance] = npcs
     -- Party banter / barks (automated dialogs) play while you walk: flagged so queues don't stop on them.
     local auto = osi(Osi.DialogIsAutomated, instance)
     -- at/level: where the party member stood when the talk began (the bridge's off-limits areas, vis V26).
@@ -476,8 +500,9 @@ listen("DialogStarted", 2, function(_, instance)
 end)
 
 listen("DialogEnded", 2, function(_, instance)
-    if E.dialogs and E.dialogs[instance] then
-        E.dialogs[instance] = nil
+    local dl = dialogs()
+    if dl[instance] then
+        dl[instance] = nil
         RPC.push("dialogue_ended", {})
     end
 end)
@@ -551,13 +576,13 @@ local function approvalKey(owner, rated) return owner .. "|" .. (rated or "") en
 function E.seedApproval(c)
     local host = V.uuid(osi(Osi.GetHostCharacter)) or c.party[1]
     if not host then return end
-    E.approvalAsked = E.approvalAsked or {}
+    local asked, approval = U.sided(E, "approvalAsked"), U.sided(E, "approval")
     for _, u in ipairs(c.party) do
         local k = approvalKey(u, host)
-        if u ~= host and E.approval[k] == nil and not E.approvalAsked[k] then
-            E.approvalAsked[k] = true -- once per pair and Lua state: a hireling has no rating to read every poll
+        if u ~= host and approval[k] == nil and not asked[k] then
+            asked[k] = true -- once per pair and Lua state: a hireling has no rating to read every poll
             local v = osi(Osi.GetApprovalRating, u, host)
-            if type(v) == "number" then E.approval[k] = v end
+            if type(v) == "number" then approval[k] = v end
         end
     end
 end
@@ -566,8 +591,9 @@ listen("ApprovalRatingChanged", 3, function(npc, rated, value)
     local u = V.uuid(npc)
     if not u then return end
     local k = approvalKey(u, V.uuid(rated))
-    local prev = E.approval[k]
-    E.approval[k] = value
+    local approval = U.sided(E, "approval")
+    local prev = approval[k]
+    approval[k] = value
     if prev == nil or prev == value then return end
     RPC.push("approval", { npc = ref(u), direction = value > prev and "approves" or "disapproves" })
 end)
@@ -600,7 +626,7 @@ E.DOOR_OPEN_M = 30
 E.partyUse = E.partyUse or {}
 listen("UseStarted", 2, function(char, item)
     local c = V.uuid(char)
-    if ctx().is_party[c or ""] then E.partyUse[V.uuid(item) or ""] = Ext.Utils.MonotonicTime() end
+    if ctx().is_party[c or ""] then U.sided(E, "partyUse")[V.uuid(item) or ""] = Ext.Utils.MonotonicTime() end
 end)
 
 listen("Opened", 1, function(item)
@@ -608,8 +634,9 @@ listen("Opened", 1, function(item)
     local e = V.entity(u)
     if not e then return end
     if V.itemKind(u, e) == "door" then
-        local used = E.partyUse[u]
-        E.partyUse[u] = nil
+        local partyUse = U.sided(E, "partyUse")
+        local used = partyUse[u]
+        partyUse[u] = nil
         if used and Ext.Utils.MonotonicTime() - used < 15000 then return end
         if nearParty(u, E.DOOR_OPEN_M) and V.itemVisible(ctx(), u, e) then RPC.push("door_opened", { item = ref(u) }) end
         return
@@ -623,14 +650,15 @@ listen("Opened", 1, function(item)
         if o.pos and U.dist(o.pos, p) < 4.0 then near = true end
     end
     if not near then return end
-    E.openContainer = { uuid = u, t = Ext.Utils.MonotonicTime() }
+    U.sset(E, "openContainer", { uuid = u, t = Ext.Utils.MonotonicTime() })
     RPC.push("opened", { item = ref(u) })
 end)
 
 listen("Closed", 1, function(item)
     local u = V.uuid(item)
-    if E.openContainer and E.openContainer.uuid == u then
-        E.openContainer = nil
+    local open = U.sget(E, "openContainer")
+    if open and open.uuid == u then
+        U.sset(E, "openContainer", nil)
         RPC.push("closed", { item = ref(u) })
     end
 end)
@@ -648,7 +676,7 @@ end)
 
 listen("LevelGameplayStarted", 2, function(level, _)
     ctxCache = nil
-    E.trapsPrimed = false
+    U.sset(E, "trapsPrimed", false)
     -- Fairness: the agent sees the region name a player sees (loading screen / map), not the level id.
     RPC.push("level_changed", { region = BG3AI.State and BG3AI.State.REGION_NAMES[level] or level })
 end)
@@ -681,8 +709,9 @@ for _, ev in ipairs(REST_FLOW) do
         if ev[2] == 1 and step ~= "requested" and step ~= "gathered" and step ~= "gather_failed" and a1 ~= nil then
             step = step .. ":" .. tostring(a1):sub(1, 60)
         end
-        E.restFlow[#E.restFlow + 1] = { step = step, at = Ext.Utils.MonotonicTime() }
-        if #E.restFlow > 20 then table.remove(E.restFlow, 1) end
+        local flow = U.sided(E, "restFlow")
+        flow[#flow + 1] = { step = step, at = Ext.Utils.MonotonicTime() }
+        if #flow > 20 then table.remove(flow, 1) end
         RPC.push("rest_flow", { step = step })
     end)
 end
@@ -712,8 +741,8 @@ listen("GoldChanged", 2, function(holder, delta)
     local total = tonumber(osi(Osi.PartyGetGold, ctx().party[1]))
     if not total then return end
     total = math.floor(total)
-    local before = E.lastGold or (total - d)
-    E.lastGold = total
+    local before = U.sget(E, "lastGold") or (total - d)
+    U.sset(E, "lastGold", total)
     if total ~= before then RPC.push("gold_changed", { gold = total, delta = total - before }) end
 end)
 
@@ -724,13 +753,9 @@ end)
 E.knownTraps = E.knownTraps or {}
 E.lastPoll = 0
 
-local function poll()
-    local t = Ext.Utils.MonotonicTime()
-    if t - E.lastPoll < 1000 then return end
-    E.lastPoll = t
-    if Ext.Utils.GetGameState and tostring(Ext.Utils.GetGameState()) ~= "Running" then return end
+local function pollOnce(t)
     local c = V.context()
-    ctxCache, ctxTime = c, t
+    if not U.side() then ctxCache, ctxTime = c, t end
     local host = c.party[1]
     if not host then return end
     E.seedApproval(c)
@@ -738,22 +763,32 @@ local function poll()
     local center = c.observers[1] and c.observers[1].pos
     if center and V.index.ready then
         for _, u in ipairs(V.itemsAround(center, 18)) do
-            if not E.knownTraps[u] and truthy(osi(Osi.IsTrap, u)) and truthy(osi(Osi.IsTrapDiscovered, u)) then
-                E.knownTraps[u] = true
+            local known = U.sided(E, "knownTraps")
+            if not known[u] and truthy(osi(Osi.IsTrap, u)) and truthy(osi(Osi.IsTrapDiscovered, u)) then
+                known[u] = true
                 local e = V.entity(u)
                 local p = e and V.pos(e)
                 -- V.itemVisible, not V.perceived alone: it also notes the trap as seen (V.staticSeen), so a disarm
                 -- right after the stop finds it known (V.itemKnown). S064 11:37 / S065 11:40: "spotted e302", the
                 -- walk stopped 10 m short, then disarm(e302) "target is not visible" (the CanSee that spotted it was
                 -- gone) until the agent walked to 3-5 m.
-                if E.trapsPrimed and p and V.itemVisible(c, u, e, p) then
+                if U.sget(E, "trapsPrimed") and p and V.itemVisible(c, u, e, p) then
                     RPC.push("spotted", { item = ref(u), kind = "trap", pos = U.vec(p, 1) })
                 end
             end
         end
         -- First pass only learns traps that were already discovered before we loaded.
-        E.trapsPrimed = true
+        U.sset(E, "trapsPrimed", true)
     end
+end
+
+-- Once a second: each side's own poll in an arena (its approval seed, its traps).
+local function poll()
+    local t = Ext.Utils.MonotonicTime()
+    if t - E.lastPoll < 1000 then return end
+    E.lastPoll = t
+    if Ext.Utils.GetGameState and tostring(Ext.Utils.GetGameState()) ~= "Running" then return end
+    U.each_side(pollOnce, t)
 end
 
 if not E.tickSubscribed then
@@ -766,7 +801,8 @@ if not E.tickSubscribed then
 end
 
 RPC.register("state.open_container", function()
-    return E.openContainer and { uuid = E.openContainer.uuid, name = V.name(E.openContainer.uuid) } or {}
+    local open = U.sget(E, "openContainer")
+    return open and { uuid = open.uuid, name = V.name(open.uuid) } or {}
 end)
 
 -- The engine's own long-rest validation per party member: CanDoRest.LongRestErrorFlags (RestErrorFlags:
@@ -846,7 +882,7 @@ RPC.register("camp.rest_flow", function(args)
     local now = Ext.Utils.MonotonicTime()
     local since = now - (tonumber(args and args.since_ms) or 30000)
     local steps, stepMs = {}, {}
-    for _, f in ipairs(E.restFlow or {}) do
+    for _, f in ipairs(U.sget(E, "restFlow") or {}) do
         if f.at >= since then steps[#steps + 1], stepMs[#stepMs + 1] = f.step, math.floor(now - f.at) end
     end
     local story = {}

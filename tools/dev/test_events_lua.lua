@@ -486,6 +486,16 @@ do
     listeners.GoldChanged("S_Player_" .. HOST, -10) -- a move between members: the total stays 414
     listeners.GoldChanged("S_Player_" .. SH, 10)
     check("move between members: nothing", kinds(n) == "", kinds(n))
+    -- an arena: the listener runs once per side and the last total is that side's, not the no-side one
+    local store, R = {}, BG3AI.RPC
+    R.sget, R.sset = function(_, k) return store[k] end, function(_, k, v) store[k] = v end
+    E.lastGold, gold = 999, 100
+    listeners.GoldChanged("S_Player_" .. HOST, 10)
+    d = last("gold_changed")
+    R.sget, R.sset = nil, nil
+    check("a side's first change: from its own total", d and d.gold == 100 and d.delta == 10, got(d))
+    check("a side's total is stored as its own", store.lastGold == 100 and E.lastGold == 999, tostring(store.lastGold))
+    E.lastGold = nil
     Osi.PartyGetGold, Osi.GetStackAmount = realGold, nil
 end
 

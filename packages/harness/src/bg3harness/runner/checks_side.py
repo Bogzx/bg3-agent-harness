@@ -174,17 +174,20 @@ class ChecksSide:
         if w is None:
             w = self._facts = facts.FactsWriter(self.state.dir / "facts.jsonl", log=renv.log)
             if w.t0 is None:
+                own = self.opt.client is not None  # a match's runner plays no client: its sides' are in arena_start
                 w.mark("run_start", {"playthrough": self.opt.playthrough, "client": self.opt.client,
-                                     "model": self.opt.model})
+                                     "model": self.opt.model if own else None})
         return w
 
     def setup_env(self) -> dict:
         """The game's env: the mod's scn.* ops are refused unless a run seeds the dice or its scenario fixes a setting
-        the scn.* ops read or set (difficulty, karmic dice, the avatar's name; game_settings.SETUP_ENV)."""
+        the scn.* ops read or set (difficulty, karmic dice, the avatar's name; game_settings.SETUP_ENV); a match's
+        game gets the arena switch too (game_settings.ARENA_ENV)."""
         opt = getattr(self, "opt", None)   # a bare Runner (tests) has no opt
         want = getattr(opt, "scenario_settings", None) or {}
         fixed = any(want.get(k) is not None for k in (*scenario_file.CHECKED, "avatar_name"))
-        return ghost.setup_env(getattr(opt, "seed", None) is not None or fixed)
+        env = ghost.setup_env(getattr(opt, "seed", None) is not None or fixed)
+        return {**env, game_settings.ARENA_ENV: "1"} if getattr(opt, "arena", False) else env
 
     def game_setup(self) -> bool:
         """Once per runner, with a level loaded: the settings readout (the run record's game_settings, a facts

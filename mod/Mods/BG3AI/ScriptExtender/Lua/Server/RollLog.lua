@@ -223,7 +223,7 @@ local CRIT = { [1] = "nat20", [2] = "nat1" }
 
 local function listen(name, arity, fn)
     local ok, err = pcall(Ext.Osiris.RegisterListener, name, arity, "after", function(...)
-        local ok2, err2 = pcall(fn, ...)
+        local ok2, err2 = pcall(U.with_side, nil, fn, ...) -- no side: the records are the harness's, whenever fired
         if not ok2 then Ext.Utils.PrintWarning("[BG3AI] roll log " .. name .. ": " .. tostring(err2)) end
     end)
     if not ok then Ext.Utils.PrintWarning("[BG3AI] roll log cannot listen to " .. name .. ": " .. tostring(err)) end
@@ -419,7 +419,7 @@ end
 
 local function guarded(what, fn)
     return function(...)
-        local ok, err = pcall(fn, ...)
+        local ok, err = pcall(U.with_side, nil, fn, ...)
         if not ok then Ext.Utils.PrintWarning("[BG3AI] roll log " .. what .. ": " .. tostring(err)) end
     end
 end
@@ -484,6 +484,7 @@ end
 
 -- Same cursor contract as ref.since (Server/Referee.lua).
 RPC.register("roll.since", function(args)
+    if U.side() then error("roll.since is the harness's (no side)", 0) end -- every die rolled (audit S3-3)
     local since = tonumber(args.seq) or 0
     local limit = tonumber(args.limit) or 500
     local out = {}
@@ -499,6 +500,7 @@ end)
 
 -- Stream states now (rolls drawn, Karmic debts, seeds) and which sources fired.
 RPC.register("roll.snapshot", function()
+    if U.side() then error("roll.snapshot is the harness's (no side)", 0) end
     local r = L.streams()
     local streams = {}
     if r then

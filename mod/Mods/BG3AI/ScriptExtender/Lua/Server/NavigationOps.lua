@@ -495,8 +495,9 @@ RPC.register("nav.activity", function(args)
         end
     end
     out.active = V.selected(party) or party[1]
+    local side = RPC.side() -- a side counts its own jobs only (audit S3-3: it named every running job)
     for _, j in pairs(RPC.jobs or {}) do
-        if j.status == "running" then
+        if j.status == "running" and (not side or j.side == side) then
             out.jobs = out.jobs + 1
             out.job_kinds[#out.job_kinds + 1] = j.kind
         end

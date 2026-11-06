@@ -18,7 +18,12 @@ BG3AI.RPC = RPC
 
 RPC.ops = RPC.ops or {}
 RPC.jobs = RPC.jobs or {}
-RPC.nextJob = RPC.nextJob or 1
+RPC.nextJob = RPC.nextJob or 1 -- the next job id of no side (normal play, the harness)
+-- Arena fairness A8 (audit S3-5): a side's job ids count its own jobs only (one global counter showed how many jobs the
+-- other side started): A's from 1e9, B's from 2e9. Every job also has a start number (jobSerial) for the order.
+RPC.sideJobs = RPC.sideJobs or {}
+RPC.SIDE_JOB_BASE = { A = 1000000000, B = 2000000000 }
+RPC.jobSerial = RPC.jobSerial or 0
 RPC.events = RPC.events or {} -- keyed by seq: events[eventFirst .. eventSeq], at most EVENT_CAP of them
 RPC.eventSeq = RPC.eventSeq or 0
 if not RPC.eventFirst then
@@ -28,9 +33,9 @@ if not RPC.eventFirst then
     RPC.events, RPC.eventFirst = keyed, RPC.events[1] and RPC.events[1].seq or RPC.eventSeq + 1
 end
 RPC.EVENT_CAP = 4000
--- A8 (audit S3-4): the seq of the last event the ring dropped, so events.since can say a slow reader lost some
--- (events_lost)
-RPC.eventLost = RPC.eventLost or 0
+-- A8 (audit S3-4): reader -> the seq of the last of its events the ring dropped ("" untagged, "false" the harness's
+-- in an arena, "A"/"B"), so events.since can say a slow reader lost some (events_lost)
+RPC.eventLost = RPC.eventLost or {}
 RPC.JOB_CAP = 200
 
 local CONTEXT = Ext.IsServer() and "server" or "client"
@@ -61,6 +66,98 @@ RPC.QUIET_OPS = {
     ["sys.info"] = true, ["sys.mem"] = true, ["batch"] = true,
 }
 
+------------------------------------------------------------------------
+-- Sides (two teams in one fight, each driven by its own bridge). Inert unless BG3AI.Arena says an arena is active:
+-- RPC.side() is nil then and every branch below is today's path. A bridge started for a side sends "side" in the
+-- request envelope; Ctx.side holds it for that op (and for its jobs' callbacks, and for each listener run per side)
+-- and is cleared after, error or not.
+------------------------------------------------------------------------
+
+RPC.Ctx = RPC.Ctx or {}
+RPC.SIDES = { "A", "B" }
+RPC.eventSide = RPC.eventSide or {} -- seq -> "A" | "B" | false (no side: the harness's), only while an arena is active
+RPC.sideInputAt = RPC.sideInputAt or {} -- side -> when its last CAMERA_INPUT_OPS op began (arena.camera)
+-- A click's steps that go through the camera (Client/Pick.lua: project, check the hover): arena.camera doesn't move the
+-- view right after one. Reads (ui.story_timer, ui.selected, ...) aren't input: counting them kept the camera from ever
+-- moving in a match (live window 6: each get_combat_state's ui.story_timer, every ~2 s per side).
+RPC.CAMERA_INPUT_OPS = { ["ui.screen_pos"] = true, ["ui.hover_check"] = true, ["ui.ground_check"] = true }
+
+function RPC.arena_active()
+    local Ar = BG3AI.Arena
+    return Ar ~= nil and Ar.active() == true
+end
+
+-- The side of the running op/job/listener run, nil without an active arena.
+function RPC.side()
+    if RPC.arena_active() then return RPC.Ctx.side end
+    return nil
+end
+
+-- fn(...) with Ctx.side = side, the previous side restored after, error or not (the error goes on).
+function RPC.with_side(side, fn, ...)
+    local prev = RPC.Ctx.side
+    RPC.Ctx.side = side
+    local r = table.pack(pcall(fn, ...))
+    RPC.Ctx.side = prev
+    if not r[1] then error(r[2], 0) end
+    return table.unpack(r, 2, r.n)
+end
+
+-- Listener-time code runs once with no side (today; the harness's view) and, in an arena, once more per side, so
+-- each side's reads use its own team. Every run is attempted; the first error goes on after them.
+function RPC.each_side(fn, ...)
+    local first
+    local runs = RPC.arena_active() and { false, "A", "B" } or { false }
+    for _, s in ipairs(runs) do
+        local ok, err = pcall(RPC.with_side, s or nil, fn, ...)
+        if not ok and first == nil then first = err end
+    end
+    if first ~= nil then error(first, 0) end
+end
+
+-- A per-session memory: owner[key] with no side; a table of its own per side (created empty).
+RPC.sidedOwners = RPC.sidedOwners or {}
+function RPC.sided(owner, key)
+    local s = RPC.side()
+    if not s then return owner[key] end
+    local v = RPC.sget(owner, key)
+    if v == nil then
+        v = {}
+        RPC.sset(owner, key, v)
+    end
+    return v
+end
+
+-- A per-session value (a table that gets replaced, a counter): owner[key] with no side, else the side's own.
+function RPC.sget(owner, key)
+    local s = RPC.side()
+    if not s then return owner[key] end
+    local t = owner._sides and owner._sides[s]
+    return t and t[key]
+end
+
+function RPC.sset(owner, key, v)
+    local s = RPC.side()
+    if not s then
+        owner[key] = v
+        return
+    end
+    RPC.sidedOwners[owner] = true
+    owner._sides = owner._sides or {}
+    owner._sides[s] = owner._sides[s] or {}
+    owner._sides[s][key] = v
+end
+
+-- The end of an arena: every side's memories, side-tagged events and side marks on jobs go.
+function RPC.clear_sides()
+    for owner in pairs(RPC.sidedOwners) do owner._sides = nil end
+    RPC.sidedOwners = {}
+    for seq, tag in pairs(RPC.eventSide) do
+        if tag then RPC.events[seq] = nil end
+    end
+    RPC.eventSide = {}
+end
+
 -- The busy answer says which: the bridge (busywait.py BEFORE_MARK) asks any op again when it reads BUSY_BEFORE.
 RPC.BUSY_BEFORE = "refused before its first UI call, nothing was done"
 RPC.BUSY_AFTER = "met it after a UI call ran"
@@ -83,15 +180,24 @@ function BG3AI.rpc(json)
             .. (a.target and (" " .. tostring(a.target)) or ""))
     end
     local UI = BG3AI.UI
-    local hits, calls, job0 = UI and UI.busyHits, UI and UI.calls, RPC.nextJob
-    local ok2, res = pcall(fn, req.args or {})
+    local hits, calls, job0 = UI and UI.busyHits, UI and UI.calls, RPC.jobSerial
+    local side = (req.side == "A" or req.side == "B") and req.side or nil
+    if side and RPC.CAMERA_INPUT_OPS[req.op] then RPC.sideInputAt[side] = now_ms() end
+    local ok2, res
+    if side then
+        ok2, res = pcall(RPC.with_side, side, fn, req.args or {})
+    else
+        ok2, res = pcall(fn, req.args or {})
+    end
     if hits and UI.busyHits ~= hits then
         -- a UI read met the busy UI (Client/UI.lua UI.busy): no answer built from refused reads; a job the op
         -- started on them is dropped
-        for id = job0, RPC.nextJob - 1 do
-            local j = RPC.jobs[id]
-            if j then RPC.finish_job(j, "interrupted", nil, UI.BUSY_ERR) end
+        local started = {}
+        for _, j in pairs(RPC.jobs) do
+            if (j.serial or 0) > job0 then started[#started + 1] = j end
         end
+        table.sort(started, function(a, b) return a.serial < b.serial end)
+        for _, j in ipairs(started) do RPC.finish_job(j, "interrupted", nil, UI.BUSY_ERR) end
         -- refused at the gate of its first UI call and that one refusal ended the op: nothing read, nothing pressed,
         -- so any op may be asked again (the bridge's busywait.py does). After a call ran, or when the op caught a
         -- refusal and went on (a raw Ext.Input press isn't gated), a press may have happened before this answer.
@@ -113,30 +219,50 @@ end
 -- cost 41 us per push, a 100-event burst ~4 ms of a frame).
 ------------------------------------------------------------------------
 
+-- An event's reader key in RPC.eventLost: its side tag (nil untagged, false the harness's in an arena, "A"/"B").
+local function lost_key(tag)
+    if tag == nil then return "" end
+    return tostring(tag)
+end
+
 function RPC.push(kind, data)
     RPC.eventSeq = RPC.eventSeq + 1
     local ev = { seq = RPC.eventSeq, t = now_ms(), kind = kind, data = data }
     RPC.events[ev.seq] = ev
+    -- In an arena an event belongs to the side whose op/job/listener run pushed it (false: the harness's run)
+    local tag
+    if RPC.arena_active() then
+        tag = RPC.Ctx.side or false
+        RPC.eventSide[ev.seq] = tag
+    end
     while RPC.eventSeq - RPC.eventFirst >= RPC.EVENT_CAP do
-        if RPC.events[RPC.eventFirst] then RPC.eventLost = RPC.eventFirst end
+        if RPC.events[RPC.eventFirst] then RPC.eventLost[lost_key(RPC.eventSide[RPC.eventFirst])] = RPC.eventFirst end
         RPC.events[RPC.eventFirst] = nil
+        RPC.eventSide[RPC.eventFirst] = nil
         RPC.eventFirst = RPC.eventFirst + 1
     end
-    -- Wake jobs that wait on events.
+    -- Wake jobs that wait on events (in an arena: a job hears its own side's events only, as that side).
     for _, job in pairs(RPC.jobs) do
-        if job.status == "running" and job.on_event then
-            local okj, err = pcall(job.on_event, job, ev)
+        if job.status == "running" and job.on_event and (tag == nil or tag == (job.side or false)) then
+            local okj, err
+            if tag == nil then
+                okj, err = pcall(job.on_event, job, ev)
+            else
+                okj, err = pcall(RPC.with_side, job.side, job.on_event, job, ev)
+            end
             if not okj then RPC.finish_job(job, "failed", nil, tostring(err)) end
         end
     end
     return ev.seq
 end
 
--- A8 (audit S3-4): the first row when the ring dropped events newer than the reader's cursor (a slow reader): its
--- seq is the last dropped one, so the reader's cursor moves past the loss and it is said once.
-local function lost_row(since)
-    if RPC.eventLost <= since then return nil end
-    return { seq = RPC.eventLost, t = now_ms(), kind = "events_lost",
+-- A8 (audit S3-4): the first row when the ring dropped events of this reader newer than its cursor (a slow reader):
+-- its seq is the last dropped one, so the reader's cursor moves past the loss and it is said once.
+local function lost_row(since, keys)
+    local last = 0
+    for _, k in ipairs(keys) do last = math.max(last, RPC.eventLost[k] or 0) end
+    if last <= since then return nil end
+    return { seq = last, t = now_ms(), kind = "events_lost",
         data = "some events before these were dropped (the game's event buffer was full) and can't be shown" }
 end
 
@@ -145,7 +271,18 @@ RPC.register("events.since", function(args)
     local limit = tonumber(args.limit) or 200
     local out = {}
     local first = math.max(math.floor(since) + 1, RPC.eventFirst)
-    out[1] = lost_row(since)
+    if RPC.arena_active() then
+        -- a side reads its own events; no side (the harness) reads the no-side run's and those from before the arena
+        local want = RPC.side() or false
+        out[1] = lost_row(since, want and { want } or { "false", "" })
+        for seq = first, RPC.eventSeq do
+            if #out >= limit then break end
+            local tag = RPC.eventSide[seq]
+            if tag == want or (tag == nil and not want) then out[#out + 1] = RPC.events[seq] end
+        end
+        return { latest = RPC.eventSeq, events = out }
+    end
+    out[1] = lost_row(since, { "", "false", "A", "B" })
     for seq = first, math.min(RPC.eventSeq, first + limit - #out - 1) do
         out[#out + 1] = RPC.events[seq]
     end
@@ -163,14 +300,24 @@ end)
 ------------------------------------------------------------------------
 
 function RPC.start_job(kind, spec)
-    local id = RPC.nextJob
-    RPC.nextJob = id + 1
+    local side = RPC.side()
+    local id
+    if side then -- A8: a side's ids count its own jobs
+        RPC.sideJobs[side] = (RPC.sideJobs[side] or 0) + 1
+        id = RPC.SIDE_JOB_BASE[side] + RPC.sideJobs[side]
+    else
+        id = RPC.nextJob
+        RPC.nextJob = id + 1
+    end
+    RPC.jobSerial = RPC.jobSerial + 1
     local job = spec or {}
-    job.id = id
+    job.id, job.serial = id, RPC.jobSerial
+    RPC.lastJob = job -- the newest job (tests, debugging)
     job.kind = kind
     job.status = "running"
     job.started = now_ms()
     job.deadline = job.started + (job.timeout_ms or 20000)
+    job.side = side -- its callbacks run as this side (tick_jobs, RPC.push, finish_job)
     RPC.jobs[id] = job
     -- Bound the table: drop the oldest finished jobs.
     local count = 0
@@ -178,11 +325,19 @@ function RPC.start_job(kind, spec)
     if count > RPC.JOB_CAP then
         local oldest
         for jid, j in pairs(RPC.jobs) do
-            if j.status ~= "running" and (oldest == nil or jid < oldest) then oldest = jid end
+            if j.status ~= "running" and (oldest == nil or (j.serial or 0) < (RPC.jobs[oldest].serial or 0)) then
+                oldest = jid
+            end
         end
         if oldest then RPC.jobs[oldest] = nil end
     end
     return job
+end
+
+-- fn(job, ...) as the job's side (a job's callbacks run as its side), pcall'd.
+local function as_job(job, fn, ...)
+    if job.side then return pcall(RPC.with_side, job.side, fn, job, ...) end
+    return pcall(fn, job, ...)
 end
 
 function RPC.finish_job(job, status, result, err)
@@ -191,7 +346,7 @@ function RPC.finish_job(job, status, result, err)
     local tk = RPC.ticking
     if tk and tk.job == job and BG3AI.UI and BG3AI.UI.busyHits ~= tk.hits then return end
     if job.hold and not job.held then
-        local ok, wait = pcall(job.hold, job)
+        local ok, wait = as_job(job, job.hold)
         if ok and wait then
             job.held = { status = status, result = result, err = err }
             return
@@ -199,14 +354,16 @@ function RPC.finish_job(job, status, result, err)
     end
     job.held = nil
     if job.annotate then
-        local ok, r = pcall(job.annotate, job, result)
+        local ok, r = as_job(job, job.annotate, result)
         if ok then result = r end
     end
     job.status = status
     job.result = result
     job.error = err
     job.finished = now_ms()
-    if job.on_finish then pcall(job.on_finish, job) end
+    if job.on_finish then
+        if job.side then pcall(RPC.with_side, job.side, job.on_finish, job) else pcall(job.on_finish, job) end
+    end
     -- Push: bg3le sends every Lua print to each attached debugger, so the bridge's listener wakes the
     -- waiting call at once instead of polling job.poll every 0.1 s (~45 polls per combat_turn, S022-S026).
     pcall(Ext.Utils.Print, "BG3AI.job " .. CONTEXT .. " " .. tostring(job.id) .. " " .. tostring(status))
@@ -220,24 +377,30 @@ local function job_view(job)
     }
 end
 
+-- The job by id; with a side, only that side's (a job started without a side is no side's). Another side's job reads
+-- as one that doesn't exist (A8: "not your job" told the two apart).
+function RPC.own_job(id)
+    local job = RPC.jobs[tonumber(id)]
+    local side = RPC.side()
+    if not job or (side and job.side ~= side) then error("no such job " .. tostring(id), 0) end
+    return job
+end
+local own_job = RPC.own_job
+
 RPC.register("job.poll", function(args)
-    local job = RPC.jobs[tonumber(args.id)]
-    if not job then error("no such job " .. tostring(args.id)) end
-    return job_view(job)
+    return job_view(own_job(args.id))
 end)
 
 -- A waited-on job that outlived the bridge's wait: announce its end as job_finished from now on, as if it had been
 -- started with notify (audit ACT-10: its outcome was invisible). The view says whether it already ended.
 RPC.register("job.notify", function(args)
-    local job = RPC.jobs[tonumber(args.id)]
-    if not job then error("no such job " .. tostring(args.id)) end
+    local job = own_job(args.id)
     if job.status == "running" then job.notify = true end
     return job_view(job)
 end)
 
 RPC.register("job.cancel", function(args)
-    local job = RPC.jobs[tonumber(args.id)]
-    if not job then error("no such job " .. tostring(args.id)) end
+    local job = own_job(args.id)
     if job.on_cancel then pcall(job.on_cancel, job) end
     RPC.finish_job(job, "interrupted", nil, "cancelled")
     return job_view(job)
@@ -250,7 +413,7 @@ local function tick_jobs()
     for _, job in pairs(RPC.jobs) do
         if job.status == "running" and job.held then
             local h = job.held
-            local ok, more = pcall(job.hold, job)
+            local ok, more = as_job(job, job.hold)
             if not (ok and more) then
                 job.hold = nil
                 RPC.finish_job(job, h.status, h.result, h.err)
@@ -262,7 +425,12 @@ local function tick_jobs()
             if job.on_tick and not (UI and UI.busy and UI.busy()) then
                 local tk = { job = job, hits = UI and UI.busyHits }
                 RPC.ticking = tk
-                local ok, err = pcall(job.on_tick, job)
+                local ok, err
+                if job.side then
+                    ok, err = pcall(RPC.with_side, job.side, job.on_tick, job)
+                else
+                    ok, err = pcall(job.on_tick, job)
+                end
                 RPC.ticking = nil
                 if UI and UI.busyHits ~= tk.hits then
                     job.busy_ticks = (job.busy_ticks or 0) + 1
@@ -271,7 +439,13 @@ local function tick_jobs()
                 end
             end
             if job.status == "running" and t > job.deadline then
-                if job.on_timeout then pcall(job.on_timeout, job) end
+                if job.on_timeout then
+                    if job.side then
+                        pcall(RPC.with_side, job.side, job.on_timeout, job)
+                    else
+                        pcall(job.on_timeout, job)
+                    end
+                end
                 RPC.finish_job(job, "timeout", job.partial, "timed out")
             end
         end
