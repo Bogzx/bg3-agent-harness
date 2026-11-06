@@ -202,6 +202,15 @@ game unless it says so.
   tick after Running (SIGSEGV at 0xa0 in `ThreadRegistry::RequestThreadIndex`); reproduced with `BG3LE_IMGUI=0`.
   bg3le with 0001-0013: sha256 e84d6044c057f3d8e3c4d8ce2259bac944fe873a18f6d5603d891a98e0be0f95, pinned by
   `releases/bench-v0.11.json` (was b7ecfd06, untagged and ungraded); `releases/bench-v0.10.json` is unchanged.
+- bg3le patches 0014 and 0015, for a game crash in `Noesis::bg3le_ui::l_get`: a call through a held object that was
+  already on the allocator's free list. 0014: `push_object` no longer raises the count of an object whose count is 0
+  (its `OnDestroy` is running): it returns nil. `object_arg` holds a reference for the whole C call, and refuses a dying
+  object with the existing "Noesis object is gone". A reference that would be the last goes to the UI thread's queue.
+  0015: the crash log names the running Ext.UI call: its function, string argument, object, class, and the object's
+  first word and count. Tested offline by `tools/test_bg3le_ui_refs.py`, which also requires the crash on the series
+  without the fix. What freed the object in that crash is not known. bg3le with 0001-0015: sha256
+  498efbceca3144922a77809be8a31412cf947e18f569828a31ffdbce8a0a6085, pinned by `releases/bench-v0.11.json` (was
+  e84d6044); the v0.8-v0.10 releases are unchanged.
 - Operator messages (the playthrough app's operator chat): with `BG3AI_OPERATOR_DIR` set, the bg3 server adds each
   pending message from `operator.jsonl` there to the next tool result the client gets, once, as `OPERATOR MESSAGE
   (from the person running this playthrough, sent HH:MM:SS): <text>`, and appends `{id, t, session, tool}` to
