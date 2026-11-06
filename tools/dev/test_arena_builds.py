@@ -576,6 +576,26 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
                 casting = STATIC["classes"][b["class"]]["casting"]
                 self.assertEqual({k["spell_abilities"][x] for x in got} - {casting}, set())
 
+    def test_the_l5_wizards_accepted_rows_are_its_unprepared_spells_and_their_prepare_type_only(self):
+        wizard = next(b for b in tier(5)["builds"] if b["id"] == "wizard")
+        accepted = {a["field"]: a for a in wizard["reference"]["accepted"]}
+        self.assertEqual(set(accepted), {"derived", "spells", "spellcast"})  # D152's first condition: no `prepared` row
+        learned = [x for ids in wizard["script"]["cc"].get("spells", []) for x in ids]
+        learned += [x for u in wizard["script"]["level_ups"] for ids in u.get("spells", []) for x in ids]
+        held = [x for c in plan(tier(5), "wizard")["choices"] if c["kind"] == "spells" for x in c["ids"]]
+        out = [x for x in learned if x not in held]
+        self.assertEqual(len(out), 5)
+        slots = {"2", "3"}  # a level-5 Wizard's upcast slots
+        ups = [x for s in out for p, ids in STATIC["upcasts"].get(s, {}).items() if p in slots for x in ids]
+        self.assertEqual(sorted(accepted["spells"]["only_reference"]), sorted(out + ups))
+        self.assertEqual(accepted["spells"]["only_twin"], [])
+        cast = accepted["spellcast"]
+        self.assertEqual(
+            sorted(r.replace("|AlwaysPrepared|", "|RequiresPreparation|") for r in cast["only_twin"]),
+            sorted(r for r in cast["only_reference"] if r.split("|")[0] not in out + ups),
+        )
+        self.assertEqual(len(cast["only_reference"]) - len(cast["only_twin"]), len(out + ups))
+
     def test_a_kits_own_spell_with_upcasts_is_unlocked_and_a_class_rows_keeps_its_upcasts_added(self):
         ups = {x for v in STATIC["upcasts"].values() for ids in v.values() for x in ids}
         bard, wizard = plan(tier(5), "bard"), plan(tier(5), "wizard")
