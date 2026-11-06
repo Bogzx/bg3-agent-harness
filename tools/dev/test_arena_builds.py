@@ -579,7 +579,9 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
     def test_the_l5_wizards_accepted_rows_are_its_unprepared_spells_and_their_prepare_type_only(self):
         wizard = next(b for b in tier(5)["builds"] if b["id"] == "wizard")
         accepted = {a["field"]: a for a in wizard["reference"]["accepted"]}
-        self.assertEqual(set(accepted), {"derived", "spells", "spellcast"})  # D152's first condition: no `prepared` row
+        self.assertEqual(set(accepted), {"derived", "spells", "spellcast", "prepared"})
+        self.assertEqual(accepted["prepared"]["only_twin"], ["Shout_ArcaneRecovery_2", "Shout_ArcaneRecovery_3"])
+        self.assertEqual(accepted["prepared"]["only_reference"], [])
         learned = [x for ids in wizard["script"]["cc"].get("spells", []) for x in ids]
         learned += [x for u in wizard["script"]["level_ups"] for ids in u.get("spells", []) for x in ids]
         held = [x for c in plan(tier(5), "wizard")["choices"] if c["kind"] == "spells" for x in c["ids"]]

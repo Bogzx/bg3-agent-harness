@@ -1350,6 +1350,15 @@
        "Zone_BurningHands|Intelligence|RequiresPreparation|15|7"
       ],
       "why": "Ruled by the orchestrator (D152). The same rows as `spells`, and a twin's book rows are AlwaysPrepared where a Wizard's are RequiresPreparation, with the same ability, DC and attack; a twin can't change what it holds in a fight."
+     },
+     {
+      "field": "prepared",
+      "only_twin": [
+       "Shout_ArcaneRecovery_2",
+       "Shout_ArcaneRecovery_3"
+      ],
+      "only_reference": [],
+      "why": "Ruled by the orchestrator (D183, D140 of the 4v4 log). Arcane Recovery's upcast rows: a class row gives a twin the spell, so the kit adds these two by AddSpell, and an AddSpell'd row reads in `prepared`. It's a class resource spell with nothing to prepare, the reference holds both rows in `spells`, and an extra `prepared` row stopped no upcast and took no wrong slot (website ops/logs/live.md, 'Unlock probe and owed scratch reads', 2026-11-07)."
      }
     ]
    }
