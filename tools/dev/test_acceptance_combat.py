@@ -98,7 +98,7 @@ ENEMY = {"active": True, "round": 2, "turn_group": ["mephit"]}
 class HandedOn(unittest.TestCase):
     STILL = "end_turn e4 Shadowheart: done — ended\nother combatants are still acting"
 
-    def _handed(self, out: str, reads: list[dict], screen: str = "?") -> tuple[bool, int]:
+    def _handed(self, out: str, reads: list[dict | None], screen: str = "?") -> tuple[bool, int]:
         """handed_on on scripted state.combat reads (the last one repeats); returns it and the reads made."""
         made: list[int] = []
 
@@ -135,6 +135,15 @@ class HandedOn(unittest.TestCase):
     def test_a_turn_still_its_own_in_the_same_round_fails_at_the_limit(self):
         stuck = {"active": True, "round": 2, "turn_group": ["me"]}
         self.assertEqual(self._handed(self.STILL, [stuck]), (False, combat.HANDED_READS))
+
+    def test_a_failed_read_is_not_the_fights_end(self):
+        self.assertEqual(self._handed(self.STILL, [None, ENEMY]), (False, combat.HANDED_READS))
+
+    def test_every_read_failing_fails_at_the_limit(self):
+        self.assertEqual(self._handed(self.STILL, [None]), (False, combat.HANDED_READS))
+
+    def test_a_failed_read_then_the_next_members_turn_is_handed_on(self):
+        self.assertEqual(self._handed(self.STILL, [None, {"active": True, "turn_group": ["wyll"]}]), (True, 2))
 
     def test_the_other_ends_of_the_wait_read_as_before(self):
         now = "now e8's turn\nYOUR ACTIONS"

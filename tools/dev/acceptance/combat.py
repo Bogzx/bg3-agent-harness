@@ -88,7 +88,10 @@ def handed_on(out: str, who: str, party: set[str], round_: int | None) -> bool:
         over = "combat is over" in out or "waiting stopped" in out
         return over or bool(nxt and "YOUR ACTIONS" in out and who not in T.acting(cs))
     for n in range(HANDED_READS):
-        cs = S.game.try_rpc("state.combat") or {}
+        cs = S.game.try_rpc("state.combat")
+        if cs is None:  # a failed read says nothing; the fight's end reads {active=false}
+            time.sleep(0.5)
+            continue
         mine = T.party_acting(cs, party)
         later = round_ is not None and (cs.get("round") or 0) > round_
         if not cs.get("active") or ui_screen() in ct._PROMPT_SCREENS or (mine and (who not in mine or later)):
