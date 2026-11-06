@@ -10,6 +10,11 @@ operator) and starts no new one. When the process still runs STOP_GRACE_S after 
 sends it one SIGTERM, play.py bench's first-signal stop, which does the same. A second signal would exit without
 recording the run, so the panel never sends one.
 
+A suite whose release has `tickets` takes only runs played with a ticket. When a site token is saved and a site named,
+the matrix file says `ticket = "required"` and the matrix process (bg3bench.tickets) does the rest; without them the
+runs play as usual and can't be submitted to that suite. MatrixProcess's environment names the site and the panel's
+config dir, the token's file: never the token.
+
 Record and Submit when done: Start passes Record to play.py bench as BG3AI_BENCH_RECORD (1 or 0; the run host records
 the game window into <run_dir>/recording/ when it is on) and keeps both choices in runtime/panel/<name>.json, which
 auto.py reads to pack and validate the matrix's valid runs (never to upload them). Submit when done needs Record: a
@@ -84,8 +89,10 @@ def _toml_str(s: str) -> str:
     return json.dumps(s)  # a TOML basic string: the names are slugs and paths, json's escapes are TOML's
 
 
-def matrix_toml(name: str, plan: Mapping[str, Any], *, budget: Path, allow_unverified: bool) -> str:
-    """The matrix file (matrix_cli's format) that plays exactly plan["jobs"]."""
+def matrix_toml(
+    name: str, plan: Mapping[str, Any], *, budget: Path, allow_unverified: bool, ticket: bool = False
+) -> str:
+    """The matrix file (matrix_cli's format) that plays exactly plan["jobs"], each under a ticket when `ticket`."""
     jobs = plan["jobs"]
     profiles = list(dict.fromkeys(f"profiles/{j['profile']}.toml" for j in jobs))
     scenarios = list(dict.fromkeys(j["scenario"] for j in jobs))
@@ -103,6 +110,7 @@ def matrix_toml(name: str, plan: Mapping[str, Any], *, budget: Path, allow_unver
         f"repeats = {max(j['repeat'] for j in jobs)}",
         "allow_gaps = false",
         f"allow_unverified = {'true' if allow_unverified else 'false'}",
+        *(['ticket = "required"'] if ticket else []),
         "",
         "[budget]",
         f"file = {_toml_str(str(budget))}",
@@ -328,8 +336,10 @@ def start(
     record: bool = True,
     submit_when_done: bool = False,
     proc: ProcReader | None = None,
+    ticket: bool = False,
 ) -> dict[str, Any]:
-    """Start a plan's jobs: refuses a plan that can't start or a second matrix; returns the runner's state."""
+    """Start a plan's jobs (each under a ticket when `ticket`): refuses a plan that can't start or a second matrix;
+    returns the runner's state."""
     st = runner.state()
     if st is not None and st["running"]:
         raise PanelError(f"matrix {st['name']} is running: stop it first")
@@ -342,7 +352,7 @@ def start(
     name = matrix_name(now)  # a slug: matrix_cli refuses a name with other characters
     try:
         path, log = write_matrix(
-            runtime, name, matrix_toml(name, plan, budget=budget, allow_unverified=allow_unverified)
+            runtime, name, matrix_toml(name, plan, budget=budget, allow_unverified=allow_unverified, ticket=ticket)
         )
     except FileExistsError:
         raise PanelError(f"matrix {name} was started this second already") from None

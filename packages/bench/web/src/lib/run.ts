@@ -85,6 +85,30 @@ export function attempts(runs: RunRow[]): Map<string, [number, number]> {
   return out;
 }
 
+/** New run's line about tickets (null: this suite doesn't use them). */
+export function ticketNote(t: Plan["ticket"]): string | null {
+  if (!t.required) return null;
+  if (!t.will) {
+    const missing = t.token ? "a site URL (--site)" : "a site token (Settings)";
+    return `Without ${missing} these runs play as usual, but can't be submitted: this suite takes only runs with a ticket from the site.`;
+  }
+  return (
+    "Each run takes a ticket from the site before it starts. The site learns your account, the scenario, model, client " +
+    "and condition, the start and end times, line counts and hashes, and whether the run ended valid (or why not, from " +
+    "a fixed list), also for runs you never submit. It gets no game text, score or cost. If the site can't be reached, " +
+    "the run doesn't start."
+  );
+}
+
+/** A finished run's ticket on Results (null: it has none). */
+export function ticketLine(t: RunRow["ticket"]): string | null {
+  if (!t) return null;
+  if (t.beats_stopped) return `ticket closed by the site (HTTP ${t.beats_stopped}): this run can't be submitted`;
+  const beats = `${t.beats_landed} of ${t.beats_sent} beats`;
+  if (!t.end) return `ticket: ${beats}, no end sent`;
+  return t.end.delivered ? `ticket: ${beats}, end delivered` : `ticket: ${beats}, end not delivered: Validate and Upload try again`;
+}
+
 /** Why Start can't be pressed for a plan (null: it can); the server checks the same again. */
 export function startProblem(plan: Plan | null, running: boolean): string | null {
   if (running) return "a matrix is running (see Queue): stop it first";

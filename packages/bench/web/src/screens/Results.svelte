@@ -8,8 +8,8 @@
   import { api } from "../lib/api";
   import { usd } from "../lib/format";
   import {
-    attempts, bytes, minutes, relaunches, renderNote, uploadProblem, validateProblem, verdict, videoProblem,
-    wantsVideo,
+    attempts, bytes, minutes, relaunches, renderNote, ticketLine, uploadProblem, validateProblem, verdict,
+    videoProblem, wantsVideo,
   } from "../lib/run";
   import type { Prepared, RenderState, RunRow, Submission } from "../lib/types";
 
@@ -92,8 +92,10 @@
           {#each rows as r (r.dir)}
             {@const a = n.get(r.dir)}
             {@const why = validateProblem(r)}
+            {@const ticket = ticketLine(r.ticket)}
             <tr>
-              <td><code>{r.run_id ?? r.dir}</code>{#if r.pilot.length}<div class="faint">pilot</div>{/if}</td>
+              <td><code>{r.run_id ?? r.dir}</code>{#if r.pilot.length}<div class="faint">pilot</div>{/if}
+                {#if ticket}<div class="faint">{ticket}</div>{/if}</td>
               <td>{r.scenario ?? "–"}</td>
               <td>{r.model ?? "–"}<div class="faint">{r.client ?? ""} · {r.condition ?? ""}</div></td>
               <td><span class="st {r.valid === false ? 'FAIL' : r.passed === true ? 'PASS' : 'none'}">{verdict(r)}</span>

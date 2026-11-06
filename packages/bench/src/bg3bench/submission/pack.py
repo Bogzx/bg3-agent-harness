@@ -12,6 +12,11 @@ released, a run without its manifest, result, facts or events, and a bundle over
 panel's prepare) also refuses a matrix attempt its queue didn't accept (accepted.refusal: one run per job, the
 queue's; a superseded attempt never counts, even one whose result.json says valid).
 
+A run of a suite whose release has `tickets` needs its run dir's ticket.json (bg3bench.tickets): bundle.json's `ticket`
+names it, with root and lines recomputed from the scrubbed files (ticket_hash), and a copy of ticket.json goes beside
+the bundle dir for the panel's T03. Without one it is refused. Any other suite's bundle has no `ticket`, whatever the
+run dir holds: a validator from before tickets, at that suite's own commit, would reject the key (F03).
+
 A maximise run's score is graded again from its packed facts by this grader (`rescored`), so a run recorded with an
 older one (before the score started at the published start state) is submitted with the score G01 computes; the
 run dir's result.json is left as it is.
@@ -48,7 +53,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from bg3bench import accepted, graders, saves, scenario, suite
-from bg3bench.submission import bundle, scrub
+from bg3bench.submission import bundle, scrub, ticket_hash
 
 Json = dict[str, Any]
 
@@ -59,6 +64,8 @@ BUNDLE_DIR = "bundle"
 ARCHIVE = "bundle.tar.gz"
 SCENARIO_DIR = suite.PACKAGE_ROOT / "scenarios"
 VIDEO = "evidence.mp4"  # the renderer's (bg3harness.video.render)
+RELEASES = suite.PACKAGE_ROOT / "releases"  # <suite>.json: `tickets` says its runs need a ticket
+TICKET = "ticket.json"  # bg3bench.tickets: in the run dir, and copied beside the bundle dir; never in the bundle
 MATRICES = Path("runtime/matrix")  # the CLI's: a matrix attempt its queue didn't accept is refused (accepted.py)
 YOUTUBE_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 
@@ -131,6 +138,22 @@ def rescored(sc: Json, timeline: list[Json], fingerprint: Json | None) -> Json |
     return {k: m[k] for k in graders.SCORE_KEYS}
 
 
+def requires_ticket(tag: str, releases: Path | None = None) -> bool:
+    """Whether a suite's shipped release file has `tickets` (no such file: no)."""
+    try:
+        doc = json.loads(((releases or RELEASES) / f"{tag}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(doc, dict) and doc.get("tickets") is not None
+
+
+def ticket_field(ticket: Json, files: Mapping[str, bytes]) -> Json:
+    """bundle.json's `ticket`: the run's ticket, root and lines recomputed from the scrubbed files."""
+    lines = ticket_hash.counts(files)
+    nonce = ticket["nonce"]
+    return {"id": ticket["id"], "nonce": nonce, "root": ticket_hash.root_at(nonce, files, lines), "lines": lines}
+
+
 def _jsonl(data: bytes) -> list[Json]:
     return [json.loads(ln) for ln in data.decode().splitlines() if ln.strip()]
 
@@ -148,6 +171,7 @@ def envelope(
     video: Json | None = None,
     recording: Json | None = None,
     kind: str | None = None,
+    ticket: Json | None = None,
 ) -> Json:
     model, client, sc = man["model"], man["client"], man["scenario"]
     events = [e for n, d in files.items() if EVENTS.fullmatch(n) for e in _jsonl(d)]
@@ -178,7 +202,7 @@ def envelope(
         "recording": recording,
         "scrub": {"version": scrub.VERSION, "replacements": replacements},
         "packed": packed,
-    }
+    } | ({"ticket": ticket} if ticket else {})
 
 
 def size_problems(files: Mapping[str, bytes]) -> list[str]:
@@ -243,10 +267,12 @@ def pack(
     kind: str | None = None,
     new_id: Callable[[], str] = lambda: str(uuid.uuid4()),
     now: Callable[[], float] = time.time,
+    ticket_required: bool | None = None,
 ) -> Packed:
     """Pack run_dir into out_dir (bundle/ and bundle.tar.gz; out_dir must not hold a bundle yet). `scenarios` and
     `released` default to the installed suite's scenario files and pinned suite versions; `literals` are values
-    to scrub verbatim (the submitter's .env values)."""
+    to scrub verbatim (the submitter's .env values); `ticket_required` defaults to what the run's suite's shipped
+    release file says (requires_ticket)."""
     run_dir, out_dir = Path(run_dir), Path(out_dir)
     if not run_dir.is_dir():
         raise PackError(f"{run_dir}: not a run dir")
@@ -260,6 +286,14 @@ def pack(
     released = suite.load_pins().keys() if released is None else released
     if why := refusal(man, res, scenarios, released):
         raise PackError(f"{run_dir.name}: refused, {why}")
+    ticket: Json | None = None
+    if requires_ticket(man["versions"]["suite"]) if ticket_required is None else ticket_required:
+        try:
+            ticket = json.loads((run_dir / TICKET).read_bytes())
+        except (OSError, ValueError):
+            ticket = None
+        if not isinstance(ticket, dict) or not {"id", "nonce"} <= ticket.keys():
+            raise PackError(f"{run_dir.name}: refused, this suite takes only runs played with a ticket")
     scrubber = scrub.Scrubber(literals)
     files = {n: scrubber.file(n, (run_dir / n).read_bytes()) for n in names}
     man = json.loads(files["manifest.json"])  # scrubbed
@@ -282,6 +316,7 @@ def pack(
         video=video,
         recording=recording,
         kind=kind,
+        ticket=ticket_field(ticket, files) if ticket else None,
     )
     files[bundle.ENVELOPE] = bundle.canonical_bytes(env)
     if problems := size_problems(files):
@@ -293,6 +328,8 @@ def pack(
     for n, d in files.items():
         (bdir / n).write_bytes(d)
     arch.write_bytes(archive_bytes(files))
+    if ticket:
+        (out_dir / TICKET).write_bytes((run_dir / TICKET).read_bytes())
     return Packed(env, bundle.sha256_bytes(files[bundle.ENVELOPE]), bdir, arch)
 
 

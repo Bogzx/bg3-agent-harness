@@ -267,6 +267,16 @@ def test_serve_refuses_a_manifest_error_and_no_client(monkeypatch):
         release.serve("rules", [], Path("/nonexistent"), environ={})
 
 
+def test_tickets_are_in_the_release_only_when_asked(served):
+    args = ("bench-v0.8", VERSIONS, PINS, v08_scenarios(), saves.load()["bench-v0.8"], {"rules": served})
+    plain, ticketed = release.build(*args), release.build(*args, tickets=True)
+    assert "tickets" not in plain and validate.Release.from_json(plain).tickets is None
+    assert ticketed == plain | {"tickets": {"version": 1}}
+    assert validate.Release.from_json(ticketed).tickets == {"version": 1}
+    assert release.errors(plain | {"tickets": {"version": 2}})
+    assert release.errors(plain | {"tickets": {"version": 1, "extra": 1}})
+
+
 def test_build_refuses_what_breaks_the_schema():
     with pytest.raises(release.ReleaseError, match="not a release.v1 document"):
         release.build(
@@ -291,6 +301,17 @@ def test_cli_writes_the_release(tmp_path, monkeypatch, capsys, served):
     assert "no start-state fingerprint yet" in capsys.readouterr().err
     assert release.main(["--suite", suite.suite_version(), "--out", str(out), "--client", "claude"]) == 1  # no pins
     assert "missing pins" in capsys.readouterr().err
+
+
+def test_cli_writes_tickets_only_with_the_flag(tmp_path, monkeypatch, served):
+    monkeypatch.setattr(release, "serve", lambda cid, clients, repo, groups_off=(): served)
+    out = tmp_path / "release.json"
+    argv = ["--suite", suite.suite_version(), "--out", str(out)]
+    argv += ["--game-build", "1", "--bg3le-sha256", "a" * 64, "--mod-sha1", "b" * 40]
+    assert release.main(argv) == 0
+    assert "tickets" not in json.loads(out.read_text())
+    assert release.main([*argv, "--tickets"]) == 0
+    assert json.loads(out.read_text())["tickets"] == {"version": 1}
 
 
 def test_cli_refuses_unpinned_suite_files_and_is_quiet_when_all_are_fingerprinted(

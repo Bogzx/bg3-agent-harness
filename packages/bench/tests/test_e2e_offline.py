@@ -30,10 +30,12 @@ from pathlib import Path
 import pytest
 from test_run_artifacts import readout
 from test_session_run import Hooks, Result
+from test_tickets import FakeSite
 
-from bg3bench import matrix, report, results, scenario
+from bg3bench import matrix, report, results, scenario, tickets
 from bg3bench.adapters.session_run import SessionRun, Start, series_name
 from bg3bench.site import build as site
+from bg3bench.submission import pack, validate
 
 pytestmark = pytest.mark.e2e
 
@@ -56,8 +58,8 @@ if not PI.exists():
     pytest.skip("tools/pi/node_modules missing: cd tools/pi && npm ci --ignore-scripts", allow_module_level=True)
 
 
+from bg3harness import events, profiles
 from bg3harness import facts as facts_w
-from bg3harness import profiles
 
 
 def call(name: str, args: dict | None = None) -> dict:
@@ -305,3 +307,72 @@ def test_scenario_to_leaderboard(tmp_path):
     assert site.main([str(tmp_path / "results.json"), str(tmp_path / "site" / "index.html")]) == 0
     page = (tmp_path / "site" / "index.html").read_text()
     assert MODEL in page and f"{series}-r001" in page
+
+
+def test_a_ticketed_run_reaches_a_bundle_whose_t01_and_t03_pass(tmp_path):
+    """The real session run under Ticketed against a fake site, then the real pack and the panel's validator: what the
+    run reported as it ended is what the bundle's files recompute to."""
+    sc = scenario.load(SCENARIO)
+    sessions = tmp_path / "runtime" / "sessions"
+    budget = tmp_path / "runtime" / "budget.json"
+    budget.parent.mkdir()
+    budget.write_text(json.dumps({"cap": 5.0, "spent": 0.0}))
+    model = {"slug": MODEL, "client": "pi", "effort": "high"}
+    jobs = matrix.plan([model], [sc["name"]], ["rules"], 1, max_cost={sc["name"]: sc["caps"]["max_cost"]})
+    site = FakeSite(issued_at=int(T0))
+    ticks = []
+
+    def start_beats(tick, every):
+        ticks.append(tick)
+        return lambda: None
+
+    class Logged(PiHost):
+        """The play process's events log a bundle needs (this host's pi writes none), and a beat over it mid-run."""
+
+        def record(self, job, sc, run_dir, outcome):
+            log = events.EventLog(run_dir / "S001.events.jsonl", clock=lambda: T0 + 1)
+            log.harness("session_start", model=MODEL)
+            ticks[-1]()
+            return super().record(job, sc, run_dir, outcome)
+
+    run_one = tickets.Ticketed(
+        SessionRun("e2e", Logged(tmp_path), scenarios={sc["name"]: sc}, sessions=sessions),
+        tickets.Site("https://site.test", site),
+        token=lambda: "bgb_token-for-tests",
+        values=lambda t: [],
+        now=lambda: T0,
+        start_beats=start_beats,
+    )
+    mx = matrix.Matrix(tmp_path / "runtime" / "matrix" / "e2e", run_one, budget, now=lambda: T0, sleep=lambda s: None)
+    mx.create("e2e", jobs)
+    assert mx.run() == matrix.FINISHED
+    assert site.issued[0]["model_slug"] == MODEL
+    assert site.beats[0]["lines"]["S001.events.jsonl"] == 1 and site.beats[0]["lines"]["facts.jsonl"] > 0
+    end = site.ends[0]
+    assert end["outcome"] == "valid" and end["lines"]["facts.jsonl"] > 0
+    run_dir = sessions / series_name("e2e", jobs[0])
+    man = json.loads((run_dir / "manifest.json").read_text())
+    tag = man["versions"]["suite"]
+    p = pack.pack(
+        run_dir,
+        tmp_path / "out",
+        attempt=pack.Attempt(1),
+        scenarios={sc["name"]: sc},
+        released=[tag],
+        ticket_required=True,
+    )
+    assert p.envelope["ticket"]["root"] == end["root"] and p.envelope["ticket"]["lines"] == end["lines"]
+    release = validate.Release(tag, man["versions"], {}, {}, {}, tickets={"version": 1})
+    v = validate.validate(
+        p.bundle_dir,
+        release,
+        where="panel",
+        submission=False,
+        scenarios={sc["name"]: sc},
+        local_end=json.loads((run_dir / "ticket.json").read_text())["end"],
+    )
+    assert {r.code: r.ok for r in v.checks if r.code in ("F03", "T01", "T03")} == {
+        "F03": True,
+        "T01": True,
+        "T03": True,
+    }

@@ -119,7 +119,7 @@ class Scrubber:
         """A bundle file's bytes with every string scrubbed; unchanged bytes when nothing matched."""
         if name.endswith(".jsonl"):
             lines = data.decode().split("\n")
-            return "\n".join(self._json_line(ln) for ln in lines).encode()
+            return "\n".join(self.line(ln) for ln in lines).encode()
         if name.endswith(".json"):
             before = self.replacements
             doc = self.value(json.loads(data))
@@ -130,7 +130,8 @@ class Scrubber:
             return self.text(data.decode()).encode()
         return data  # binary (frames.tar): never holds text the run wrote
 
-    def _json_line(self, line: str) -> str:
+    def line(self, line: str) -> str:
+        """One JSONL line, without its newline: what `file` makes of it, and what a ticket's running hash is fed."""
         if not line.strip():
             return line
         before = self.replacements
