@@ -413,9 +413,13 @@ end
 -- decline has no such failed. From here the entry goes as hold_countered's does: its audit waits for the game's charge.
 function A.held_cast_failed(caster, spell)
     for _, h in ipairs(A.held_audits) do
-        if h.entity and not h.landed_ms and not h.countered and h.matches({ caster, spell })
-            and select(2, A.engine_refusal({ cast_entity = h.entity })) == "Countered" then
+        local why = h.entity and not h.landed_ms and not h.countered and h.matches({ caster, spell })
+            and select(2, A.engine_refusal({ cast_entity = h.entity }))
+        if why == "Countered" then
             h.countered = true
+            return
+        elseif why then
+            h.failed = true
             return
         end
     end
@@ -432,6 +436,23 @@ local function held_open(h, now)
         return false
     end
     return true
+end
+
+-- live.md "L12 on main 807dce16", rows 389, 871: the charge lifts the gate, then for about 100-200 ms a Fighter's free
+-- status isn't on (t1, m1, EXTRA_ATTACK_2, _Q, EXTRA_ATTACK), so a swing sent 104-118 ms before the held cast's
+-- CastedSpell read "not enough action", while a free attack came. The status reads on before CastedSpell (t1, m1).
+-- Words only: an order that passes today still passes (#120).
+A.CAST_UNLANDED = "not enough action yet: this character's last cast is still resolving after a reaction, and any free"
+    .. " attack it gives shows by its landing"
+function A.cast_unlanded(char)
+    local now = RPC.now_ms()
+    for _, h in ipairs(A.held_audits) do
+        if G.same(h.char, char) and h.began and not h.landed_ms and not h.countered and not h.failed
+            and not (h.free_ms and now - h.free_ms >= A.HELD_LANDS_MS) then
+            return true
+        end
+    end
+    return false
 end
 
 function A.cast_unresolved(char)

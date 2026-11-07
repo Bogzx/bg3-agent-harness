@@ -476,6 +476,7 @@ local function free_attack_setup()
     spell("Target_MainHandAttack", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1",
         Level = 0, SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" }, SpellRoll = melee })
     world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0
+    return j
 end
 local function swing() return job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = NPC })) end
 
@@ -694,4 +695,92 @@ test("linked box: a holder whose groups don't read still gets the game data's li
     G.boxData = {}
     assert(j.error:find("casts nothing by itself", 1, true), j.error)
     assert(j.error:find("from the game data", 1, true), j.error)
+end)
+
+-- live.md "L12 on main 807dce16", rows 389, 871: the held swing charged, its free status not on yet.
+local function held_swing_charged()
+    combat_setup(9)
+    world[NPC].pos = { 1.5, 0, 0 }
+    spell("Target_MainHandAttack", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1",
+        Level = 0, SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" },
+        SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } })
+    spell("Target_Bolt", { TargetRadius = "18", SpellType = "Target", Level = 0, UseCosts = "ActionPoint:1" })
+    local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = NPC }))
+    tick(15)
+    world[P1].comp_names = { PAUSED }
+    tick(20)
+    eq(j.status, "interrupted", "held " .. tostring(j.error))
+    world[P1].comp_names = nil
+    tick(2)
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0
+    return j
+end
+local function swing() return op("cast", { char = P1, spell = "Target_MainHandAttack", target = NPC }) end
+local function refused_with(r, pat)
+    local e = r.error or (r.job and r.job.error) or ""
+    assert(e:find(pat, 1, true), tostring(e))
+end
+
+test("held cast: a weapon attack in the gap before its free status reads as still resolving, not out of action", function()
+    held_swing_charged()
+    refused_with(swing(), A.CAST_UNLANDED)
+    assert(A.CAST_UNLANDED:find("not enough action yet", 1, true), A.CAST_UNLANDED)
+    local plain = op("cast", { char = P1, spell = "Target_Bolt", target = NPC })
+    eq(plain.error or (plain.job and plain.job.error), "not enough action", "no free attack can pay a plain Action spell")
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
+    eq(job(swing()).status, "running", "the free status on: it passes, landed or not, as #120")
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
+end)
+
+test("held cast: after its landing, no status means no free attack: the plain refusal", function()
+    held_swing_charged()
+    A.dispatch("CastedSpell", { P1, "Target_MainHandAttack", "Target", "None", 0 })
+    local r = swing()
+    local e = r.error or (r.job and r.job.error) or ""
+    eq(e:find("yet", 1, true), nil, e)
+    assert(e:find("not enough action", 1, true), e)
+end)
+
+test("held cast: a failed with an outcome ends the wait; no outcome (a preview's) doesn't", function()
+    local j = held_swing_charged()
+    A.dispatch("CastSpellFailed", { P1, "Target_MainHandAttack", "Target", "None", 0 })
+    refused_with(swing(), A.CAST_UNLANDED)
+    j.cast_entity.SpellCastOutcome = { Result = "Canceled" }
+    A.dispatch("CastSpellFailed", { P1, "Target_MainHandAttack", "Target", "None", 0 })
+    j.cast_entity.SpellCastOutcome = nil
+    local r = swing()
+    local e = r.error or (r.job and r.job.error) or ""
+    eq(e:find("yet", 1, true), nil, e)
+end)
+
+test("state.actions: a weapon attack in that gap lists still resolving, a plain Action spell no action", function()
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ entity = entity, osi = function(f, ...)
+        local okf, v = pcall(f, ...)
+        if okf then return v end
+    end }, { __index = savedV })
+    held_swing_charged()
+    stats.Shout_Plain = { SpellType = "Shout", UseCosts = "ActionPoint:1", SpellFlags = {} }
+    stats.Target_BonusWeapon = { SpellType = "Target", UseCosts = "ActionPoint:1;BonusActionPoint:1", SpellFlags = {},
+        SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } }
+    local function book(id) return { PrepareType = "Unknown", Id = { Prototype = id, OriginatorPrototype = id } } end
+    world[P1].comps.SpellBook = { Spells = { book("Target_MainHandAttack"), book("Shout_Plain"),
+        book("Target_BonusWeapon") } }
+    local res = world[P1].comps.ActionResources.Resources
+    local function read()
+        BG3AI.State.spellCache = {}
+        local ok, list = pcall(BG3AI.State.actions, P1)
+        eq(ok, true, "actions read: " .. tostring(list))
+        local by = {}
+        for _, a in ipairs(list) do by[a.spell] = a end
+        return by
+    end
+    local by = read()
+    eq(by.Target_MainHandAttack.available, false, "not free yet")
+    eq(by.Target_MainHandAttack.reason, "last cast still resolving", "its reason")
+    eq(by.Shout_Plain.reason, "no action", "a plain Action spell")
+    res.ActionPoint[1].Amount, res.BonusActionPoint = 1, { { Level = 0, Amount = 0 } }
+    eq(read().Target_BonusWeapon.reason, "no bonus action", "another resource short isn't the gap")
+    BG3AI.Visibility = savedV
+    world[P1].comps.SpellBook = nil
 end)

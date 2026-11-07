@@ -619,6 +619,10 @@ function S.actions(uuid)
             end
         end
         local ok, why = canPay(pay, res)
+        if why == "no action" and BG3AI.Actions and BG3AI.Actions.cast_unlanded(uuid) then
+            local st = Ext.Stats.Get(id)
+            if st and BG3AI.Guard.extra_attack_spell(id, st) then why = "last cast still resolving" end
+        end
         local kind, fact = cooldown(id)
         if kind then ok, why = false, "cooldown (" .. kind .. ")" elseif kind == false then ok, why = false, fact end
         local Gi = BG3AI.Guard

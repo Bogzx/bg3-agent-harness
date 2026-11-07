@@ -803,7 +803,13 @@ function G.check_cast(char, spell, target, pos, upcast, force)
             or c.name == "Movement" or c.name == "ReactionActionPoint")
         if in_combat or not turn_resource then
             local n, l = G.payer(snap, c)
-            if not n then G.refuse("not enough " .. G.friendly(c.name)) end
+            if not n then
+                local A = BG3AI.Actions
+                if c.name == "ActionPoint" and A and A.cast_unlanded(char) and G.extra_attack_spell(spell, st) then
+                    G.refuse(A.CAST_UNLANDED)
+                end
+                G.refuse("not enough " .. G.friendly(c.name))
+            end
             payers[#payers + 1] = { name = n, level = l, amount = c.amount }
         end
     end
