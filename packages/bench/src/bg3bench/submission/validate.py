@@ -11,10 +11,14 @@ prompt hash per client (or the condition's variant whose tools the run names: a 
 off). Cross-submission data (D01 duplicates, D02 near-copies, X07 the verified cell) and the
 YouTube lookups (E01, E02) are injected by the caller; without them those checks report ok None.
 
+The T checks run only against a release with `tickets`. They compare the bundle with the ticket the site stored
+(`ticket`, the job's --ticket file), and they fail closed: where the job has no ticket data T04-T06 are false, not
+null, because a null never rejects. The panel has no server data, so it reports T04-T07 null.
+
 The bundle is untrusted input: the files are read as bytes, JSON depth is capped, frames.tar is listed, never
 extracted, and nothing in it is executed.
 
-    python -m bg3bench.submission.validate BUNDLE_DIR [--release FILE] [--where panel|job] [--draft]
+    python -m bg3bench.submission.validate BUNDLE_DIR [--release FILE] [--where panel|job] [--draft] [--ticket FILE]
 
 --release defaults to the installed suite's release file (packages/bench/releases/<suite>.json).
 """
@@ -26,8 +30,10 @@ import io
 import json
 import sys
 import tarfile
+from bisect import bisect_left
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from itertools import accumulate, pairwise
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +43,7 @@ from bg3harness.run_manifest import tools_digest
 
 import bg3bench
 from bg3bench import facts, luck, scenario
-from bg3bench.submission import bundle, codes, consistency, pack, scrub
+from bg3bench.submission import bundle, codes, consistency, pack, scrub, ticket_hash
 from bg3bench.submission.release import CODE_PIN, condition_entry, defs_digest
 from bg3bench.submission.release import default_path as release_default_path
 from bg3bench.submission.release import errors as release_errors
@@ -51,6 +57,15 @@ FRAME_EVERY_S = 30.0
 FRAME_SLACK = 2
 VIDEO_SLACK_S = 3.0
 VIDEO_WALL_SLACK_S = 10.0
+# The times a ticket's beats are held to (T05, T06, T07). Provisional until step X1 of RUN-TICKETS.md has measured them
+# over more runs.
+MAX_OFFSET_S = 300  # the machine's clock against the server's
+START_SLACK_S = 5  # run_start before issued_at
+MAX_STALE_S = 240  # how far the lines may fall behind the server's clock
+MAX_FACTS_LAG_S = 400  # how far the committed facts may: a snapshot every 300 s, 308.4 s at most on 55 real runs
+WALL_SLACK_S = 300  # wall_s past what the server watched
+MAX_GAP_S = 300  # between beats inside the run
+MAX_UNCOVERED = 0.5  # of wall_s
 
 
 @dataclass(frozen=True)
@@ -62,13 +77,14 @@ class Release:
     pins: Json  # {"game_build", "bg3le_sha256", "mod_sha1"} (+ "code_sha1" from bench-v0.10)
     scenarios: dict[str, Json]  # name -> {"digest", "save_sha1", "fingerprint"}
     conditions: dict[str, Json]  # id -> {"tools": {"allowlist_sha256", "names"}, "prompts": {client: {"sha256"}}}
+    tickets: Json | None = None  # {"version"}: present, its runs need a ticket from the site and the T checks run
 
     @classmethod
     def from_json(cls, doc: Json) -> Release:
         """From a release file (release.v1); ValueError when it isn't one."""
         if errs := release_errors(doc):
             raise ValueError("not a release.v1 file: " + "; ".join(errs[:5]))
-        return cls(doc["suite"], doc["versions"], doc["pins"], doc["scenarios"], doc["conditions"])
+        return cls(doc["suite"], doc["versions"], doc["pins"], doc["scenarios"], doc["conditions"], doc.get("tickets"))
 
 
 @dataclass(frozen=True)
@@ -518,6 +534,229 @@ def _tool_sequence(b: Loaded) -> list[tuple[str, str]]:
     ]
 
 
+# -------------------------------------------------------------------------------------------------- run tickets
+
+
+def t03_recompute(raw: dict[str, bytes], env: Json, local_end: Json | None = None) -> Outcome:
+    """root and lines from the bundle's own files. A valid last line with no newline would be read by the graders and
+    counted by no hash, so every stream must end in a complete line. `local_end`: the end the run reported (the
+    panel's copy of ticket.json), caught here because the job's T04 would reject it after the upload."""
+    t = env["ticket"]
+    if torn := sorted(n for n, d in raw.items() if ticket_hash.is_stream(n) and d and not d.endswith(b"\n")):
+        return False, f"bytes after the last complete line of {', '.join(torn)}"
+    want = ticket_hash.counts(raw)
+    if t["lines"] != want:
+        differ = sorted(n for n in {*want, *t["lines"]} if want.get(n) != t["lines"].get(n))
+        return False, f"lines differ from the files: {', '.join(differ)}"
+    if ticket_hash.root_at(t["nonce"], raw, want) != t["root"]:
+        return False, "the root doesn't recompute from the files (a line edited, or the scrub differs from the run's)"
+    if local_end and local_end.get("root") != t["root"]:
+        return False, (
+            "these lines hash differently from what the run reported to the site: a .env value that occurs in them"
+            " changed since the run. Put the old value back and validate again"
+        )
+    return True, ""
+
+
+def t04_beats(b: Loaded, ticket: Json) -> Outcome:
+    """Every beat the server stored, against the bundle's files under the server's nonce, and what each had to name:
+    without that a client could leave a stream out of its beats and edit it afterwards."""
+    raw, env = b.raw, b.envelope
+    if env["ticket"]["nonce"] != ticket["nonce"]:
+        return False, "the nonce isn't the server's"
+    beats = ticket["beats"]  # in arrival order, as the server stores them
+    if not beats:
+        return False, "the server holds no beats for this ticket"
+    wanted: dict[str, set[int]] = {}
+    for beat in beats:
+        for name, n in beat["l"].items():
+            wanted.setdefault(name, set()).add(n)
+    try:
+        hashes = {n: ticket_hash.digests_at(ticket["nonce"], n, raw.get(n, b""), c) for n, c in wanted.items()}
+    except ValueError as e:
+        return False, str(e)
+    last: dict[str, int] = {}
+    for beat in beats:
+        fell = sorted(n for n, c in last.items() if beat["l"].get(n, 0) < c)
+        if fell:
+            return False, f"beat {beat['s']}: the line count fell in {', '.join(fell)}"
+        last = beat["l"]
+        if ticket_hash.root((n, c, hashes[n][c]) for n, c in beat["l"].items()) != beat["r"]:
+            return False, f"beat {beat['s']}: the root doesn't recompute (a committed line differs)"
+        if beat.get("e") and beat["r"] != env["ticket"]["root"]:
+            return False, "the end's root isn't the bundle's"
+    if not any(beat.get("e") for beat in beats):  # skipping it would leave the newest lines editable
+        return False, "the server holds no end for this ticket"
+    return _t04_streams(b, ticket)
+
+
+def _t04_streams(b: Loaded, ticket: Json) -> Outcome:
+    """What each regular beat before run_end had to commit. Every stream's count reaches all its lines older than
+    MAX_STALE_S on the server's clock: a quiet stream has nothing to cover. The last old line counts, not a running
+    maximum, so moving one early `t` forward doesn't excuse the lines after it (record lines are in t order).
+
+    Those times are the bundle's, so a client that holds a stream back can write them too. Facts are also held to what
+    the server has: the newest committed line, or issued_at before there is one (run_start isn't committed yet either),
+    is at most MAX_FACTS_LAG_S behind. Rolls and events can't be, being quiet by nature: RUN-TICKETS.md, honest limits."""
+    bt = _beat_times(b, ticket)
+    if bt.offset is None:
+        return False, "no beat or end covers a line"
+    times = {n: list(map(_line_t, ticket_hash.complete_lines(d))) for n, d in b.raw.items() if ticket_hash.is_stream(n)}
+    if untimed := sorted(n for n, ts in times.items() if None in ts):
+        return False, f"a line of {', '.join(untimed)} has no time"
+    floors = {n: _floors([t for t in ts if t is not None]) for n, ts in times.items()}
+    facts_t = _latest_t(b.raw[ticket_hash.FACTS])
+    for beat in bt.regular:
+        count = beat["l"].get(ticket_hash.FACTS, 0)
+        if count >= bt.end_line:
+            continue
+        cutoff = beat["a"] - bt.offset - MAX_STALE_S
+        short = sorted(n for n, f in floors.items() if beat["l"].get(n, 0) < bisect_left(f, cutoff))
+        if short:
+            return False, f"beat {beat['s']}: lines over {MAX_STALE_S} s old are left out of {', '.join(short)}"
+        if beat["a"] - max(facts_t[count] + bt.offset, ticket["issued_at"]) > MAX_FACTS_LAG_S:
+            return (
+                False,
+                f"beat {beat['s']}: the committed facts are over {MAX_FACTS_LAG_S} s behind the server's clock",
+            )
+    return True, ""
+
+
+def _line_t(line: bytes) -> float | None:
+    row = _loads(line) if line.strip() else None
+    t = row.get("t") if isinstance(row, dict) else None
+    return float(t) if t is not None and _num(t) else None
+
+
+def _floors(ts: list[float]) -> list[float]:
+    """Per line, the smallest `t` from it to the end of the stream. It never falls, so bisect_left(floors, x) is how
+    many lines it takes to reach the last line older than x."""
+    return list(accumulate(reversed(ts), min))[::-1]
+
+
+def _latest_t(data: bytes) -> list[float]:
+    """Per line count: the largest `t` among that many first lines of a stream ([0] is -inf: nothing covered)."""
+    out = [float("-inf")]
+    for line in ticket_hash.complete_lines(data):
+        t = _line_t(line)
+        out.append(out[-1] if t is None else max(out[-1], t))
+    return out
+
+
+@dataclass(frozen=True)
+class BeatTimes:
+    """A ticket's beats read against a run: what T05 and T06 share."""
+
+    regular: list[Json]  # the beats that aren't the end, in order
+    stale: list[tuple[Json, float]]  # (beat, seconds behind the server) of each regular beat that covers lines
+    offset: float | None  # server - machine; None: no beat or end covers a line
+    start: float  # run_start.t on the machine's clock
+    end: float  # run_end.t on the machine's clock
+    end_line: int  # how many lines of facts.jsonl it takes to cover run_end
+    latest: float  # the largest t of any line
+
+
+def _beat_times(b: Loaded, ticket: Json) -> BeatTimes:
+    latest_t = {n: _latest_t(d) for n, d in b.raw.items() if ticket_hash.is_stream(n)}
+
+    def behind(beat: Json) -> float | None:
+        newest = max((latest_t[n][c] for n, c in beat["l"].items() if n in latest_t), default=float("-inf"))
+        return beat["a"] - newest if newest != float("-inf") else None
+
+    beats = ticket["beats"]
+    regular = [x for x in beats if not x.get("e")]
+    stale = [(x, s) for x in regular if (s := behind(x)) is not None]
+    end_beat = next((x for x in beats if x.get("e")), None)
+    offset = min((s for _, s in stale), default=behind(end_beat) if end_beat else None)
+    rows = [_loads(ln) if ln.strip() else {} for ln in ticket_hash.complete_lines(b.raw[ticket_hash.FACTS])]
+    marks = {r["mark"]: (i, r["t"]) for i, r in enumerate(rows, 1) if r.get("kind") == "mark"}
+    _, start = marks["run_start"]  # a missing mark fails the check that asked (_guarded); more than one is X02's
+    end_line, end = marks["run_end"]
+    latest = max(v[-1] for v in latest_t.values())
+    return BeatTimes(regular, stale, offset, start, end, end_line, latest)
+
+
+def t05_times(b: Loaded, ticket: Json) -> Outcome:
+    """The lines' own times against the server's. offset = min(stale): the machine's clock error plus the shortest
+    delay; an end counts only for a run with no regular beat over its lines, because it may arrive days late."""
+    bt = _beat_times(b, ticket)
+    if bt.offset is None:
+        return False, "no beat or end covers a line"
+    if abs(bt.offset) > MAX_OFFSET_S:
+        return False, f"the lines' times are {bt.offset:.0f} s off the server's clock"
+    if bt.start + bt.offset < ticket["issued_at"] - START_SLACK_S:
+        return False, f"the run started {ticket['issued_at'] - bt.start - bt.offset:.0f} s before its ticket"
+    for beat, stale in bt.stale:
+        # host.record writes no line after run_end: it stops the game and moves saves
+        if beat["l"].get(ticket_hash.FACTS, 0) < bt.end_line and stale - bt.offset > MAX_STALE_S:
+            return False, f"beat {beat['s']}: the lines were {stale - bt.offset:.0f} s behind the server's clock"
+    wall, last = b.result["wall_s"], max(x["a"] for x in ticket["beats"])
+    if wall > (last - ticket["issued_at"]) + WALL_SLACK_S:
+        return False, f"wall_s {wall:.0f} is longer than the {last - ticket['issued_at']} s the server watched"
+    if bt.latest + bt.offset > ticket["expires_at"]:
+        return False, "a line's time is past the ticket's expiry"
+    return True, ""
+
+
+def _beat_gaps(b: Loaded, ticket: Json) -> tuple[list[float], float]:
+    """(The gaps between the regular beats inside the run, its start and end counted as points; wall_s). A late end
+    adds nothing here. ValueError with no offset to place the run on the server's clock."""
+    bt = _beat_times(b, ticket)
+    if bt.offset is None:
+        raise ValueError("no beat or end covers a line")
+    start, end = bt.start + bt.offset, bt.end + bt.offset
+    points = [start, *sorted(x["a"] for x in bt.regular if start <= x["a"] <= end), end]
+    return [y - x for x, y in pairwise(points)], float(b.result["wall_s"])
+
+
+def t06_coverage(b: Loaded, ticket: Json) -> Outcome:
+    gaps, wall = _beat_gaps(b, ticket)
+    uncovered = sum(g - MAX_GAP_S for g in gaps if g > MAX_GAP_S)
+    if uncovered > MAX_UNCOVERED * wall:
+        return False, f"{uncovered:.0f} s of the {wall:.0f} s run are outside beat range"
+    return True, ""
+
+
+def t07_gaps(b: Loaded, ticket: Json) -> Outcome:
+    gaps, _ = _beat_gaps(b, ticket)
+    if over := [g for g in gaps if g > MAX_GAP_S]:
+        return False, f"{len(over)} gaps between beats over {MAX_GAP_S} s, the longest {max(over):.0f} s"
+    return True, ""
+
+
+def _ticket_checks(
+    b: Loaded, ticket: Json | None, where: codes.Where, local_end: Json | None
+) -> list[tuple[str, Outcome]]:
+    """T01 and T03-T07 (T02 is the Worker's, at the verdict: the job reports it null, as D01). `ticket`: what the site
+    stored, None when the job got none. The panel has no server data; the job fails closed without it."""
+    env = b.envelope
+    named = "ticket" in env  # its form is the schema's: F03 has passed
+    out: list[tuple[str, Outcome]] = [
+        ("T01", (True, "") if named else (False, "bundle.json names no ticket")),
+        ("T02", (None, "the site checks this at the verdict")),
+        ("T03", _guarded(t03_recompute, b.raw, env, local_end) if named else (False, "no ticket to recompute")),
+    ]
+    if where != "job":
+        return [*out, *((c, (None, "no server data here")) for c in ("T04", "T05", "T06", "T07"))]
+    if ticket is None or not named:
+        why = "the site holds no such ticket" if named else "bundle.json names no ticket"
+        return [*out, *((c, (False, why)) for c in ("T04", "T05", "T06")), ("T07", (None, why))]
+    out.append(("T04", _guarded(t04_beats, b, ticket)))
+    out.append(("T05", _guarded(t05_times, b, ticket)))
+    out.append(("T06", _guarded(t06_coverage, b, ticket)))
+    out.append(("T07", _guarded(t07_gaps, b, ticket)))
+    return out
+
+
+def read_ticket(path: Path) -> Json | None:
+    """The ticket file the job wrote: the server's ticket, or None for a missing file or {"found": false}."""
+    try:
+        doc = _loads(path.read_bytes())
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    return doc if isinstance(doc, dict) and doc.get("found") is not False else None
+
+
 # ---------------------------------------------------------------------------------------------------- the driver
 
 
@@ -540,17 +779,23 @@ def validate(
     ctx: Context = NO_CONTEXT,
     literals: Sequence[str] = (),
     version: str = bg3bench.__version__,
+    ticket: Json | None = None,
+    local_end: Json | None = None,
 ) -> Verdict:
     """Check the bundle in bundle_dir against the release. `where`: which checks run (codes.Check.where).
     `submission`: the video, render.json and frames.tar are required (False: before rendering, they are not run).
     `scenarios`: the suite's scenario files by name (default the installed ones). `literals`: values S01 must not
-    find (the submitter's .env values)."""
+    find (the submitter's .env values). `ticket`: what the site stored for the bundle's ticket (a release with
+    `tickets`; the job's T04-T06 fail without it). `local_end`: the end the run reported, from its ticket.json (the
+    panel: T03)."""
     d = Path(bundle_dir)
     scenarios = pack.load_scenarios() if scenarios is None else scenarios
     env, raw = _read(d)
     verdict = Verdict(version, bundle.sha256_bytes(raw[bundle.ENVELOPE]) if bundle.ENVELOPE in raw else None)
     # the job re-runs the Worker's checks too: one Python code path backs every verdict
     runs_here = {c.code for c in codes.CHECKS if where in c.where or (where == "job" and "worker" in c.where)}
+    if release.tickets is None:
+        runs_here = {c for c in runs_here if not c.startswith("T")}
 
     def add(code: str, outcome: Outcome) -> None:
         if code in runs_here:
@@ -622,6 +867,9 @@ def validate(
     add("E03", _guarded(e03_render, b, submission))
     add("E04", _guarded(e04_frames, b, submission))
     add("S02", _guarded(s02_reasoning, b))
+    if release.tickets is not None:
+        for code, outcome in _ticket_checks(b, ticket, where, local_end):
+            add(code, outcome)
     return _ordered(verdict)
 
 
@@ -658,6 +906,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--release", type=Path, default=None, help="the suite's release file (default: the installed one)")
     ap.add_argument("--where", choices=("panel", "job"), default="panel")
     ap.add_argument("--draft", action="store_true", help="not rendered yet: don't require the video and frames")
+    ap.add_argument("--ticket", type=Path, help='the ticket the site stored, or {"found": false} (a ticketed release)')
     a = ap.parse_args(argv)
     path = a.release or release_default_path()
     try:
@@ -665,7 +914,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError) as e:
         print(f"no usable release file {path}: {e}", file=sys.stderr)
         return 2
-    v = validate(a.bundle_dir, rel, where=a.where, submission=not a.draft)
+    ticket = read_ticket(a.ticket) if a.ticket else None
+    v = validate(a.bundle_dir, rel, where=a.where, submission=not a.draft, ticket=ticket)
     print(json.dumps(v.as_json(), indent=1))
     return 0 if v.accepted else 1
 

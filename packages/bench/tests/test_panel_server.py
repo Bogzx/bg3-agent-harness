@@ -10,7 +10,9 @@ from pathlib import Path
 import pytest
 from bg3harness import doctor as hdoctor
 
+from bg3bench import tickets
 from bg3bench.serve import launch, panel, security, video
+from bg3bench.serve import server as server_mod
 from bg3bench.serve.server import TOKEN_SLOT, App, parser, serve
 from bg3bench.serve.settings import Settings
 
@@ -787,3 +789,122 @@ def test_videos_endpoints_list_and_link_many(server):
                    {"items": [{"run": "s1", "bundle_sha256": todo["bundle_sha256"], "youtube_url": "https://youtu.be/dQw4w9WgXcQ"}]})  # fmt: skip
     assert code == 200 and r["results"] == [{"run": "s1", "ok": True, "video": {"youtube_id": "dQw4w9WgXcQ"}}]
     assert get(server, "/api/v1/videos")[1]["videos"] == []
+
+
+# ---------------------------------------------------------------- run tickets
+
+
+class TicketSite:
+    """urlopen for the end route, and its 200."""
+
+    status = 200
+
+    def __init__(self) -> None:
+        self.ends: list[dict] = []
+
+    def __call__(self, req, timeout=None):
+        self.ends.append(json.loads(req.data))
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self) -> bytes:
+        return b"{}"
+
+
+def use_tickets(app: App, tmp_path: Path, token: str | None = "bgb_token-for-tests") -> TicketSite:
+    release = tmp_path / "bench-test.json"
+    release.write_text(json.dumps({"tickets": {"version": 1}}))
+    app.release = release
+    if token:
+        app.settings.set_site_token(token)
+    site = TicketSite()
+    app.ticket_client = lambda base: tickets.Site(base, site)
+    return site
+
+
+FORM = {"profiles": ["deepseek-flash"], "scenarios": ["act1_get_item"], "max_cost_usd": 1.5}
+
+
+def test_a_release_without_tickets_changes_nothing_on_new_run(server: App):
+    _, plan = post(server, "/api/v1/plan", FORM)
+    assert plan["ticket"] == {"required": False, "token": False, "site": True, "will": False}
+
+
+@pytest.mark.parametrize(
+    "token,site,will", [("bgb_token-for-tests", "https://bench.example", True), (None, "https://bench.example", False)]
+)
+def test_plan_says_whether_start_gives_a_ticket_and_the_matrix_file_follows(server: App, tmp_path, token, site, will):
+    use_tickets(server, tmp_path, token)
+    server.site = site
+    _, plan = post(server, "/api/v1/plan", FORM)
+    assert plan["ticket"] == {"required": True, "token": bool(token), "site": True, "will": will}
+    code, started = post(server, "/api/v1/run/start", FORM)
+    assert code == 200
+    assert ('ticket = "required"' in Path(started["matrix_file"]).read_text()) is will
+
+
+def test_a_finished_run_shows_its_ticket_without_the_nonce(server: App):
+    run = server.runtime / "sessions" / "s1"
+    assert get(server, "/api/v1/results")[1]["runs"][0]["ticket"] is None
+    end = {"seq": 3, "lines": {}, "root": "0" * 64, "outcome": "valid", "reason": None, "delivered": False}
+    (run / tickets.TICKET_FILE).write_text(
+        json.dumps({"id": "i", "nonce": "secret-nonce", "issued_at": 1, "expires_at": 2, "end": end})
+    )
+    (run / tickets.BEATS_FILE).write_text(
+        '{"seq":0,"status":204}\n{"seq":1,"error":"URLError"}\nnot json\n{"kind":"end","seq":3,"error":"x"}\n'
+    )
+    view = get(server, "/api/v1/results")[1]["runs"][0]["ticket"]
+    assert view == {
+        "id": "i",
+        "issued_at": 1,
+        "expires_at": 2,
+        "beats_sent": 2,
+        "beats_landed": 1,
+        "beats_stopped": None,
+        "end": {"outcome": "valid", "reason": None, "delivered": False},
+    }
+
+
+def test_validate_tries_the_undelivered_end_again_and_only_that(server: App, tmp_path):
+    site = use_tickets(server, tmp_path)
+    run = server.runtime / "sessions" / "s1"
+    end = {"seq": 3, "lines": {}, "root": "0" * 64, "outcome": "valid", "reason": None, "delivered": False}
+    ticket = {"id": "6f1c2a3b-0000-4000-8000-123456789abc", "nonce": "ab" * 32, "end": end}
+    (run / tickets.TICKET_FILE).write_text(json.dumps(ticket))
+    assert post(server, "/api/v1/submit/prepare", {"run": "s1"})[0] == 200
+    assert site.ends == [{k: end[k] for k in ("seq", "lines", "root", "outcome", "reason")}]
+    assert json.loads((run / tickets.TICKET_FILE).read_text())["end"]["delivered"] is True
+    assert post(server, "/api/v1/submit/prepare", {"run": "s1"})[0] == 200
+    assert len(site.ends) == 1
+
+
+def test_validate_never_makes_up_an_interrupted_end(server: App, tmp_path):
+    """A run with no end kept may still be finishing: only a matrix restart, which reads its queue, can say it wasn't."""
+    site = use_tickets(server, tmp_path)
+    (server.runtime / "sessions" / "s1" / tickets.TICKET_FILE).write_text(json.dumps({"id": "i", "nonce": "ab" * 32}))
+    assert post(server, "/api/v1/submit/prepare", {"run": "s1"})[0] == 200
+    assert site.ends == []
+
+
+def test_validate_without_a_usable_site_url_still_validates(server: App, tmp_path):
+    use_tickets(server, tmp_path)
+    server.site = None
+    assert post(server, "/api/v1/submit/prepare", {"run": "s1"})[0] == 200
+
+
+def test_main_tells_the_matrix_process_the_site_and_config_dir_never_the_token(monkeypatch, tmp_path):
+    made = {}
+    monkeypatch.setattr(server_mod.launch, "MatrixProcess", lambda repo, runtime, environ: made.update(environ) or None)
+    monkeypatch.setattr(server_mod, "serve", lambda *a, **k: (_ for _ in ()).throw(SystemExit(0)))
+    (tmp_path / "cfg").mkdir()
+    (tmp_path / "cfg" / "site-token").write_text("bgb_token-for-tests\n")
+    argv = ["--repo", str(tmp_path), "--config-dir", str(tmp_path / "cfg"), "--site", "https://bench.example"]
+    with pytest.raises(SystemExit):
+        server_mod.main(argv)
+    assert made[tickets.SITE_ENV] == "https://bench.example" and made[tickets.CONFIG_ENV] == str(tmp_path / "cfg")
+    assert "bgb_token-for-tests" not in json.dumps(made)

@@ -102,6 +102,38 @@ CHECKS: tuple[Check, ...] = (
     Check("E04", _PJ, "reject", "frames.tar holds only frames/<n>.jpg within its cap, one decodable frame per 30 s"),
     Check("S01", _PWJ, "reject", "no home path, e-mail, Steam ID, key shape or .env value in any file"),
     Check("S02", _PJ, "reject", "no hidden reasoning in the events"),
+    # Run tickets: run only when the release has `tickets`. Without the server's data the panel reports T04-T07 null.
+    Check("T01", _PJ, "reject", "bundle.json names a ticket (F03 holds its id, nonce, root and lines to the schema)"),
+    Check(
+        "T02",
+        ("worker",),
+        "reject",
+        "the ticket exists, is the submitter's, its cell equals the bundle's, the nonce is the server's, no other"
+        " reserving submission holds it",
+    ),
+    Check(
+        "T03",
+        _PJ,
+        "reject",
+        "root and lines recompute from the bundle's files; every stream is named and ends in a complete line",
+    ),
+    Check(
+        "T04",
+        _PJ,
+        "reject",
+        "every stored beat's root recomputes at its line counts under the server's nonce; counts never fall or pass"
+        " the file; every stream line has a time; each beat before run_end reaches every stream's lines over 240 s"
+        " old and has facts at most 400 s behind; an end is stored and its root is the bundle's",
+    ),
+    Check(
+        "T05",
+        _PJ,
+        "reject",
+        "the lines' times fit the server's: clock offset, a start after issue, no stale beat, a watched wall_s, no"
+        " line past expiry",
+    ),
+    Check("T06", _PJ, "reject", "at most half the run is outside beat range"),
+    Check("T07", _PJ, "flag", "no gap between beats over 300 s", flag="beat_gaps"),
 )
 
 BY_CODE: dict[str, Check] = {c.code: c for c in CHECKS}

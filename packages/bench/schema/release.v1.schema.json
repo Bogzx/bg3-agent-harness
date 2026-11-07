@@ -68,6 +68,13 @@
     "kind": {"const": "bg3bench.release"},
     "about": {"type": "string"},
     "suite": {"type": "string", "pattern": "^bench-v[0-9]+\\.[0-9]+$"},
+    "tickets": {
+      "description": "present: this suite's runs need a ticket from the site (the T checks run). Optional, added 2026-11-06 (still v1): a release without it has no T checks",
+      "type": "object",
+      "required": ["version"],
+      "additionalProperties": false,
+      "properties": {"version": {"const": 1}}
+    },
     "versions": {
       "description": "the harness and bg3bench versions a run of this suite must cite (its manifest's versions)",
       "type": "object",

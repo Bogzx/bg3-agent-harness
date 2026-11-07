@@ -69,8 +69,11 @@ def home(name: str):
     return MOVED.get(name) or (G if name in G_FUNCS else testenv.home(name))
 
 FAKE_LAUNCH = """#!/bin/sh
-# stand-in for runner/launch_game.sh: just a process that lives until killed
+# stand-in for runner/launch_game.sh: just a process that lives until killed, with a good stats scan in its bg3le log
 echo "fake game $@"
+logs="$(dirname "$0")/runtime/logs"
+mkdir -p "$logs"
+echo "[ 1.0] stats: 15754 stats via the rarity run at 0x3" > "$logs/bg3le-$BG3AI_LAUNCH_STAMP.log.0"
 exec sleep 3600
 """
 
