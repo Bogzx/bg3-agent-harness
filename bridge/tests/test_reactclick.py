@@ -282,12 +282,14 @@ class ReactTool(Base):
         self.assertNotIn("never closed", out)
         self.assertIn('set_reactions {"<name>": "never"}', out)
 
-    def test_the_definition_says_a_decline_closes_the_prompt(self):
-        # live.md 03:51:42 (lone Shield, rows I-III) and 06:00:20 (Cutting Words + Shield I-III): react(use=false) done,
-        # 0 paused, the attack landed. S6 L5: a model quoted "has never closed" while weighing a decline.
+    def test_the_definition_makes_no_claim_on_whether_a_decline_closes_it(self):
+        # S6 L5: a model quoted "has never closed" while weighing a decline, and a decline closes one in a match
+        # (live.md 03:51:42, 06:00:20). Unread outside a match since S092's TIMEOUT, and this is served there too: no
+        # claim either way. A decline that fails says so in its own result.
         doc = dialogue.react.__doc__ or ""
         self.assertNotIn("never closed", doc)
-        self.assertIn("use=false is Do Not React: it closes the prompt, one row per level included", doc)
+        self.assertNotIn("closes the prompt", doc)
+        self.assertIn("use=false is Do Not React.", doc)
 
 if __name__ == "__main__":
     unittest.main()

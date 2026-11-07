@@ -205,7 +205,7 @@ def roll_check(boosts: str = "", reroll: bool = False) -> str:
 @core.mcp.tool()
 @reporting._guard
 def react(use: bool, which: str = "") -> str:
-    """Answer a reaction prompt (Shield, Counterspell, Opportunity Attack...). use=true to react. which: the option's number in REACTION options, or its name ("Shield": the first row, the lowest level; "Shield 3" or "Shield III": that slot level). use=false is Do Not React: it closes the prompt, one row per level included. set_reactions {"Shield": "never"} beforehand stops these prompts."""
+    """Answer a reaction prompt (Shield, Counterspell, Opportunity Attack...). use=true to react. which: the option's number in REACTION options, or its name ("Shield": the first row, the lowest level; "Shield 3" or "Shield III": that slot level). use=false is Do Not React. set_reactions {"Shield": "never"} beforehand stops these prompts."""
     args: dict[str, Any] = {"use": use}
     if which:
         args["which"] = which
@@ -228,8 +228,8 @@ def react(use: bool, which: str = "") -> str:
         r = ui.get("reaction") if isinstance(ui, dict) else None
         if isinstance(r, dict) and len(r.get("options") or []) > 1:
             # S092 08:46:43 / 08:47:47 (two hand clicks) and 08:55:23 (the command): Do Not React left Gale's
-            # multi-level Shield prompt up; only a row click answered it. It closes one now (live.md 03:51:42, 06:00:20,
-            # in a match), so this is only what this call read: that decline timed out and the prompt still shows
+            # multi-level Shield prompt up; only a row click answered it. In a match it closes one (live.md 03:51:42,
+            # 06:00:20), so this is only what this call read: that decline timed out and the prompt still shows
             out += ("\nthe prompt is still up after Do Not React; a row closes it (react(use=true, which=<number or"
                     " level>)), and set_reactions {\"<name>\": \"never\"} stops these prompts")
     return out

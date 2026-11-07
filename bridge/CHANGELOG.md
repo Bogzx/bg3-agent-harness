@@ -8,10 +8,10 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 ## 2026-11-07: react's definition and INTERRUPTED no longer state what wasn't so
 
 - `react`'s definition said Do Not React "has never closed" a prompt with one row per level, from S092 outside a match.
-  It now says `use=false is Do Not React: it closes the prompt, one row per level included`. Read live in a match:
-  live.md 03:51:42 (lone Shield I-III) and 06:00:20 (Cutting Words + Shield I-III), `react: done`, 0 paused, the attack
-  landed. Not read since S092: a decline on such a prompt outside a match. A decline that times out with the prompt up
-  now says that it did (`the prompt is still up after Do Not React`), and no longer says never.
+  That is false in a match: live.md 03:51:42 (lone Shield I-III) and 06:00:20 (Cutting Words + Shield I-III), `react:
+  done`, 0 paused, the attack landed. Outside a match it hasn't been read since S092's TIMEOUT, and the definition is
+  served there too, so it now says only `use=false is Do Not React.` A decline that times out with the prompt up says
+  that it did (`the prompt is still up after Do Not React`), and no longer says never.
 - A cast paused for a reaction said `the cast goes on after it and its outcome shows in the events`. In S6 L5, 4 of 9
   were countered, and one of those left its caster no event at all. It now says `the answer can change or stop the
   cast, and the state here is from before it`.

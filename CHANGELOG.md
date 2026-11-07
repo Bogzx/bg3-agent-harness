@@ -95,7 +95,7 @@ game unless it says so.
   hadn't dropped, and a swing the game took the cost of and then cancelled no longer says the game refused it. The
   served tool definitions and the bench prompts don't change. bench-v0.11's release cited it until 0.6.0.
 - 0.6.0 (2026-11-07): what the agent sees changed: `react`'s served definition no longer says Do Not React has never
-  closed a prompt with one row per level (it closes one, read live in a match), and a cast paused for a reaction no
+  closed a prompt with one row per level (it closes one in a match; outside one it's unread), and a cast paused for a reaction no
   longer promises that it goes on or that its outcome shows in the events (a Counterspell stops it). An order the pause
   caught before it started says what 4 live reads showed, that it didn't run after the answer and its action stayed,
   with no promise. The bench prompts don't change. bench-v0.11's release cites it.
