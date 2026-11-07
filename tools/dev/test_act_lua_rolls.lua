@@ -163,6 +163,10 @@ test("cast start: a cast held paused for a reaction is reported as paused, its t
     tick(10) -- 1.2 s paused
     eq(j.status, "interrupted", "status " .. tostring(j.error))
     eq(j.error, A.CAST_PAUSED, "says paused")
+    -- S6 L5: 4 of 9 such casts were countered, one with no event at all: it promises neither that it goes on nor events
+    eq(j.error:find("goes on", 1, true), nil, "no promise the cast goes on")
+    eq(j.error:find("shows in the events", 1, true), nil, "no promise of an event")
+    assert(j.error:find("can change or stop the cast", 1, true), j.error)
     eq(j.result.began, true, "began"); eq(j.result.paused, true, "paused")
     eq(#called("PurgeOsirisQueue"), 0, "the held cast is not purged")
     world[P1].comp_names = nil

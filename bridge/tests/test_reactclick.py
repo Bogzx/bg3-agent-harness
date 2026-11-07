@@ -278,8 +278,16 @@ class ReactTool(Base):
                                                                     else saved(op, args, context))
         out = dialogue.react(False)
         self.assertIn("react: TIMEOUT", out)
-        self.assertIn("Do Not React has never closed a prompt with one row per level", out)
+        self.assertIn("the prompt is still up after Do Not React", out)
+        self.assertNotIn("never closed", out)
         self.assertIn('set_reactions {"<name>": "never"}', out)
+
+    def test_the_definition_says_a_decline_closes_the_prompt(self):
+        # live.md 03:51:42 (lone Shield, rows I-III) and 06:00:20 (Cutting Words + Shield I-III): react(use=false) done,
+        # 0 paused, the attack landed. S6 L5: a model quoted "has never closed" while weighing a decline.
+        doc = dialogue.react.__doc__ or ""
+        self.assertNotIn("never closed", doc)
+        self.assertIn("use=false is Do Not React: it closes the prompt, one row per level included", doc)
 
 if __name__ == "__main__":
     unittest.main()

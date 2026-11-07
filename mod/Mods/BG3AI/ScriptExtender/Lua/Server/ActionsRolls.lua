@@ -278,11 +278,12 @@ end
 -- Live window 5 (ops/logs/live.md, melee-swap A/B): 3 of 10 Main Hand Attacks "never started" although their cast
 -- state was made at 70-270 ms: Karlach's own reaction prompt (Reckless Attack, "needs 15 to hit") paused the cast
 -- (ls::anubis::PausedComponent on the caster from ~0.8-1.4 s) and the 3 s no-start check purged it. A started cast
--- the game holds paused this long is reported as paused, its tasks kept: it goes on once the prompt is answered.
+-- the game holds paused this long is reported as paused, its tasks kept: the answer decides what comes of it (S6 L5:
+-- 4 of 9 were countered, and a Magic Missile countered from out of sight left no event for its caster).
 A.CAST_PAUSED_COMP = "ls::anubis::PausedComponent"
 A.CAST_PAUSED_MS = 1000
 A.CAST_PAUSED = "the cast started and the game paused it for a reaction decision (a reaction prompt is open):"
-    .. " answer it (react) if it is yours; the cast goes on after it and its outcome shows in the events"
+    .. " answer it (react) if it is yours; the answer can change or stop the cast, and the state here is from before it"
 A.ORDER_PAUSED = "the game paused for a reaction decision before this order started (a reaction prompt is open):"
     .. " answer it (react) if it is yours; the order wasn't cancelled, and whether it runs after shows in the events"
 

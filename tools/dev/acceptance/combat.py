@@ -54,7 +54,7 @@ def _action_row(tool: str, out: str, dt: float, counts: dict) -> tuple[str, bool
 
 def attack_landed(out: str, foe: dict) -> bool:
     """use_ability's `out` on the row `foe` read before it: done, or a cast a reaction prompt paused (REACTION_PAUSE)
-    that went on to hurt it. The paused cast goes on once the prompt is answered, so this answers it and any next one
+    that went on to hurt it. The answer decides what comes of the paused cast, so this answers it and any next one
     without the reaction and reads the result, not the status: such a cast can still miss (live 2026-11-05: Karlach's
     Ranged Attack, INTERRUPTED by the Executioner prompt, e9 9 -> 3 after it)."""
     if re.search(r"(?m)^use_ability[^\n]*: done", out):

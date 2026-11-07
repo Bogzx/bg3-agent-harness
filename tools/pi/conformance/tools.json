@@ -1197,7 +1197,7 @@
  },
  {
   "name": "react",
-  "description": "Answer a reaction prompt (Shield, Counterspell, Opportunity Attack...). use=true to react. which: the option's number in REACTION options, or its name (\"Shield\": the first row, the lowest level; \"Shield 3\" or \"Shield III\": that slot level). A prompt with one row per level is answered by a click on that row; Do Not React has never closed one: set_reactions {\"Shield\": \"never\"} beforehand stops them.",
+  "description": "Answer a reaction prompt (Shield, Counterspell, Opportunity Attack...). use=true to react. which: the option's number in REACTION options, or its name (\"Shield\": the first row, the lowest level; \"Shield 3\" or \"Shield III\": that slot level). use=false is Do Not React: it closes the prompt, one row per level included. set_reactions {\"Shield\": \"never\"} beforehand stops these prompts.",
   "inputSchema": {
    "properties": {
     "use": {
