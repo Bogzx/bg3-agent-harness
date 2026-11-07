@@ -280,6 +280,11 @@ game unless it says so.
 - The served tool definitions don't change in this round, but match rules and `react`'s results do, so the harness goes
   to 0.5.0. `releases/bench-v0.11.json` moves that version, `mod_sha1` and `code_sha1`; its game and bg3le pins don't
   change.
+- Also in normal play: `level_up` closes the page the game opens after a finish even when that page's intro has already
+  ended. It used to keep such a page for the next call, and that page could lack the next level's selectors for good: a
+  Battle Master's level 7 stopped with its manoeuvres "not offered", and reopened by hand the same page offered them. A
+  page that ignores the close is still reported as `page_still_open`. Each level on a short intro now takes a reopen,
+  about 7 s more.
 
 ### Benchmark (`packages/bench`)
 

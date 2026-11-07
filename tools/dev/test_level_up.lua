@@ -181,6 +181,7 @@ local function openPage(spec)
     end
     function dc.GetProperty(self, k)
         if k == "IsLevelUpComplete" then
+            if page.never_complete then return false end
             if #(self._p.SelectableSubClasses) > 0 and self._p.SelectedSubClass == nil then return false end
             for _, sl in ipairs(page.selectors) do if not sl:GetProperty("IsComplete") then return false end end
             if page.passiveSel and not page.passiveSel:GetProperty("IsComplete") then return false end
@@ -210,7 +211,7 @@ local opened = 0
 local CLASS_OF = { gale = "clsWizard", wyll = "clsWarlock" }
 Ext = { Entity = { Get = function(u) return { ClientControl = true, Health = { Hp = 16, MaxHp = 16 }, EocLevel = { Level = 1 },
                                                Classes = { Classes = { { ClassUUID = CLASS_OF[u], Level = 1 } } } } end },
-        Input = { InjectKeyPress = function() end },
+        Input = { InjectKeyPress = function() if page and page.escape_closes then closePage() end end },
         Stats = { Get = function(id) local st = STATS[id] if not st then return nil end
                       return { Level = st.Level, SpellSchool = st.SpellSchool, DisplayName = "h:" .. id } end },
         Loca = { GetTranslatedString = function(h) local st = STATS[h:sub(3)] return st and st.Name or "" end },
@@ -293,10 +294,12 @@ BG3AI.UI = {
             closePage()
             if page.chain then  -- the game opens the next member's page by itself, in its intro (S029)
                 local spec = page.spec
-                local chain, sticky = page.chain, page.chain_sticky
+                local chain, sticky, step = page.chain, page.chain_sticky, page.chain_step
+                local escape = page.chain_escape
                 openPage(spec)
                 page.chain, page.sticky = chain, sticky   -- chain_sticky: the new page ignores the close too
-                dc._p.LevelUpStep = "Started"
+                page.escape_closes = escape               -- chain_escape: ... but not ESCAPE
+                dc._p.LevelUpStep = step or "Started"     -- chain_step: its intro already over
                 dc._p.LevelUpCharacter = chain
             end
             return true
@@ -726,6 +729,40 @@ page.chain_sticky = true
 j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
 check(j.status == "done" and j.result.page_still_open == "another level up may be pending",
       "own page that stays after the finish: pending, said as a fact (" .. tostring(j.result.page_still_open) .. ")")
+-- 33d. live 2026-11-07, L12 Fighter: a short intro ended inside the 4 s, so its next page was kept at IntroComplete,
+--      and level 7's page never held its selector. The button did nothing on that page and ESCAPE closed it; so here
+openPage(PAL)
+page.chain, page.chain_step = portrait, "IntroComplete"
+page.chain_sticky, page.chain_escape = true, true
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and widget == nil and j.result.page_still_open == nil and j.result.next_page_closed
+      == "the game opened a new level-up page: closed it (a level up it showed is still pending)",
+      "own new page past its intro: closed, by ESCAPE (" .. tostring(j.result.page_still_open) .. ", "
+      .. tostring(j.result.next_page_closed) .. ")")
+-- 33e. ... another character's page past its intro: closed, and named as theirs
+openPage(PAL)
+page.chain, page.chain_step = other, "IntroComplete"
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and widget == nil and j.result.next_page_closed
+      == "the game opened another character's level-up page: closed it (that character keeps its level up)",
+      "another's page past its intro: closed as theirs (" .. tostring(j.result.next_page_closed) .. ")")
+-- 33f. ... and one that ignores both closes stays said as a fact, with its step
+openPage(PAL)
+page.chain, page.chain_step, page.chain_sticky = portrait, "IntroComplete", true
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and j.result.page_still_open == "another level up may be pending"
+      and j.result.close_step == "IntroComplete",
+      "own page past its intro that stays: pending, with its step (" .. tostring(j.result.close_step) .. ")")
+-- 33g. the next call on a page that stayed and lacks the level's selector stops at the finish, naming the picks: it
+--      can't finish a level short of them, since the game's own IsLevelUpComplete is false
+openPage(PAL)
+dc._p.LevelUpCharacter = portrait
+dc._p.LevelUpStep = "IntroComplete"
+page.never_complete = true
+j = run({ uuid = "claude", plan = { passives = { "Feinting Attack" } } })
+check(j.status == "failed" and not page.finished and tostring(j.error):find("Feinting Attack", 1, true) ~= nil,
+      "a stale page short of the plan's selector: stopped, not finished (" .. tostring(j.status) .. ", "
+      .. tostring(j.error) .. ")")
 
 -- 34. S032 Wyll L6 (Warlock, no feat): the multiclass items show "Lv 2" / nothing; options name the class from the
 --     character, drop the unnamed list, and the run never selects (or reports) the feat tab.
