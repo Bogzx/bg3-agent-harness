@@ -984,7 +984,7 @@ reg("cast", function(args)
             end
             if not job.casted then
                 if type(job.result) == "table" and job.result.paused then
-                    A.hold_audit(job, char, matches, audit, check)
+                    A.hold_audit(job, char, matches, audit, check, spell)
                 elseif job.countered then
                     job.countered.audit = audit
                 end

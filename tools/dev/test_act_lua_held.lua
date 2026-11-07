@@ -476,7 +476,6 @@ local function free_attack_setup()
     spell("Target_MainHandAttack", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1",
         Level = 0, SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" }, SpellRoll = melee })
     world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0
-    return j
 end
 local function swing() return job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = NPC })) end
 
@@ -698,21 +697,26 @@ test("linked box: a holder whose groups don't read still gets the game data's li
 end)
 
 -- live.md "L12 on main 807dce16", rows 389, 871: the held swing charged, its free status not on yet.
-local function held_swing_charged()
+local function held_swing_charged(held)
     combat_setup(9)
     world[NPC].pos = { 1.5, 0, 0 }
     spell("Target_MainHandAttack", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1",
         Level = 0, SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" },
         SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } })
     spell("Target_Bolt", { TargetRadius = "18", SpellType = "Target", Level = 0, UseCosts = "ActionPoint:1" })
-    local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = NPC }))
+    spell("Target_BonusSwing", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "BonusActionPoint:1", Level = 0,
+        SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" },
+        SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } })
+    local res = world[P1].comps.ActionResources.Resources
+    res.BonusActionPoint = { { Level = 0, Amount = 1 } }
+    local j = job(op("cast", { char = P1, spell = held or "Target_MainHandAttack", target = NPC }))
     tick(15)
     world[P1].comp_names = { PAUSED }
     tick(20)
     eq(j.status, "interrupted", "held " .. tostring(j.error))
     world[P1].comp_names = nil
     tick(2)
-    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0
+    res.ActionPoint[1].Amount, res.BonusActionPoint[1].Amount = 0, 0
     return j
 end
 local function gap_swing() return op("cast", { char = P1, spell = "Target_MainHandAttack", target = NPC }) end
@@ -783,4 +787,68 @@ test("state.actions: a weapon attack in that gap lists still resolving, a plain 
     eq(read().Target_BonusWeapon.reason, "no bonus action", "another resource short isn't the gap")
     BG3AI.Visibility = savedV
     world[P1].comps.SpellBook = nil
+end)
+
+test("held cast: the words need a started weapon attack of this character's, unlanded, not failed", function()
+    local function counts(over)
+        local h = { char = P1, began = true, gives_free = true }
+        for k, v in pairs(over) do h[k] = v end
+        A.held_audits = { h }
+        return A.cast_unlanded(P1)
+    end
+    eq(counts({}), true, "the plain case")
+    eq(counts({ char = NPC }), false, "another character's")
+    eq(counts({ began = false }), false, "not started")
+    eq(counts({ gives_free = false }), false, "can't bring the status")
+    eq(counts({ landed_ms = 1 }), false, "landed")
+    eq(counts({ failed = true }), false, "failed")
+    eq(counts({ countered = true }), false, "countered: no free attack comes")
+    local now = RPC.now_ms()
+    eq(counts({ free_ms = now - A.HELD_LANDS_MS + 100 }), true, "inside the bound")
+    eq(counts({ free_ms = now - A.HELD_LANDS_MS }), false, "at the bound")
+end)
+
+test("held cast: a held cast that can't bring the status leaves the plain refusal", function()
+    for _, held in ipairs({ "Target_Bolt", "Target_BonusSwing" }) do
+        held_swing_charged(held)
+        local r = gap_swing()
+        eq(r.error or (r.job and r.job.error), "not enough action", held)
+    end
+end)
+
+test("held cast: in the window a weapon attack short of its bonus action says so, not 'yet'", function()
+    held_swing_charged()
+    spell("Target_BothSwing", { TargetRadius = "1.5", SpellType = "Target", Level = 0,
+        UseCosts = "BonusActionPoint:1;ActionPoint:1", SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" },
+        SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } })
+    local r = op("cast", { char = P1, spell = "Target_BothSwing", target = NPC })
+    eq(r.error or (r.job and r.job.error), "not enough bonus action", "the shortage it has")
+end)
+
+-- REVIEW-reactions.md F1: a failed reads every matching entry, as before this head: a Canceled doesn't stop the loop.
+local function failed_entries(one, two)
+    local function entry(outcome)
+        return { char = P1, began = true, matches = function() return true end,
+            entity = { SpellCastOutcome = { Result = outcome } } }
+    end
+    local a, b = entry(one), entry(two)
+    A.held_audits = { a, b }
+    return a, b
+end
+
+test("held cast: an older Canceled entry doesn't keep a newer Countered one from being countered", function()
+    combat_setup(9)
+    local a, b = failed_entries("Canceled", "Countered")
+    A.held_cast_failed(P1, "Target_MainHandAttack")
+    eq(a.failed, true, "older")
+    eq(a.countered, nil, "older isn't countered")
+    eq(b.countered, true, "newer")
+end)
+
+test("held cast: one failed ends every matching entry with a readable outcome", function()
+    combat_setup(9)
+    local a, b = failed_entries("Canceled", "Canceled")
+    A.held_cast_failed(P1, "Target_MainHandAttack")
+    eq(a.failed, true, "older")
+    eq(b.failed, true, "newer")
 end)

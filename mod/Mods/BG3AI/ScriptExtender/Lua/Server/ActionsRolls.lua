@@ -335,9 +335,11 @@ A.HELD_RESOLVE_MS = 10000
 A.CAST_UNRESOLVED = "this character's last cast is still resolving after a reaction: its cost may not show yet, and no"
     .. " order but end_turn starts for this character until it has (at most 10 s after any prompt closes)"
 
-function A.hold_audit(job, char, matches, audit, check)
+function A.hold_audit(job, char, matches, audit, check, spell)
+    local st = spell and Ext.Stats.Get(spell)
     A.held_audits[#A.held_audits + 1] = { char = char, matches = matches, audit = audit, side = job.side,
-        began = job.began and true or nil, check = check, entity = job.cast_entity }
+        began = job.began and true or nil, check = check, entity = job.cast_entity,
+        gives_free = st and G.extra_attack_spell(spell, st) or nil }
 end
 
 -- Before the jobs in A.dispatch, so A.held_landing can tell them this CastedSpell is a held cast's.
@@ -420,7 +422,6 @@ function A.held_cast_failed(caster, spell)
             return
         elseif why then
             h.failed = true
-            return
         end
     end
 end
@@ -441,13 +442,14 @@ end
 -- live.md "L12 on main 807dce16", rows 389, 871: the charge lifts the gate, then for about 100-200 ms a Fighter's free
 -- status isn't on (t1, m1, EXTRA_ATTACK_2, _Q, EXTRA_ATTACK), so a swing sent 104-118 ms before the held cast's
 -- CastedSpell read "not enough action", while a free attack came. The status reads on before CastedSpell (t1, m1).
--- Words only: an order that passes today still passes (#120).
+-- Words only: an order that passes today still passes (#120). Only a held weapon attack with an Action cost: nothing
+-- else brings the status (ExtraAttackSpellCheck, HasUseCosts in Passive.txt).
 A.CAST_UNLANDED = "not enough action yet: this character's last cast is still resolving after a reaction, and any free"
     .. " attack it gives shows by its landing"
 function A.cast_unlanded(char)
     local now = RPC.now_ms()
     for _, h in ipairs(A.held_audits) do
-        if G.same(h.char, char) and h.began and not h.landed_ms and not h.countered and not h.failed
+        if G.same(h.char, char) and h.began and h.gives_free and not h.landed_ms and not h.countered and not h.failed
             and not (h.free_ms and now - h.free_ms >= A.HELD_LANDS_MS) then
             return true
         end
