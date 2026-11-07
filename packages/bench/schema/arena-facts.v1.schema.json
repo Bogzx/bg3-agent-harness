@@ -54,6 +54,7 @@
         "arena_turn_forced",
         "arena_end",
         "arena_reaction_unowned",
+        "arena_reaction_declined",
         "arena_turn_passed",
         "arena_stall",
         "arena_end_written",
@@ -536,6 +537,40 @@
             }
           }
         ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_reaction_declined"
+          }
+        }
+      },
+      "then": {
+        "description": "The harness declined a reaction prompt its side left unanswered past the bound.",
+        "required": [
+          "round",
+          "side",
+          "detail"
+        ],
+        "properties": {
+          "round": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the round it came up in"
+          },
+          "side": {
+            "enum": [
+              "A",
+              "B"
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "description": "the prompt's text"
+          }
+        }
       }
     },
     {

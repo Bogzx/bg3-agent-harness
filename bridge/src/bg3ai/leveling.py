@@ -251,7 +251,7 @@ FROZEN_SWEEP = (0.5, 0.30, 0.75)   # a frozen page's list: centre column x, swep
 
 Rpc = Callable[[str, dict], dict]
 MEMO = Path(os.environ.get("BG3AI_RUNTIME", Path(__file__).resolve().parents[3] / "runtime")) / "levelup_clicks.json"
-_last_hit: dict[str, tuple[float, float]] = {}   # "spells"/"cantrips"/"feat" -> window fraction of the last button hit
+_last_hit: dict[str, tuple[float, float]] = {}   # "spells"/"cantrips"/"feat"/"picks" -> window fraction of the last button hit
 
 
 class SpellClickError(RuntimeError):
@@ -486,6 +486,8 @@ class SpellClicker:
         args = {"name": need["name"]}
         if need.get("cantrips") is not None:
             args["cantrips"] = need["cantrips"]
+        if need.get("remove"):
+            args["remove"] = True   # a respec's own pick: its button in the selector's Additions; `placed` = it's off
         self._check_time(f"spell {need['name']}")
         p = self.ready(args)
         if p.get("placed"):
@@ -493,15 +495,17 @@ class SpellClicker:
         if p.get("enabled") is False:
             raise SpellClickError(f"spell {need['name']}: its button is disabled (no open slot?)")
         kind = "feat" if p.get("feat") else ("cantrips" if need.get("cantrips") else "spells")
+        if need.get("remove"):
+            kind = "picks"   # another list than the selector's Available: its own last hit
         at = self.locate(args, p, kind)
         self.inp.click(*at)
         self.inp.wait_frames(8)
         for _ in range(10):
             if self.probe(args).get("placed"):
-                self.log(f"picked {need['name']} (click at {at})")
+                self.log(f"{'took off' if need.get('remove') else 'picked'} {need['name']} (click at {at})")
                 return
             self.inp.wait_frames(6)
-        raise SpellClickError(f"spell {need['name']}: clicked at {at} but it is not picked")
+        raise SpellClickError(f"spell {need['name']}: clicked at {at} but it is {'still' if need.get('remove') else 'not'} picked")
 
 
 def click_spells(rpc: Rpc, inp, needs: list[dict], log: Callable[[str], None] = lambda m: None,

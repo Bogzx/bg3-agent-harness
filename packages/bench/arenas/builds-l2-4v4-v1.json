@@ -1,440 +1,1451 @@
 {
-  "schema": "arena.v1",
-  "name": "builds-l2-4v4-v1",
-  "title": "Level 2 builds, four against four (RED against BLUE)",
-  "about": "Four mirror pairs from the build file packages/bench/builds/l2_hirelings_v1.json (tools/dev/make_arena_save.py builds-mirror): a Fighter (Wood Half-Elf), a Rogue (Human), a Barbarian (Gold Dwarf) and a Ranger (Drow), each pair spawned from its class's hireling template, so each build has its hireling's race (A1, orchestrator D411). Side A is RED, side B BLUE; each twin's name is a neutral name with its colour first (BUILDS.md §7 F3). The crash_site_grove start save, as crash-mirror-v1.",
-  "draft": "spawns are TODO (null) until a live height read gives 8 level spots under the F2 rule; the builds are a draft without reference profiles (plan step 3), and the respec driver's command names wait on the route-H probe (2026-11-03)",
-  "save": {
-    "name": "Tav-34221263934__SCN-crash_site_grove",
-    "sha1": "d7b0749e1dc6febb477f302d2a30b25770329213"
+ "schema": "arena.v1",
+ "save": {
+  "name": "Tav-34221263934__SCN-crash_site_grove",
+  "sha1": "d7b0749e1dc6febb477f302d2a30b25770329213"
+ },
+ "seed": 2026,
+ "karmic": false,
+ "round_cap": 20,
+ "wall_cap_min": 60.0,
+ "turn_cap_s": 90,
+ "condition": "rules",
+ "tools_off": "arena-v1",
+ "name": "builds-l2-4v4-v1",
+ "title": "Level 2: Fighter, Rogue, Barbarian, Ranger (each its hireling's race and background)",
+ "about": "The build file l2_hirelings_v1 (tools/dev/make_arena_save.py builds-arena), each pair's twins made per match, on crash-mirror-v1's save.",
+ "location": {
+  "level": "WLD_Main_A",
+  "spawns": {
+   "A": [
+    212.875,
+    10.98,
+    288.0
+   ],
+   "B": [
+    212.875,
+    10.98,
+    296.0
+   ]
   },
-  "location": {
-    "level": "WLD_Main_A",
-    "spawns": {
-      "A": null,
-      "B": null
+  "line_gap": 1.25
+ },
+ "level": 2,
+ "teams": {
+  "A": [
+   {
+    "name": "Red Ash"
+   },
+   {
+    "name": "Red Birch"
+   },
+   {
+    "name": "Red Cedar"
+   },
+   {
+    "name": "Red Dune"
+   }
+  ],
+  "B": [
+   {
+    "name": "Blue Ash"
+   },
+   {
+    "name": "Blue Birch"
+   },
+   {
+    "name": "Blue Cedar"
+   },
+   {
+    "name": "Blue Dune"
+   }
+  ]
+ },
+ "mirror": {
+  "party_xp": {
+   "total": 300,
+   "below": 900
+  },
+  "pairs": [
+   {
+    "class": "Fighter",
+    "build": "fighter",
+    "template": "d9401d40-453b-4512-84ee-d1c6ab29afea",
+    "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
+    "stats": "BG3AI_Arena_Fighter_L1",
+    "names": {
+     "A": "Red Ash",
+     "B": "Blue Ash"
+    },
+    "kit": {
+     "race": {
+      "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
+      "boosts": "ActionResource(Movement,9,0);ActionResource(Movement,1.5,0);ProficiencyBonus(Skill,Stealth)",
+      "passives": [
+       "HumanMilitia",
+       "Darkvision",
+       "FeyAncestry"
+      ]
+     },
+     "player": {
+      "passives": [
+       "DeathSavingThrows",
+       "Background_Soldier"
+      ]
+     },
+     "ability_bonus": [
+      "Strength",
+      "Constitution"
+     ],
+     "choices": [
+      {
+       "kind": "skills",
+       "list": "6a4f8598-3a17-42d1-beac-d7ced582bafa",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "Perception",
+        "Survival"
+       ]
+      },
+      {
+       "kind": "passives",
+       "list": "da3203d8-750a-4de1-b8eb-1eccfccddf46",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "FightingStyle_Defense"
+       ]
+      }
+     ],
+     "items": [
+      {
+       "item": "WPN_Longsword",
+       "root": "1865323f-b428-4791-a0a9-578841e57463",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "WPN_Shortbow",
+       "root": "c5403c1d-f372-43e1-927a-9189e9e3545d",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "ARM_ScaleMail_Body",
+       "root": "ca0aafad-0f1e-4d76-8e3b-925397bb436b",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "ARM_Boots_Leather",
+       "root": "969bab00-b269-46a5-a7e9-dd4887814719",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "OBJ_Potion_Healing",
+       "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
+       "count": 2,
+       "equip": false
+      }
+     ]
+    },
+    "reference": {
+     "profile": {
+      "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
+      "level": 2,
+      "classes": [
+       "721dfac3-92d4-41f5-b773-b7072a86232f/00000000-0000-0000-0000-000000000000/2"
+      ],
+      "abilities": [
+       17,
+       13,
+       15,
+       10,
+       12,
+       8
+      ],
+      "max_hp": 20,
+      "ac": 16,
+      "equipment": {
+       "Boots": "ARM_Boots_Leather_969bab00-b269-46a5-a7e9-dd4887814719",
+       "Breast": "ARM_ScaleMail_ca0aafad-0f1e-4d76-8e3b-925397bb436b",
+       "RangedMainHand": "WPN_HUM_Shortbow_A_0_c5403c1d-f372-43e1-927a-9189e9e3545d",
+       "MeleeMainHand": "WPN_HUM_Longsword_A_0_1865323f-b428-4791-a0a9-578841e57463"
+      },
+      "inventory": [
+       "CONS_Potion_Healing_A_d47006e9-8a51-453d-b200-9e0d42e9bbab"
+      ],
+      "spells": [
+       "Projectile_HamstringShot",
+       "Projectile_Jump",
+       "Projectile_MainHandAttack",
+       "Rush_SpringAttack",
+       "Shout_ActionSurge",
+       "Shout_Dash",
+       "Shout_Disengage",
+       "Shout_Hide",
+       "Shout_SecondWind",
+       "Target_Dip",
+       "Target_Help",
+       "Target_MainHandAttack",
+       "Target_PommelStrike",
+       "Target_Shove",
+       "Target_Slash_New",
+       "Throw_ImprovisedWeapon",
+       "Throw_Throw"
+      ],
+      "prepared": [
+       "Projectile_HamstringShot",
+       "Projectile_Jump",
+       "Projectile_MainHandAttack",
+       "Rush_SpringAttack",
+       "Shout_ActionSurge",
+       "Shout_Dash",
+       "Shout_Disengage",
+       "Shout_Hide",
+       "Shout_SecondWind",
+       "Target_Dip",
+       "Target_Help",
+       "Target_MainHandAttack",
+       "Target_PommelStrike",
+       "Target_Shove",
+       "Target_Slash_New",
+       "Throw_ImprovisedWeapon",
+       "Throw_Throw"
+      ],
+      "passives": [
+       "AttackOfOpportunity",
+       "Background_Soldier",
+       "CombatStartAttack",
+       "DarknessRules",
+       "Darkvision",
+       "DeathSavingThrows",
+       "FeyAncestry",
+       "FightingStyle_Defense",
+       "HumanMilitia",
+       "NonLethal",
+       "Perform",
+       "ShortResting",
+       "WeaponThrow"
+      ],
+      "statuses": [
+       "INSURFACE"
+      ],
+      "resources": {
+       "Movement": {
+        "0": 10.5
+       },
+       "BonusActionPoint": {
+        "0": 1.0
+       },
+       "ActionPoint": {
+        "0": 1.0
+       },
+       "ReactionActionPoint": {
+        "0": 1.0
+       }
+      },
+      "proficiencies": [
+       "Glaives",
+       "Halberds",
+       "HeavyArmor",
+       "LightArmor",
+       "MartialWeapons",
+       "MediumArmor",
+       "Pikes",
+       "Shields",
+       "SimpleWeapons",
+       "Spears"
+      ],
+      "skills": {
+       "Insight": 1,
+       "History": 0,
+       "Persuasion": -1,
+       "SleightOfHand": 1,
+       "Acrobatics": 1,
+       "Stealth": 3,
+       "Religion": 0,
+       "Survival": 3,
+       "Perception": 3,
+       "Investigation": 0,
+       "Performance": -1,
+       "Athletics": 5,
+       "Arcana": 0,
+       "Nature": 0,
+       "Medicine": 1,
+       "Intimidation": 1,
+       "Deception": -1,
+       "AnimalHandling": 1
+      },
+      "boosts": [
+       "AC|||",
+       "Ability|Ability|Charisma,8|",
+       "Ability|Ability|Constitution,14|",
+       "Ability|Ability|Constitution,1|",
+       "Ability|Ability|Dexterity,13|",
+       "Ability|Ability|Intelligence,10|",
+       "Ability|Ability|Strength,15|",
+       "Ability|Ability|Strength,2|",
+       "Ability|Ability|Wisdom,12|",
+       "ActionResource|||",
+       "ActionResource|||",
+       "ActiveCharacterLight|||",
+       "Advantage|Disadvantage|Skill,Stealth|not HasPassive('MediumArmorMaster', context.Source)",
+       "BlockRegainHP|BlockRegainHP|Undead;Construct|",
+       "DarkvisionRangeMin|||",
+       "DownedStatus|||",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Perception|",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Survival|",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "StatusImmunity|||",
+       "StatusImmunity|||",
+       "StatusImmunity|||",
+       "Tag|||",
+       "UnlockInterrupt|||",
+       "UnlockSpell|UnlockSpell|Projectile_HamstringShot|",
+       "UnlockSpell|UnlockSpell|Rush_SpringAttack|",
+       "UnlockSpell|UnlockSpell|Target_PommelStrike|",
+       "UnlockSpell|UnlockSpell|Target_Slash_New|"
+      ],
+      "spellcast": [
+       "Projectile_HamstringShot|Intelligence|AlwaysPrepared|10|2",
+       "Projectile_Jump|Intelligence|AlwaysPrepared|10|2",
+       "Projectile_MainHandAttack|None|AlwaysPrepared|-|-",
+       "Rush_SpringAttack|Intelligence|AlwaysPrepared|10|2",
+       "Shout_ActionSurge|Intelligence|AlwaysPrepared|10|2",
+       "Shout_Dash|Intelligence|AlwaysPrepared|10|2",
+       "Shout_Disengage|Intelligence|AlwaysPrepared|10|2",
+       "Shout_Hide|Intelligence|AlwaysPrepared|10|2",
+       "Shout_SecondWind|Intelligence|AlwaysPrepared|10|2",
+       "Target_Dip|Intelligence|AlwaysPrepared|10|2",
+       "Target_Help|Intelligence|AlwaysPrepared|10|2",
+       "Target_MainHandAttack|None|AlwaysPrepared|-|-",
+       "Target_PommelStrike|Intelligence|AlwaysPrepared|10|2",
+       "Target_Shove|Intelligence|AlwaysPrepared|10|2",
+       "Target_Slash_New|Intelligence|AlwaysPrepared|10|2",
+       "Throw_ImprovisedWeapon|Intelligence|AlwaysPrepared|10|2",
+       "Throw_Throw|Intelligence|AlwaysPrepared|10|2"
+      ],
+      "derived": {
+       "proficiency_bonus": 2,
+       "spell_casting_ability": "Intelligence",
+       "movement": 10.5,
+       "spell_save_dc_boost": 0,
+       "ranged_main_hand": "none",
+       "initiative_bonus": 1,
+       "melee_main_hand": "none",
+       "weapon_action_dc": 3
+      },
+      "resource_max": [
+       "ActionPoint|0|1.0|Default",
+       "BonusActionPoint|0|1.0|Default",
+       "Movement|0|10.5|Default",
+       "ReactionActionPoint|0|1.0|Default"
+      ],
+      "passive_state": [
+       "AttackOfOpportunity|false|true",
+       "Background_Soldier|false|true",
+       "CombatStartAttack|false|true",
+       "DarknessRules|false|true",
+       "Darkvision|false|true",
+       "DeathSavingThrows|false|true",
+       "FeyAncestry|false|true",
+       "FightingStyle_Defense|false|true",
+       "HumanMilitia|false|true",
+       "NonLethal|false|true",
+       "Perform|false|true",
+       "ShortResting|false|true",
+       "WeaponThrow|false|true"
+      ]
+     },
+     "accepted": [
+      {
+       "field": "derived",
+       "only_twin": [
+        "weapon_action_dc=8"
+       ],
+       "only_reference": [
+        "weapon_action_dc=3"
+       ],
+       "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 3 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+      }
+     ]
     }
-  },
-  "teams": {
-    "A": [
+   },
+   {
+    "class": "Rogue",
+    "build": "rogue",
+    "template": "6df14611-1da5-4f2a-9300-ff74778d49b4",
+    "race": "0eb594cb-8820-4be6-a58d-8be7a1a98fba",
+    "stats": "BG3AI_Arena_Rogue_L1",
+    "names": {
+     "A": "Red Birch",
+     "B": "Blue Birch"
+    },
+    "kit": {
+     "race": {
+      "race": "0eb594cb-8820-4be6-a58d-8be7a1a98fba",
+      "boosts": "ActionResource(Movement,9,0)",
+      "passives": [
+       "HumanMilitia",
+       "HumanVersatility"
+      ]
+     },
+     "player": {
+      "passives": [
+       "DeathSavingThrows",
+       "Background_Urchin"
+      ]
+     },
+     "ability_bonus": [
+      "Dexterity",
+      "Constitution"
+     ],
+     "choices": [
       {
-        "name": "Red Ash"
+       "kind": "skills",
+       "list": "f974ebd6-3725-4b90-bb5c-2b647d41615d",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "Athletics"
+       ]
       },
       {
-        "name": "Red Birch"
+       "kind": "skills",
+       "list": "a1c2b712-2ed6-4e5b-820f-c5db654fe006",
+       "n": 4,
+       "exact": true,
+       "ids": [
+        "Acrobatics",
+        "Perception",
+        "Deception",
+        "Investigation"
+       ]
       },
       {
-        "name": "Red Cedar"
-      },
-      {
-        "name": "Red Dune"
+       "kind": "expertise",
+       "list": "f974ebd6-3725-4b90-bb5c-2b647d41615d",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "Stealth",
+        "Perception"
+       ]
       }
-    ],
-    "B": [
+     ],
+     "items": [
       {
-        "name": "Blue Ash"
+       "item": "WPN_Shortsword",
+       "root": "467ddb4f-6791-41fa-99f7-ee8620d63bbe",
+       "count": 1,
+       "equip": true
       },
       {
-        "name": "Blue Birch"
+       "item": "WPN_Shortbow",
+       "root": "c5403c1d-f372-43e1-927a-9189e9e3545d",
+       "count": 1,
+       "equip": true
       },
       {
-        "name": "Blue Cedar"
+       "item": "ARM_Leather_Body_Rogue",
+       "root": "4c4396db-fa4a-4541-9b2a-23e43211dde7",
+       "count": 1,
+       "equip": true
       },
       {
-        "name": "Blue Dune"
+       "item": "ARM_Boots_Leather",
+       "root": "969bab00-b269-46a5-a7e9-dd4887814719",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "OBJ_Kit_ThievesTools",
+       "root": "e32a200c-5b63-414d-ae57-00e7b38f125b",
+       "count": 1,
+       "equip": false
+      },
+      {
+       "item": "OBJ_Potion_Healing",
+       "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
+       "count": 2,
+       "equip": false
       }
-    ]
-  },
-  "level": 2,
-  "seed": 2026,
-  "karmic": false,
-  "round_cap": 20,
-  "wall_cap_min": 30,
-  "turn_cap_s": 60,
-  "condition": "rules",
-  "tools_off": "arena-v1",
-  "mirror": {
-    "pairs": [
-      {
-        "class": "Fighter",
-        "build": "fighter",
-        "template": "d9401d40-453b-4512-84ee-d1c6ab29afea",
-        "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
-        "stats": "BG3AI_Arena_Fighter_L1",
-        "names": {
-          "A": "Red Ash",
-          "B": "Blue Ash"
-        },
-        "kit": {
-          "race": {
-            "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
-            "boosts": "ActionResource(Movement,9,0);ActionResource(Movement,1.5,0);ProficiencyBonus(Skill,Stealth)",
-            "passives": [
-              "HumanMilitia",
-              "Darkvision",
-              "FeyAncestry"
-            ]
-          },
-          "player": {
-            "passives": [
-              "DeathSavingThrows",
-              "Background_Soldier"
-            ]
-          },
-          "ability_bonus": [
-            "Strength",
-            "Constitution"
-          ],
-          "choices": [
-            {
-              "kind": "skills",
-              "list": "6a4f8598-3a17-42d1-beac-d7ced582bafa",
-              "n": 2,
-              "exact": true,
-              "ids": [
-                "Perception",
-                "Survival"
-              ]
-            },
-            {
-              "kind": "passives",
-              "list": "da3203d8-750a-4de1-b8eb-1eccfccddf46",
-              "n": 1,
-              "exact": true,
-              "ids": [
-                "FightingStyle_Defense"
-              ]
-            }
-          ],
-          "items": [
-            {
-              "item": "WPN_Longsword",
-              "root": "1865323f-b428-4791-a0a9-578841e57463",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "WPN_Shortbow",
-              "root": "c5403c1d-f372-43e1-927a-9189e9e3545d",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "ARM_ScaleMail_Body",
-              "root": "ca0aafad-0f1e-4d76-8e3b-925397bb436b",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "ARM_Boots_Leather",
-              "root": "969bab00-b269-46a5-a7e9-dd4887814719",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "OBJ_Potion_Healing",
-              "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
-              "count": 2,
-              "equip": false
-            }
-          ]
-        }
+     ]
+    },
+    "reference": {
+     "profile": {
+      "race": "0eb594cb-8820-4be6-a58d-8be7a1a98fba",
+      "level": 2,
+      "classes": [
+       "e8b1eab0-ef11-40a2-8a0b-cee8d062bf2a/00000000-0000-0000-0000-000000000000/2"
+      ],
+      "abilities": [
+       8,
+       17,
+       15,
+       12,
+       13,
+       10
+      ],
+      "max_hp": 17,
+      "ac": 14,
+      "equipment": {
+       "MeleeMainHand": "WPN_HUM_Shortsword_A_0_467ddb4f-6791-41fa-99f7-ee8620d63bbe",
+       "RangedMainHand": "WPN_HUM_Shortbow_A_0_c5403c1d-f372-43e1-927a-9189e9e3545d",
+       "Boots": "ARM_Boots_Leather_969bab00-b269-46a5-a7e9-dd4887814719",
+       "Breast": "ARM_Leather_Rogue_4c4396db-fa4a-4541-9b2a-23e43211dde7"
       },
-      {
-        "class": "Rogue",
-        "build": "rogue",
-        "template": "6df14611-1da5-4f2a-9300-ff74778d49b4",
-        "race": "0eb594cb-8820-4be6-a58d-8be7a1a98fba",
-        "stats": "BG3AI_Arena_Rogue_L1",
-        "names": {
-          "A": "Red Birch",
-          "B": "Blue Birch"
-        },
-        "kit": {
-          "race": {
-            "race": "0eb594cb-8820-4be6-a58d-8be7a1a98fba",
-            "boosts": "ActionResource(Movement,9,0)",
-            "passives": [
-              "HumanMilitia",
-              "HumanVersatility"
-            ]
-          },
-          "player": {
-            "passives": [
-              "DeathSavingThrows",
-              "Background_Urchin"
-            ]
-          },
-          "ability_bonus": [
-            "Dexterity",
-            "Constitution"
-          ],
-          "choices": [
-            {
-              "kind": "skills",
-              "list": "f974ebd6-3725-4b90-bb5c-2b647d41615d",
-              "n": 1,
-              "exact": true,
-              "ids": [
-                "Athletics"
-              ]
-            },
-            {
-              "kind": "skills",
-              "list": "a1c2b712-2ed6-4e5b-820f-c5db654fe006",
-              "n": 4,
-              "exact": true,
-              "ids": [
-                "Acrobatics",
-                "Perception",
-                "Deception",
-                "Investigation"
-              ]
-            },
-            {
-              "kind": "expertise",
-              "list": "f974ebd6-3725-4b90-bb5c-2b647d41615d",
-              "n": 2,
-              "exact": true,
-              "ids": [
-                "Stealth",
-                "Perception"
-              ]
-            }
-          ],
-          "items": [
-            {
-              "item": "WPN_Shortsword",
-              "root": "467ddb4f-6791-41fa-99f7-ee8620d63bbe",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "WPN_Shortbow",
-              "root": "c5403c1d-f372-43e1-927a-9189e9e3545d",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "ARM_Leather_Body_Rogue",
-              "root": "4c4396db-fa4a-4541-9b2a-23e43211dde7",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "ARM_Boots_Leather",
-              "root": "969bab00-b269-46a5-a7e9-dd4887814719",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "OBJ_Kit_ThievesTools",
-              "root": "e32a200c-5b63-414d-ae57-00e7b38f125b",
-              "count": 1,
-              "equip": false
-            },
-            {
-              "item": "OBJ_Potion_Healing",
-              "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
-              "count": 2,
-              "equip": false
-            }
-          ]
-        }
+      "inventory": [
+       "CONS_Potion_Healing_A_d47006e9-8a51-453d-b200-9e0d42e9bbab",
+       "TOOL_GEN_ThievesTools_A_Open_A_e32a200c-5b63-414d-ae57-00e7b38f125b"
+      ],
+      "spells": [
+       "Projectile_HamstringShot",
+       "Projectile_Jump",
+       "Projectile_MainHandAttack",
+       "Projectile_SneakAttack",
+       "Shout_Dash",
+       "Shout_Dash_CunningAction",
+       "Shout_Disengage",
+       "Shout_Disengage_CunningAction",
+       "Shout_Hide",
+       "Shout_Hide_BonusAction",
+       "Target_Dip",
+       "Target_Help",
+       "Target_MainHandAttack",
+       "Target_OpeningAttack",
+       "Target_PiercingThrust",
+       "Target_Shove",
+       "Target_SneakAttack",
+       "Throw_ImprovisedWeapon",
+       "Throw_Throw"
+      ],
+      "prepared": [
+       "Projectile_HamstringShot",
+       "Projectile_Jump",
+       "Projectile_MainHandAttack",
+       "Projectile_SneakAttack",
+       "Shout_Dash",
+       "Shout_Dash_CunningAction",
+       "Shout_Disengage",
+       "Shout_Disengage_CunningAction",
+       "Shout_Hide",
+       "Shout_Hide_BonusAction",
+       "Target_Dip",
+       "Target_Help",
+       "Target_MainHandAttack",
+       "Target_OpeningAttack",
+       "Target_PiercingThrust",
+       "Target_Shove",
+       "Target_SneakAttack",
+       "Throw_ImprovisedWeapon",
+       "Throw_Throw"
+      ],
+      "passives": [
+       "AttackOfOpportunity",
+       "Background_Urchin",
+       "CombatStartAttack",
+       "DarknessRules",
+       "DeathSavingThrows",
+       "HumanMilitia",
+       "HumanVersatility",
+       "NonLethal",
+       "Perform",
+       "ShortResting",
+       "SneakAttack_Unlock",
+       "WeaponThrow"
+      ],
+      "statuses": [
+       "INSURFACE"
+      ],
+      "resources": {
+       "ReactionActionPoint": {
+        "0": 1.0
+       },
+       "SneakAttack_Charge": {
+        "0": 1.0
+       },
+       "BonusActionPoint": {
+        "0": 1.0
+       },
+       "Movement": {
+        "0": 9.0
+       },
+       "ActionPoint": {
+        "0": 1.0
+       }
       },
-      {
-        "class": "Barbarian",
-        "build": "barbarian",
-        "template": "aa621720-3722-43e2-98ca-4feb12c238fc",
-        "race": "78f5e3e8-a9f8-4249-8007-84dc922640b2",
-        "stats": "BG3AI_Arena_Barbarian_L1",
-        "names": {
-          "A": "Red Cedar",
-          "B": "Blue Cedar"
-        },
-        "kit": {
-          "race": {
-            "race": "78f5e3e8-a9f8-4249-8007-84dc922640b2",
-            "boosts": "ActionResource(Movement,7.5,0);IncreaseMaxHP(Level)",
-            "passives": [
-              "Dwarf_DwarvenCombatTraining",
-              "Darkvision",
-              "Dwarf_DwarvenResilience"
-            ]
-          },
-          "player": {
-            "passives": [
-              "DeathSavingThrows",
-              "Background_Outlander"
-            ]
-          },
-          "ability_bonus": [
-            "Strength",
-            "Constitution"
-          ],
-          "choices": [
-            {
-              "kind": "skills",
-              "list": "233793b3-838a-4d4e-9d68-1e0a1089aba5",
-              "n": 2,
-              "exact": true,
-              "ids": [
-                "Intimidation",
-                "Perception"
-              ]
-            }
-          ],
-          "items": [
-            {
-              "item": "WPN_Greataxe",
-              "root": "d5712e24-ce9e-42ce-8fad-6e049b62c28c",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "WPN_Handaxe",
-              "root": "46b64a36-8446-45bd-98e8-ee81e3136baa",
-              "count": 2,
-              "equip": false
-            },
-            {
-              "item": "ARM_Barbarian",
-              "root": "f6599c3f-cfcd-4721-9cc2-1df5d8ff0154",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "ARM_Shoes_Barbarian",
-              "root": "2577a332-8ad2-4e54-b52b-f4f7cc5823a1",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "OBJ_Potion_Healing",
-              "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
-              "count": 2,
-              "equip": false
-            }
-          ]
-        }
+      "proficiencies": [
+       "Glaives",
+       "Halberds",
+       "HandCrossbows",
+       "LightArmor",
+       "Longswords",
+       "Pikes",
+       "Rapiers",
+       "Shields",
+       "Shortswords",
+       "SimpleWeapons",
+       "Spears"
+      ],
+      "skills": {
+       "Investigation": 3,
+       "Perception": 5,
+       "SleightOfHand": 5,
+       "History": 1,
+       "Nature": 1,
+       "Performance": 0,
+       "Stealth": 7,
+       "Deception": 2,
+       "Intimidation": 0,
+       "Acrobatics": 5,
+       "Religion": 1,
+       "Survival": 1,
+       "Athletics": 1,
+       "Medicine": 1,
+       "Persuasion": 0,
+       "AnimalHandling": 1,
+       "Arcana": 1,
+       "Insight": 1
       },
+      "boosts": [
+       "Ability|Ability|Charisma,10|",
+       "Ability|Ability|Constitution,14|",
+       "Ability|Ability|Constitution,1|",
+       "Ability|Ability|Dexterity,15|",
+       "Ability|Ability|Dexterity,2|",
+       "Ability|Ability|Intelligence,12|",
+       "Ability|Ability|Strength,8|",
+       "Ability|Ability|Wisdom,13|",
+       "ActionResource|||",
+       "ActionResource|||",
+       "BlockRegainHP|BlockRegainHP|Undead;Construct|",
+       "CarryCapacityMultiplier|||",
+       "DownedStatus|||",
+       "ExpertiseBonus|ExpertiseBonus|Perception|",
+       "ExpertiseBonus|ExpertiseBonus|Stealth|",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Acrobatics|",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Athletics|",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Deception|",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Investigation|",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Perception|",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "UnlockInterrupt|||",
+       "UnlockInterrupt|||",
+       "UnlockInterrupt|||",
+       "UnlockSpell|UnlockSpell|Projectile_HamstringShot|",
+       "UnlockSpell|UnlockSpell|Target_OpeningAttack|",
+       "UnlockSpell|UnlockSpell|Target_PiercingThrust|",
+       "UnlockSpell|||",
+       "UnlockSpell|||"
+      ],
+      "spellcast": [
+       "Projectile_HamstringShot|Intelligence|AlwaysPrepared|11|3",
+       "Projectile_Jump|Intelligence|AlwaysPrepared|11|3",
+       "Projectile_MainHandAttack|None|AlwaysPrepared|-|-",
+       "Projectile_SneakAttack|Intelligence|AlwaysPrepared|11|3",
+       "Shout_Dash_CunningAction|Intelligence|AlwaysPrepared|11|3",
+       "Shout_Dash|Intelligence|AlwaysPrepared|11|3",
+       "Shout_Disengage_CunningAction|Intelligence|AlwaysPrepared|11|3",
+       "Shout_Disengage|Intelligence|AlwaysPrepared|11|3",
+       "Shout_Hide_BonusAction|Intelligence|AlwaysPrepared|11|3",
+       "Shout_Hide|Intelligence|AlwaysPrepared|11|3",
+       "Target_Dip|Intelligence|AlwaysPrepared|11|3",
+       "Target_Help|Intelligence|AlwaysPrepared|11|3",
+       "Target_MainHandAttack|None|AlwaysPrepared|-|-",
+       "Target_OpeningAttack|Intelligence|AlwaysPrepared|11|3",
+       "Target_PiercingThrust|Intelligence|AlwaysPrepared|11|3",
+       "Target_Shove|Intelligence|AlwaysPrepared|11|3",
+       "Target_SneakAttack|Intelligence|AlwaysPrepared|11|3",
+       "Throw_ImprovisedWeapon|Intelligence|AlwaysPrepared|11|3",
+       "Throw_Throw|Intelligence|AlwaysPrepared|11|3"
+      ],
+      "derived": {
+       "spell_casting_ability": "Intelligence",
+       "initiative_bonus": 3,
+       "weapon_action_dc": 4,
+       "melee_main_hand": "none",
+       "movement": 9.0,
+       "ranged_main_hand": "none",
+       "proficiency_bonus": 2,
+       "spell_save_dc_boost": 0
+      },
+      "resource_max": [
+       "ActionPoint|0|1.0|Default",
+       "BonusActionPoint|0|1.0|Default",
+       "Movement|0|9.0|Default",
+       "ReactionActionPoint|0|1.0|Default",
+       "SneakAttack_Charge|0|1.0|Default"
+      ],
+      "passive_state": [
+       "AttackOfOpportunity|false|true",
+       "Background_Urchin|false|true",
+       "CombatStartAttack|false|true",
+       "DarknessRules|false|true",
+       "DeathSavingThrows|false|true",
+       "HumanMilitia|false|true",
+       "HumanVersatility|false|true",
+       "NonLethal|false|true",
+       "Perform|false|true",
+       "ShortResting|false|true",
+       "SneakAttack_Unlock|false|true",
+       "WeaponThrow|false|true"
+      ]
+     },
+     "accepted": [
       {
-        "class": "Ranger",
-        "build": "ranger",
-        "template": "15e83382-c44d-447d-874e-5426e8ed7694",
-        "race": "4d30b4f9-7bb2-4fc2-a7bc-080f116e325a",
-        "stats": "BG3AI_Arena_Ranger_L1",
-        "names": {
-          "A": "Red Dune",
-          "B": "Blue Dune"
-        },
-        "kit": {
-          "race": {
-            "race": "4d30b4f9-7bb2-4fc2-a7bc-080f116e325a",
-            "boosts": "ActionResource(Movement,9,0);ProficiencyBonus(Skill,Perception)",
-            "passives": [
-              "Drow_DrowWeaponTraining",
-              "SuperiorDarkvision",
-              "FeyAncestry"
-            ],
-            "spells": [
-              "Target_DancingLights"
-            ]
-          },
-          "player": {
-            "passives": [
-              "DeathSavingThrows",
-              "Background_Criminal"
-            ]
-          },
-          "ability_bonus": [
-            "Dexterity",
-            "Wisdom"
-          ],
-          "choices": [
-            {
-              "kind": "skills",
-              "list": "9e31661e-4c14-499d-98ca-9e00b20faf07",
-              "n": 3,
-              "exact": true,
-              "ids": [
-                "Survival",
-                "Athletics",
-                "Investigation"
-              ]
-            },
-            {
-              "kind": "passives",
-              "list": "d0f13dda-eb37-41f5-aea5-2683f0229e2e",
-              "n": 1,
-              "exact": true,
-              "ids": [
-                "FavoredEnemy_BountyHunter"
-              ]
-            },
-            {
-              "kind": "passives",
-              "list": "72c63024-60af-486e-a180-c7aeee5d77c1",
-              "n": 1,
-              "exact": true,
-              "ids": [
-                "NaturalExplorer_BeastTamer"
-              ]
-            },
-            {
-              "kind": "spells",
-              "list": "458be063-60d4-4548-ae7d-50117fa0226f",
-              "n": 2,
-              "exact": true,
-              "ids": [
-                "Target_HuntersMark",
-                "Target_CureWounds"
-              ]
-            },
-            {
-              "kind": "passives",
-              "list": "a0bdb113-1cce-45ac-94fb-72d4c3f207e9",
-              "n": 1,
-              "exact": true,
-              "ids": [
-                "FightingStyle_Archery"
-              ]
-            }
-          ],
-          "items": [
-            {
-              "item": "WPN_Shortbow",
-              "root": "c5403c1d-f372-43e1-927a-9189e9e3545d",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "WPN_Shortsword",
-              "root": "467ddb4f-6791-41fa-99f7-ee8620d63bbe",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "ARM_Leather_Body",
-              "root": "02ae5d88-8044-43df-8363-02a2900776db",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "ARM_Boots_Leather",
-              "root": "969bab00-b269-46a5-a7e9-dd4887814719",
-              "count": 1,
-              "equip": true
-            },
-            {
-              "item": "OBJ_Potion_Healing",
-              "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
-              "count": 2,
-              "equip": false
-            }
-          ]
-        }
+       "field": "derived",
+       "only_twin": [
+        "weapon_action_dc=8"
+       ],
+       "only_reference": [
+        "weapon_action_dc=4"
+       ],
+       "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 4 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
       }
-    ]
-  }
+     ]
+    }
+   },
+   {
+    "class": "Barbarian",
+    "build": "barbarian",
+    "template": "aa621720-3722-43e2-98ca-4feb12c238fc",
+    "race": "78f5e3e8-a9f8-4249-8007-84dc922640b2",
+    "stats": "BG3AI_Arena_Barbarian_L1",
+    "names": {
+     "A": "Red Cedar",
+     "B": "Blue Cedar"
+    },
+    "kit": {
+     "race": {
+      "race": "78f5e3e8-a9f8-4249-8007-84dc922640b2",
+      "boosts": "ActionResource(Movement,7.5,0);IncreaseMaxHP(Level)",
+      "passives": [
+       "Dwarf_DwarvenCombatTraining",
+       "Darkvision",
+       "Dwarf_DwarvenResilience"
+      ]
+     },
+     "player": {
+      "passives": [
+       "DeathSavingThrows",
+       "Background_Outlander"
+      ]
+     },
+     "ability_bonus": [
+      "Strength",
+      "Constitution"
+     ],
+     "choices": [
+      {
+       "kind": "skills",
+       "list": "233793b3-838a-4d4e-9d68-1e0a1089aba5",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "Intimidation",
+        "Perception"
+       ]
+      }
+     ],
+     "items": [
+      {
+       "item": "WPN_Greataxe",
+       "root": "d5712e24-ce9e-42ce-8fad-6e049b62c28c",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "WPN_Handaxe",
+       "root": "46b64a36-8446-45bd-98e8-ee81e3136baa",
+       "count": 2,
+       "equip": false
+      },
+      {
+       "item": "ARM_Barbarian",
+       "root": "f6599c3f-cfcd-4721-9cc2-1df5d8ff0154",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "ARM_Shoes_Barbarian",
+       "root": "2577a332-8ad2-4e54-b52b-f4f7cc5823a1",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "OBJ_Potion_Healing",
+       "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
+       "count": 2,
+       "equip": false
+      }
+     ]
+    },
+    "reference": {
+     "profile": {
+      "race": "78f5e3e8-a9f8-4249-8007-84dc922640b2",
+      "level": 2,
+      "classes": [
+       "d8cadb42-0ff9-4049-afaf-e5d78d06a399/00000000-0000-0000-0000-000000000000/2"
+      ],
+      "abilities": [
+       17,
+       13,
+       15,
+       10,
+       12,
+       8
+      ],
+      "max_hp": 25,
+      "ac": 13,
+      "equipment": {
+       "MeleeMainHand": "WPN_HUM_Greataxe_A_0_d5712e24-ce9e-42ce-8fad-6e049b62c28c",
+       "Boots": "ARM_Shoes_Barbarian_2577a332-8ad2-4e54-b52b-f4f7cc5823a1",
+       "Breast": "ARM_Barbarian_f6599c3f-cfcd-4721-9cc2-1df5d8ff0154"
+      },
+      "inventory": [
+       "CONS_Potion_Healing_A_d47006e9-8a51-453d-b200-9e0d42e9bbab",
+       "WPN_HUM_Handaxe_A_0_46b64a36-8446-45bd-98e8-ee81e3136baa"
+      ],
+      "spells": [
+       "Projectile_Jump",
+       "Shout_Dash",
+       "Shout_Disengage",
+       "Shout_FullSwing",
+       "Shout_Hide",
+       "Shout_Rage",
+       "Target_Dip",
+       "Target_Help",
+       "Target_MainHandAttack",
+       "Target_RecklessAttack",
+       "Target_Shove",
+       "Target_Slash_New",
+       "Throw_ImprovisedWeapon",
+       "Throw_Throw",
+       "Zone_Cleave"
+      ],
+      "prepared": [
+       "Projectile_Jump",
+       "Shout_Dash",
+       "Shout_Disengage",
+       "Shout_FullSwing",
+       "Shout_Hide",
+       "Shout_Rage",
+       "Target_Dip",
+       "Target_Help",
+       "Target_MainHandAttack",
+       "Target_RecklessAttack",
+       "Target_Shove",
+       "Target_Slash_New",
+       "Throw_ImprovisedWeapon",
+       "Throw_Throw",
+       "Zone_Cleave"
+      ],
+      "passives": [
+       "AttackOfOpportunity",
+       "Background_Outlander",
+       "CombatStartAttack",
+       "DangerSense",
+       "DarknessRules",
+       "Darkvision",
+       "DeathSavingThrows",
+       "Dwarf_DwarvenCombatTraining",
+       "Dwarf_DwarvenResilience",
+       "NonLethal",
+       "Perform",
+       "RageUnlock",
+       "Rage_Armour_Message",
+       "Rage_NoHeavyArmour_VFX",
+       "RecklessAttack",
+       "ShortResting",
+       "UnarmouredDefence_Barbarian",
+       "WeaponThrow"
+      ],
+      "statuses": [
+       "INSURFACE"
+      ],
+      "resources": {
+       "Rage": {
+        "0": 2.0
+       },
+       "ReactionActionPoint": {
+        "0": 1.0
+       },
+       "Movement": {
+        "0": 7.5
+       },
+       "BonusActionPoint": {
+        "0": 1.0
+       },
+       "ActionPoint": {
+        "0": 1.0
+       }
+      },
+      "proficiencies": [
+       "Battleaxes",
+       "Handaxes",
+       "LightArmor",
+       "LightHammers",
+       "MartialWeapons",
+       "MediumArmor",
+       "Shields",
+       "SimpleWeapons",
+       "Warhammers"
+      ],
+      "skills": {
+       "Investigation": 0,
+       "Perception": 3,
+       "SleightOfHand": 1,
+       "History": 0,
+       "Nature": 0,
+       "Performance": -1,
+       "Stealth": 1,
+       "Deception": -1,
+       "Intimidation": 1,
+       "Acrobatics": 1,
+       "Religion": 0,
+       "Survival": 3,
+       "Athletics": 5,
+       "Medicine": 1,
+       "Persuasion": -1,
+       "AnimalHandling": 1,
+       "Arcana": 0,
+       "Insight": 1
+      },
+      "boosts": [
+       "ACOverrideFormula|||",
+       "Ability|Ability|Charisma,8|",
+       "Ability|Ability|Constitution,14|",
+       "Ability|Ability|Constitution,1|",
+       "Ability|Ability|Dexterity,13|",
+       "Ability|Ability|Intelligence,10|",
+       "Ability|Ability|Strength,15|",
+       "Ability|Ability|Strength,2|",
+       "Ability|Ability|Wisdom,12|",
+       "ActionResource|||",
+       "ActionResource|||",
+       "ActiveCharacterLight|||",
+       "Advantage|||",
+       "BlockRegainHP|BlockRegainHP|Undead;Construct|",
+       "DarkvisionRangeMin|||",
+       "DownedStatus|||",
+       "IncreaseMaxHP|||",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Intimidation|",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Perception|",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Resistance|||",
+       "Tag|||",
+       "UnlockInterrupt|||",
+       "UnlockInterrupt|||",
+       "UnlockSpellVariant|||",
+       "UnlockSpell|UnlockSpell|Shout_FullSwing|",
+       "UnlockSpell|UnlockSpell|Target_Slash_New|",
+       "UnlockSpell|UnlockSpell|Zone_Cleave|",
+       "UnlockSpell|||",
+       "UnlockSpell|||"
+      ],
+      "spellcast": [
+       "Projectile_Jump|Intelligence|AlwaysPrepared|10|2",
+       "Shout_Dash|Intelligence|AlwaysPrepared|10|2",
+       "Shout_Disengage|Intelligence|AlwaysPrepared|10|2",
+       "Shout_FullSwing|Charisma|AlwaysPrepared|9|1",
+       "Shout_Hide|Intelligence|AlwaysPrepared|10|2",
+       "Shout_Rage|Charisma|AlwaysPrepared|9|1",
+       "Target_Dip|Intelligence|AlwaysPrepared|10|2",
+       "Target_Help|Intelligence|AlwaysPrepared|10|2",
+       "Target_MainHandAttack|None|AlwaysPrepared|-|-",
+       "Target_RecklessAttack|Charisma|AlwaysPrepared|9|1",
+       "Target_Shove|Intelligence|AlwaysPrepared|10|2",
+       "Target_Slash_New|Charisma|AlwaysPrepared|9|1",
+       "Throw_ImprovisedWeapon|Intelligence|AlwaysPrepared|10|2",
+       "Throw_Throw|Intelligence|AlwaysPrepared|10|2",
+       "Zone_Cleave|Charisma|AlwaysPrepared|9|1"
+      ],
+      "derived": {
+       "spell_casting_ability": "Intelligence",
+       "initiative_bonus": 1,
+       "weapon_action_dc": 3,
+       "melee_main_hand": "none",
+       "movement": 7.5,
+       "ranged_main_hand": "none",
+       "proficiency_bonus": 2,
+       "spell_save_dc_boost": 0
+      },
+      "resource_max": [
+       "ActionPoint|0|1.0|Default",
+       "BonusActionPoint|0|1.0|Default",
+       "Movement|0|7.5|Default",
+       "Rage|0|2.0|Rest",
+       "ReactionActionPoint|0|1.0|Default"
+      ],
+      "passive_state": [
+       "AttackOfOpportunity|false|true",
+       "Background_Outlander|false|true",
+       "CombatStartAttack|false|true",
+       "DangerSense|false|true",
+       "DarknessRules|false|true",
+       "Darkvision|false|true",
+       "DeathSavingThrows|false|true",
+       "Dwarf_DwarvenCombatTraining|false|true",
+       "Dwarf_DwarvenResilience|false|true",
+       "NonLethal|false|true",
+       "Perform|false|true",
+       "RageUnlock|false|true",
+       "Rage_Armour_Message|false|true",
+       "Rage_NoHeavyArmour_VFX|false|true",
+       "RecklessAttack|false|true",
+       "ShortResting|false|true",
+       "UnarmouredDefence_Barbarian|false|true",
+       "WeaponThrow|false|true"
+      ]
+     },
+     "accepted": [
+      {
+       "field": "derived",
+       "only_twin": [
+        "weapon_action_dc=8"
+       ],
+       "only_reference": [
+        "weapon_action_dc=3"
+       ],
+       "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 3 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+      }
+     ]
+    }
+   },
+   {
+    "class": "Ranger",
+    "build": "ranger",
+    "template": "15e83382-c44d-447d-874e-5426e8ed7694",
+    "race": "4d30b4f9-7bb2-4fc2-a7bc-080f116e325a",
+    "stats": "BG3AI_Arena_Ranger_L1",
+    "names": {
+     "A": "Red Dune",
+     "B": "Blue Dune"
+    },
+    "kit": {
+     "race": {
+      "race": "4d30b4f9-7bb2-4fc2-a7bc-080f116e325a",
+      "boosts": "ActionResource(Movement,9,0);ProficiencyBonus(Skill,Perception)",
+      "passives": [
+       "Drow_DrowWeaponTraining",
+       "SuperiorDarkvision",
+       "FeyAncestry"
+      ],
+      "spells": [
+       "Target_DancingLights"
+      ]
+     },
+     "player": {
+      "passives": [
+       "DeathSavingThrows",
+       "Background_Criminal"
+      ]
+     },
+     "ability_bonus": [
+      "Dexterity",
+      "Wisdom"
+     ],
+     "choices": [
+      {
+       "kind": "skills",
+       "list": "9e31661e-4c14-499d-98ca-9e00b20faf07",
+       "n": 3,
+       "exact": true,
+       "ids": [
+        "Survival",
+        "Athletics",
+        "Nature"
+       ]
+      },
+      {
+       "kind": "passives",
+       "list": "d0f13dda-eb37-41f5-aea5-2683f0229e2e",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "FavoredEnemy_BountyHunter"
+       ]
+      },
+      {
+       "kind": "passives",
+       "list": "72c63024-60af-486e-a180-c7aeee5d77c1",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "NaturalExplorer_BeastTamer"
+       ]
+      },
+      {
+       "kind": "spells",
+       "list": "458be063-60d4-4548-ae7d-50117fa0226f",
+       "n": 2,
+       "exact": true,
+       "ids": [
+        "Target_HuntersMark",
+        "Target_CureWounds"
+       ]
+      },
+      {
+       "kind": "passives",
+       "list": "a0bdb113-1cce-45ac-94fb-72d4c3f207e9",
+       "n": 1,
+       "exact": true,
+       "ids": [
+        "FightingStyle_Archery"
+       ]
+      }
+     ],
+     "items": [
+      {
+       "item": "WPN_Shortbow",
+       "root": "c5403c1d-f372-43e1-927a-9189e9e3545d",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "WPN_Shortsword",
+       "root": "467ddb4f-6791-41fa-99f7-ee8620d63bbe",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "ARM_Leather_Body",
+       "root": "02ae5d88-8044-43df-8363-02a2900776db",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "ARM_Boots_Leather",
+       "root": "969bab00-b269-46a5-a7e9-dd4887814719",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "OBJ_Potion_Healing",
+       "root": "d47006e9-8a51-453d-b200-9e0d42e9bbab",
+       "count": 2,
+       "equip": false
+      }
+     ],
+     "spell_abilities": {
+      "Target_DancingLights": "Charisma",
+      "Target_HuntersMark": "Wisdom",
+      "Target_CureWounds": "Wisdom"
+     }
+    },
+    "reference": {
+     "profile": {
+      "race": "4d30b4f9-7bb2-4fc2-a7bc-080f116e325a",
+      "level": 2,
+      "classes": [
+       "36be18ba-23db-4dff-bfa6-ae105ce43144/00000000-0000-0000-0000-000000000000/2"
+      ],
+      "abilities": [
+       12,
+       17,
+       13,
+       8,
+       15,
+       10
+      ],
+      "max_hp": 18,
+      "ac": 14,
+      "equipment": {
+       "RangedMainHand": "WPN_HUM_Shortbow_A_0_c5403c1d-f372-43e1-927a-9189e9e3545d",
+       "Boots": "ARM_Boots_Leather_969bab00-b269-46a5-a7e9-dd4887814719",
+       "Breast": "ARM_Leather_02ae5d88-8044-43df-8363-02a2900776db",
+       "MeleeMainHand": "WPN_HUM_Shortsword_A_0_467ddb4f-6791-41fa-99f7-ee8620d63bbe"
+      },
+      "inventory": [
+       "CONS_Potion_Healing_A_d47006e9-8a51-453d-b200-9e0d42e9bbab"
+      ],
+      "spells": [
+       "Projectile_HamstringShot",
+       "Projectile_Jump",
+       "Projectile_MainHandAttack",
+       "Shout_Dash",
+       "Shout_Disengage",
+       "Shout_Hide",
+       "Target_CureWounds",
+       "Target_DancingLights",
+       "Target_Dip",
+       "Target_FindFamiliar_Cat_Ritual",
+       "Target_FindFamiliar_Crab_Ritual",
+       "Target_FindFamiliar_Frog_Ritual",
+       "Target_FindFamiliar_Rat_Ritual",
+       "Target_FindFamiliar_Raven_Ritual",
+       "Target_FindFamiliar_Ritual",
+       "Target_FindFamiliar_Spider_Ritual",
+       "Target_Help",
+       "Target_HuntersMark",
+       "Target_MainHandAttack",
+       "Target_OpeningAttack",
+       "Target_PiercingThrust",
+       "Target_Shove",
+       "Throw_ImprovisedWeapon",
+       "Throw_Throw"
+      ],
+      "prepared": [
+       "Projectile_HamstringShot",
+       "Projectile_Jump",
+       "Projectile_MainHandAttack",
+       "Shout_Dash",
+       "Shout_Disengage",
+       "Shout_Hide",
+       "Target_CureWounds",
+       "Target_DancingLights",
+       "Target_Dip",
+       "Target_FindFamiliar_Cat_Ritual",
+       "Target_FindFamiliar_Crab_Ritual",
+       "Target_FindFamiliar_Frog_Ritual",
+       "Target_FindFamiliar_Rat_Ritual",
+       "Target_FindFamiliar_Raven_Ritual",
+       "Target_FindFamiliar_Ritual",
+       "Target_FindFamiliar_Spider_Ritual",
+       "Target_Help",
+       "Target_HuntersMark",
+       "Target_MainHandAttack",
+       "Target_OpeningAttack",
+       "Target_PiercingThrust",
+       "Target_Shove",
+       "Throw_ImprovisedWeapon",
+       "Throw_Throw"
+      ],
+      "passives": [
+       "AttackOfOpportunity",
+       "Background_Criminal",
+       "CombatStartAttack",
+       "DarknessRules",
+       "DeathSavingThrows",
+       "Drow_DrowWeaponTraining",
+       "FavoredEnemy_BountyHunter",
+       "FeyAncestry",
+       "FightingStyle_Archery",
+       "NaturalExplorer_BeastTamer",
+       "NonLethal",
+       "Perform",
+       "ShortResting",
+       "SuperiorDarkvision",
+       "UnlockedSpellSlotLevel1",
+       "WeaponThrow"
+      ],
+      "statuses": [
+       "INSURFACE"
+      ],
+      "resources": {
+       "ActionPoint": {
+        "0": 1.0
+       },
+       "BonusActionPoint": {
+        "0": 1.0
+       },
+       "SpellSlot": [
+        2.0
+       ],
+       "Movement": {
+        "0": 9.0
+       },
+       "ReactionActionPoint": {
+        "0": 1.0
+       }
+      },
+      "proficiencies": [
+       "HandCrossbows",
+       "LightArmor",
+       "MartialWeapons",
+       "MediumArmor",
+       "Rapiers",
+       "Shields",
+       "Shortswords",
+       "SimpleWeapons"
+      ],
+      "skills": {
+       "Nature": 1,
+       "Athletics": 3,
+       "Perception": 4,
+       "SleightOfHand": 3,
+       "Intimidation": 0,
+       "History": -1,
+       "Investigation": 1,
+       "Stealth": 5,
+       "AnimalHandling": 2,
+       "Persuasion": 0,
+       "Performance": 0,
+       "Religion": -1,
+       "Survival": 4,
+       "Arcana": -1,
+       "Acrobatics": 3,
+       "Medicine": 2,
+       "Insight": 2,
+       "Deception": 2
+      },
+      "boosts": [
+       "Ability|Ability|Charisma,10|",
+       "Ability|Ability|Constitution,13|",
+       "Ability|Ability|Dexterity,15|",
+       "Ability|Ability|Dexterity,2|",
+       "Ability|Ability|Intelligence,8|",
+       "Ability|Ability|Strength,12|",
+       "Ability|Ability|Wisdom,14|",
+       "Ability|Ability|Wisdom,1|",
+       "ActionResource|||",
+       "ActionResource|||",
+       "ActiveCharacterLight|||",
+       "BlockRegainHP|BlockRegainHP|Undead;Construct|",
+       "DarkvisionRangeMin|||",
+       "DownedStatus|||",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Athletics|",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Nature|",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Survival|",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "RollBonus|||",
+       "RollBonus|||",
+       "StatusImmunity|||",
+       "StatusImmunity|||",
+       "StatusImmunity|||",
+       "Tag|||",
+       "UnlockInterrupt|||",
+       "UnlockSpell|UnlockSpell|Projectile_HamstringShot|",
+       "UnlockSpell|UnlockSpell|Target_OpeningAttack|",
+       "UnlockSpell|UnlockSpell|Target_PiercingThrust|",
+       "UnlockSpell|||"
+      ],
+      "spellcast": [
+       "Projectile_HamstringShot|Wisdom|AlwaysPrepared|12|4",
+       "Projectile_Jump|Intelligence|AlwaysPrepared|9|1",
+       "Projectile_MainHandAttack|None|AlwaysPrepared|-|-",
+       "Shout_Dash|Intelligence|AlwaysPrepared|9|1",
+       "Shout_Disengage|Intelligence|AlwaysPrepared|9|1",
+       "Shout_Hide|Intelligence|AlwaysPrepared|9|1",
+       "Target_CureWounds|Wisdom|AlwaysPrepared|12|4",
+       "Target_DancingLights|Charisma|AlwaysPrepared|10|2",
+       "Target_Dip|Intelligence|AlwaysPrepared|9|1",
+       "Target_FindFamiliar_Cat_Ritual|Wisdom|AlwaysPrepared|12|4",
+       "Target_FindFamiliar_Crab_Ritual|Wisdom|AlwaysPrepared|12|4",
+       "Target_FindFamiliar_Frog_Ritual|Wisdom|AlwaysPrepared|12|4",
+       "Target_FindFamiliar_Rat_Ritual|Wisdom|AlwaysPrepared|12|4",
+       "Target_FindFamiliar_Raven_Ritual|Wisdom|AlwaysPrepared|12|4",
+       "Target_FindFamiliar_Ritual|Wisdom|AlwaysPrepared|12|4",
+       "Target_FindFamiliar_Spider_Ritual|Wisdom|AlwaysPrepared|12|4",
+       "Target_Help|Intelligence|AlwaysPrepared|9|1",
+       "Target_HuntersMark|Wisdom|AlwaysPrepared|12|4",
+       "Target_MainHandAttack|None|AlwaysPrepared|-|-",
+       "Target_OpeningAttack|Wisdom|AlwaysPrepared|12|4",
+       "Target_PiercingThrust|Wisdom|AlwaysPrepared|12|4",
+       "Target_Shove|Intelligence|AlwaysPrepared|9|1",
+       "Throw_ImprovisedWeapon|Intelligence|AlwaysPrepared|9|1",
+       "Throw_Throw|Intelligence|AlwaysPrepared|9|1"
+      ],
+      "derived": {
+       "initiative_bonus": 3,
+       "weapon_action_dc": 4,
+       "ranged_main_hand": "none",
+       "proficiency_bonus": 2,
+       "melee_main_hand": "none",
+       "spell_casting_ability": "Intelligence",
+       "movement": 9.0,
+       "spell_save_dc_boost": 0
+      },
+      "resource_max": [
+       "ActionPoint|0|1.0|Default",
+       "BonusActionPoint|0|1.0|Default",
+       "Movement|0|9.0|Default",
+       "ReactionActionPoint|0|1.0|Default",
+       "SpellSlot|1|2.0|Rest"
+      ],
+      "passive_state": [
+       "AttackOfOpportunity|false|true",
+       "Background_Criminal|false|true",
+       "CombatStartAttack|false|true",
+       "DarknessRules|false|true",
+       "DeathSavingThrows|false|true",
+       "Drow_DrowWeaponTraining|false|true",
+       "FavoredEnemy_BountyHunter|false|true",
+       "FeyAncestry|false|true",
+       "FightingStyle_Archery|false|true",
+       "NaturalExplorer_BeastTamer|false|true",
+       "NonLethal|false|true",
+       "Perform|false|true",
+       "ShortResting|false|true",
+       "SuperiorDarkvision|false|true",
+       "UnlockedSpellSlotLevel1|false|true",
+       "WeaponThrow|false|true"
+      ]
+     },
+     "accepted": [
+      {
+       "field": "derived",
+       "only_twin": [
+        "weapon_action_dc=8"
+       ],
+       "only_reference": [
+        "weapon_action_dc=4"
+       ],
+       "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 4 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+      }
+     ]
+    }
+   }
+  ]
+ }
 }

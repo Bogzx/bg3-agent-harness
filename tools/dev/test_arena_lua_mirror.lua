@@ -67,7 +67,7 @@ local function twin(u, over)
     over = over or {}
     world[u] = { pos = { 0, 0, 0 }, comps = { ServerCharacter = {}, Race = { Race = over.race or HALFELF },
         Data = { StatsId = over.stats }, EocLevel = { Level = over.level or 1 },
-        BoostsContainer = {}, PassiveContainer = {}, SpellBook = {},
+        BoostsContainer = {}, PassiveContainer = { Passives = {} }, SpellBook = { Spells = {} },
         InventoryOwner = { Inventories = {
             { InventoryData = { Type = "Equipment" }, InventoryContainer = { Items = {} } },
             { InventoryData = { Type = "Inventory" }, InventoryContainer = { Items = over.bag or {} } } } } } }
@@ -111,7 +111,7 @@ local function game(opts)
         created[#created + 1] = u
         return u
     end)
-    for _, n in ipairs({ "MakePlayer", "AddBoosts", "AddPassive", "AddSpell", "Equip" }) do
+    for _, n in ipairs({ "MakePlayer", "AddBoosts", "AddPassive", "RemovePassive", "AddSpell", "Equip" }) do
         stub(n, function(...) calls[#calls + 1] = { n, ... } end)
     end
     -- The ground's surfaces: opts.tiles {x, z, ground surface, stays = the clear doesn't remove it} (a tile per metre;
@@ -243,17 +243,22 @@ test("stat entries: one per class and level at StatsLoaded with the switch, from
         env.BG3AI_ARENA = "1"
         for _, f in ipairs(statsLoaded) do f() end
         local made = named("Create")
-        eq(#made, 6, "6 classes at level 1")
+        eq(#made, 7, "7 classes at level 1")
         eq(enc({ made[1][2], made[1][3], made[1][4] }), enc({ "BG3AI_Arena_Fighter_L1", "Character", "_Hero" }),
             "the first entry")
         local f1 = stats.BG3AI_Arena_Fighter_L1
         eq(enc({ f1.Class, f1.Level, f1.Progressions, f1.Strength, f1.Charisma }),
             enc({ "Fighter", 1, "ba4e707e-4bbd-4630-963b-ce2f2947f971", 15, 8 }), "Fighter L1")
-        eq(stats.BG3AI_Arena_Ranger_L1.SpellCastingAbility, "Wisdom", "the Ranger casts with Wisdom")
+        for name, s in pairs(stats) do
+            eq(s.SpellCastingAbility, "Intelligence", name .. " reads _Hero's, as a player does")
+        end
         local c1, w1 = stats.BG3AI_Arena_Cleric_L1, stats.BG3AI_Arena_Wizard_L1
-        eq(enc({ c1.Progressions, c1.SpellCastingAbility, c1.Wisdom, w1.Progressions, w1.SpellCastingAbility,
-            w1.Intelligence }), enc({ "64474b62-b4f5-46b3-b94a-c676c6da3116", "Wisdom", 15,
-            "d18eda7e-4b7d-490d-9952-cd33a3c60479", "Intelligence", 15 }), "the 4v4 healer and caster (Cleric, Wizard)")
+        eq(enc({ c1.Progressions, c1.Wisdom, w1.Progressions, w1.Intelligence }),
+            enc({ "64474b62-b4f5-46b3-b94a-c676c6da3116", 15, "d18eda7e-4b7d-490d-9952-cd33a3c60479", 15 }),
+            "the 4v4 healer and caster (Cleric, Wizard)")
+        local b1 = stats.BG3AI_Arena_Bard_L1
+        eq(enc({ b1.Progressions, b1.Charisma }), enc({ "229c98da-2cd1-4a5e-8051-9d90ec7931e7", 15 }),
+            "the healer above L2")
         local cost = { [8] = 0, [9] = 1, [10] = 2, [11] = 3, [12] = 4, [13] = 5, [14] = 7, [15] = 9 }
         for class, c in pairs(Ar.Stats.CLASSES) do
             local n = 0
@@ -321,6 +326,7 @@ test("mirror_kit: the same calls on both twins in the kit's order, then each ite
         local r = Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit() })
         local j = RPC.jobs[r.job]
         eq(#calls, 0, "nothing at the call")
+        clock = clock + Ar.Mirror.SETTLE_MS
         tick()
         local per = {}
         for _, c in ipairs(calls) do
@@ -458,6 +464,29 @@ test("a spells choice asks the game's SpellList set per pick, never walks it: th
             local args = { twins = { T1, T2 }, race = HALFELF, kit = kit({ choices = { spells } }) }
             refused(function() Ar.Mirror.kit(args) end, "Target_Sleep is not in the game's list cantrips")
         end)
+    end))
+
+test("a spells choice's unlocked pick goes in by its boost, the other by AddSpell, as real kits' picks do",
+    guarded(function()
+        twin(T1)
+        twin(T2)
+        local spells = { kind = "spells", list = "cantrips", n = 2, exact = true,
+            ids = { "Target_FireBolt", "Target_RayOfFrost" } }
+        capped(function()
+            local r = Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF,
+                kit = kit({ choices = { spells }, unlocks = { Target_FireBolt = "Intelligence" } }) })
+            local j = RPC.jobs[r.job]
+            runJob(j)
+            eq(j.status, "done", "job: " .. tostring(j.error))
+        end)
+        eq(enc(named("AddSpell")), enc({ { "AddSpell", T1, "Target_RayOfFrost", 0, 1 },
+            { "AddSpell", T2, "Target_RayOfFrost", 0, 1 } }), "only the other pick")
+        local boost = Ar.Symmetry.unlock_boost("Target_FireBolt", "Intelligence")
+        local got = {}
+        for _, c in ipairs(named("AddBoosts")) do
+            if c[3] == boost then got[#got + 1] = c[2] end
+        end
+        eq(enc(got), enc({ T1, T2 }), "the boost on both twins")
     end))
 
 test("a list that can't be checked fails closed naming it: an element that doesn't read, a set that answers no bool",
@@ -629,6 +658,13 @@ test("a twin with another StatsId fails setup at the limit, naming it", guarded(
     eq(j.status, "failed", "failed")
     eq(tostring(j.error):find("Ash (" .. T1 .. ") has stats HeroHalfElfFemale", 1, true) ~= nil, true,
         tostring(j.error))
+end))
+
+test("a mirror arena's line_gap reaches the clear, the twins and the surfaces' radius", guarded(function()
+    local at = { line_gap = 1.25, spawns = { A = { 0, 0, 0 }, B = { 0, 0, 10 } } }
+    local j = mirrorSetup(mirrorArena({ location = at }))
+    eq(j.surfaces.radius, 11.625, "10/2 + 1.25/2 + the margin: " .. tostring(j.error))
+    eq(enc({ named("CreateAt")[1][3], named("RemoveSurfaceLayerAtPosition")[3][2] }), enc({ -0.625, -0.625 }), "1.25 m")
 end))
 
 -- Live check 13d: Cedar spawned on a surface at spot A (INSURFACE), Dune not: the pair's statuses differed.
@@ -883,3 +919,76 @@ test("mirror arena refusal: a pair whose kit is for another race than the pair's
         eq(tostring(err):find("pair 2: the kit's race part", 1, true) ~= nil, true, tostring(err))
         eq(#named("CreateAt"), 0, "nothing made")
     end))
+
+test("a kit's grants: one AddBoosts, the passives, the removed ones, the spells, on both twins, before the choices",
+    guarded(function()
+        twin(T1, { stats = "x" })
+        twin(T2, { stats = "x" })
+        local g = { boosts = "Proficiency(HeavyArmor);Ability(Strength,2)", passives = { "DiscipleOfLife" },
+            passives_removed = { "RageUnlock" }, spells = { "Target_Bless" } }
+        local j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit({ grants = g }) }).job]
+        runJob(j)
+        eq(j.status, "done", tostring(j.error))
+        local order, seen = {}, 0
+        for _, c in ipairs(calls) do
+            if c[2] == T1 and (c[3] == g.boosts or c[3] == "DiscipleOfLife" or c[3] == "RageUnlock"
+                or c[3] == "Target_Bless" or c[3] == "ProficiencyBonus(Skill,Athletics);"
+                .. "ProficiencyBonus(Skill,Intimidation)") then
+                order[#order + 1] = c[1]
+            end
+            if c[2] == T2 and c[3] == "RageUnlock" then seen = seen + 1 end
+        end
+        eq(enc(order), enc({ "AddBoosts", "AddPassive", "RemovePassive", "AddSpell", "AddBoosts" }), "the order")
+        eq(seen, 1, "the second twin too")
+        eq(enc(j.result.not_applied), enc({}), "nothing left out")
+    end))
+
+test("a kit's subclass: both twins' class row written, replicated, read back; a row count or read-back off fails",
+    guarded(function()
+        twin(T1, { stats = "x" })
+        twin(T2, { stats = "x" })
+        for _, u in ipairs({ T1, T2 }) do world[u].comps.Classes = { Classes = { { ClassUUID = "c", Level = 5 } } } end
+        replicated = {}
+        local j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit({ subclass = "life" }) }).job]
+        runJob(j)
+        eq(j.status, "done", tostring(j.error))
+        eq(enc({ world[T1].comps.Classes.Classes[1].SubClassUUID, world[T2].comps.Classes.Classes[1].SubClassUUID }),
+            enc({ "life", "life" }), "written")
+        eq(enc(replicated), enc({ T1 .. ":Classes", T2 .. ":Classes" }), "replicated")
+        eq(enc(j.result.not_applied), enc({}), "applied")
+        local c = world[T2].comps.Classes.Classes
+        c[2] = { ClassUUID = "d", Level = 1 }
+        twin(T1, { stats = "x" })
+        world[T1].comps.Classes = { Classes = { { ClassUUID = "c" } } }
+        j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit({ subclass = "life" }) }).job]
+        runJob(j)
+        eq(j.status, "failed", "two rows")
+        twin(T1, { stats = "x" })
+        twin(T2, { stats = "x" })
+        world[T1].comps.Classes = { Classes = { setmetatable({ ClassUUID = "c" }, { __newindex = function() end }) } }
+        world[T2].comps.Classes = { Classes = { { ClassUUID = "c" } } }
+        j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF, kit = kit({ subclass = "life" }) }).job]
+        runJob(j)
+        eq(j.status, "failed", "a write that doesn't stick")
+        assert(tostring(j.error):find("subclass reads nil after the write of life", 1, true), tostring(j.error))
+    end))
+
+test("a kit's prepared has no game call: named in the result; a part nothing reads is refused at the call",
+    guarded(function()
+        twin(T1, { stats = "x" })
+        twin(T2, { stats = "x" })
+        local j = RPC.jobs[Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF,
+            kit = kit({ prepared = { "Target_HealingWord" } }) }).job]
+        runJob(j)
+        eq(enc(j.result.not_applied), enc({ "prepared" }), "named")
+        local ok, err = pcall(Ar.Mirror.kit, { twins = { T1, T2 }, race = HALFELF, kit = kit({ feats = {} }) })
+        eq(ok, false, "refused")
+        assert(tostring(err):find("nothing applies: feats", 1, true), tostring(err))
+        ok = pcall(Ar.Mirror.kit, { twins = { T1, T2 }, race = HALFELF, kit = kit({ grants = { boosts = {} } }) })
+        eq(ok, false, "grants' shape refused")
+    end))
+
+-- The next part's helpers (test_arena_lua_tier.lua; `calls` is a new table per game).
+MIRROR = { stub = stub, guarded = guarded, named = named, mirrorArena = mirrorArena, mirrorSetup = mirrorSetup,
+    HOST = HOST, twin = twin, calls = function() return calls end, kit = kit, runJob = runJob, T1 = T1, T2 = T2,
+    HALFELF = HALFELF }

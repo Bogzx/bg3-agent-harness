@@ -262,14 +262,16 @@ end
 -- the command that ends it; complete, the property that enables finish; tabs, "same" (CharacterCreation's tab element
 -- names) or {cc tab name = this page's}; naming, whether it has the naming page; keeps, the plan keys the page has no
 -- list for (CharacterRespec.xaml binds class, subclass, deity, abilities, skills and the race's selectors, but no
--- origin, race or subrace: respec keeps the race). A name left nil is TODO: CharacterRespec's are what the route-H
--- probe's page dump reads (probe_route_h.py respec, its `names`), and every op that needs one fails at the call,
--- naming the page and the name, before anything on the page changes.
+-- origin, race, subrace or background: respec keeps them). CharacterRespec's names are Game.pak's CharacterRespec.xaml
+-- and route-H window 3's page dump (website ops/logs/live.md: proceedButton FinishCreating, IsEnabled
+-- IsCharacterCompleteExceptName; classTab, subClassTab, deityTab, abilityTab, no backgroundTab). A name left nil is
+-- unknown, and every op that needs one fails at the call, naming the page and the name, before anything changes.
 P.CC_PAGES = {
     { widget = "CharacterCreation", finish = "FinishCreating", complete = "IsCharacterComplete", tabs = "same",
       naming = true, keeps = {} },
-    { widget = "CharacterRespec", finish = nil, complete = nil, tabs = nil, -- TODO: the route-H probe's names
-      naming = false, keeps = { origin = true, race = true, subrace = true } },
+    { widget = "CharacterRespec", finish = "FinishCreating", complete = "IsCharacterCompleteExceptName",
+      tabs = { classTab = "classTab", subClassTab = "subClassTab", deityTab = "deityTab", abilityTab = "abilityTab" },
+      naming = false, keeps = { origin = true, race = true, subrace = true, background = true } },
 }
 
 -- The first open page of P.CC_PAGES and its DataContext, or nil.
@@ -392,19 +394,6 @@ local function tabStage(ctx, tab)
     end
 end
 
--- Press the realized, visible button named one of `names` whose DataContext is `item`.
-local function pressFor(widgetName, names, item)
-    local w = visibleWidget(widgetName)
-    if not w then return false, "page not open" end
-    local want = {}
-    for _, n in ipairs(names) do want[n] = true end
-    local hits = UI.findAll(w, function(e)
-        return want[UI.name(e) or ""] == true and same(UI.prop(e, "DataContext"), item)
-    end, { prune = true, max = 40000 })
-    if #hits == 0 then return false, "button not on screen" end
-    return UI.press(hits[1])
-end
-
 ------------------------------------------------------------------------
 -- Selectors shared by CC and level up: skills, passives, spells
 ------------------------------------------------------------------------
@@ -455,6 +444,9 @@ local PASSIVE_PATHS = {
 }
 
 P.featSel = P.featSel or {}   -- tostring(selector) -> the chosen feat's label, for feat passive selectors
+-- tostring(selector) -> its PassiveList id, where the plan named it (plan.passive_lists: a Ranger's two lists have 5
+-- entries each, so a length can't tell them apart, live 2026-11-06)
+P.selPassiveList = P.selPassiveList or {}
 
 local function passiveSelectors(dc)
     local out, seen = {}, {}
@@ -566,8 +558,12 @@ function P.namePassives(sel)
         return found
     end
     local feat = P.featSel[tostring(sel)]
+    local own = P.selPassiveList[tostring(sel)]
     local names
-    if feat then
+    if own then
+        names = passiveListNames(own)
+        if #names ~= n then return nil end
+    elseif feat then
         -- A feat's choice: that feat's lists (Feat resource Name "ElementalAdept" = page "Elemental Adept"), else
         -- a unique one among all feats' lists.
         local mine, all = {}, {}
@@ -686,7 +682,7 @@ P.spellLists = spellLists
 -- Forget the static-data name caches (offline tests; a data change).
 function P.clearNameCaches()
     spellListsByCount, passiveIndex, passiveNames = nil, nil, {}
-    P.featSel = {}
+    P.featSel, P.selPassiveList = {}, {}
     P.vmNames, P.spellStats = {}, {}
 end
 
@@ -776,6 +772,10 @@ local function validity(dc)
     local out = v and meta(v) or {}
     local name = v and str(UI.prop(v, "Name"))
     if name then out.Name = name end
+    for _, k in ipairs({ "RacialSelectors", "ClassSelectors" }) do -- what the page's marks bind to
+        local m = v and UI.prop(v, k) and meta(UI.prop(v, k))
+        if m and next(m) then out[k] = m end
+    end
     local app = str(UI.prop(dc, "AppearanceValidationError"))
     if app then out.appearance = app end
     if next(out) == nil then return nil end
@@ -786,13 +786,14 @@ end
 P.inner = { try = try, isObj = isObj, same = same, str = str, label = label, ident = ident, set = set,
     list = list, norm = norm, pick = pick, view = view, abilityName = abilityName, abilityOf = abilityOf,
     visibleWidget = visibleWidget, widgetDC = widgetDC, pages = pages, selectTab = selectTab,
-    tabStage = tabStage, pressFor = pressFor, skillGroups = skillGroups, skillsView = skillsView,
+    tabStage = tabStage, skillGroups = skillGroups, skillsView = skillsView,
     passiveSelectors = passiveSelectors, passivesView = passivesView, spellSelectors = spellSelectors,
     selectorState = selectorState, spellsView = spellsView, validity = validity }
 
 -- The rest of the module, in this order (split for the 1000-line cap). Each part reads P and the
 -- helpers in P.inner.
-for _, part in ipairs({ "Client/ProgressionCC.lua", "Client/ProgressionLevelUp.lua" }) do
+for _, part in ipairs({ "Client/ProgressionCC.lua", "Client/ProgressionAbilities.lua",
+    "Client/ProgressionLevelUp.lua" }) do
     Ext.Require(part)
 end
 

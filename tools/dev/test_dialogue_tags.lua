@@ -612,7 +612,8 @@ do
     local function btn(texts, checked)
         local kids = {}
         for k, s in ipairs(texts) do kids[k] = tb(s) end
-        return { _name = "ReactButton", _props = { IsChecked = checked == true }, _children = kids }
+        local decision = { _props = { Decision = checked == true and "Use" or "Undecided" } }
+        return { _name = "ReactButton", _props = { DataContext = decision }, _children = kids }
     end
     local function root(who, buttons, hp)
         local kids = {}

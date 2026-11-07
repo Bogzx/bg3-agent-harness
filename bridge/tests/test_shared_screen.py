@@ -155,11 +155,25 @@ class Shared(unittest.TestCase):
         with mock.patch.object(world_tools, "_inp", lambda: None):
             self.assertIn("the input helper is not running", combat.flee())
 
-    def test_react_row_click(self):
-        for side, want in (("A", f"which is {SHARED}"), (None, "the input shim is not available")):
+    def test_react_row_click_is_the_one_click_a_side_makes(self):
+        """The mod said the prompt is this side's: live L5, Counterspell and Cutting Words answer only to a row click,
+        so without it a side could never use them. Every other route stays refused (the tests around this one)."""
+        for side in ("A", None):
             self.use(side)
-            with mock.patch.object(world_tools, "_inp", lambda: None):
-                self.assertIn(want, dialogue._react_click({"use": True}, 2, 0.0))
+            with mock.patch.object(world_tools, "_inp", lambda own_prompt=False: None):
+                self.assertIn("the input shim is not available", dialogue._react_click({"use": True}, 2, 0.0))
+        self.use("A")
+        self.assertIsNone(world_tools._inp())
+        got = []
+        with (
+            mock.patch.object(world_tools, "_inp", lambda own_prompt=False: got.append(own_prompt) or object()),
+            mock.patch(
+                "bg3ai.reactclick.click_row",
+                lambda rpc, inp, which: {"clicked": which, "at": (0.5, 0.5), "closed": True},
+            ),
+        ):
+            self.assertIn("react: done", dialogue._react_click({"use": True}, 1, 0.0))
+        self.assertEqual(got, [True])
 
     def test_end_turn_goes_through_the_mod_only(self):
         for side, hud_calls in (("A", 0), (None, 1)):

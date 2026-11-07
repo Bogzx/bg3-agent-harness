@@ -5,7 +5,12 @@ grants nor the kit's boosts, live check 12 step 13; orchestrator D308), and the 
     uv run --project bridge python tools/dev/make_arena_save.py validate <spec.json | builds.json> [--rated]
     uv run --project bridge python tools/dev/make_arena_save.py mirror <spec.json>    # {level, teams, mirror}
     uv run --project bridge python tools/dev/make_arena_save.py builds-mirror <builds.json> Ash:Birch ...
+    uv run --project bridge python tools/dev/make_arena_save.py builds-arena <builds.json> <base.json> <name> \\
+        --spawn-a x,y,z --spawn-b x,y,z [--line-gap m] --out <arena.json> Ash:Birch ...
     uv run --project bridge python tools/dev/make_arena_save.py symmetry <uuidA>:<uuidB> [...]
+    uv run --project bridge python tools/dev/make_arena_save.py reference-read <builds.json> <build id> <uuid> \\
+        --evidence <text>                                       # the running game's profile -> the build file
+    uv run --project bridge python tools/dev/make_arena_save.py reference-diff <builds.json> <build id> <twin uuid>
 
 The spec (schema arena-mirror.v1) names 4 pairs; each pair is two copies of one hireling root template, one per team,
 spawned with our level-1 stat entry for its class (Shared/ArenaStats.lua: BG3AI_Arena_<class>_L1; MakePlayer then gives
@@ -24,14 +29,15 @@ to the level (tools/dev/arena_static.json, from the game's data):
 kit.race names an arena_static.json race; its part of the kit is that race's level-1 rows, the parent race's first
 (a Drow's Dancing Lights included), and names the race id, which arena.setup checks against the pair's race. A race
 with a skill choice (Human) takes kit.race_skills. kit.background (optional) names a background: its passive joins
-the player passives, and no skill choice may pick a skill the race or background already gives.
+the player passives, and no skill choice may pick a skill the race, background or a picked passive already gives.
 kit.passives and kit.spells have one list per SelectPassives / SelectSpells selector, in the rows' order (a Ranger:
 favoured enemy, natural explorer, then its level-2 fighting style). Every kit also gets PLAYER_PASSIVES. kit.items is
-the class's character-creation equipment (EQP_CC_<class>) less EXCLUDED, as a multiset; weapons and armour are equipped
-unless the entry says "equip": false. The game's lists themselves (which skills, styles, spells a selector offers) are
-checked live by arena.mirror_kit. `template` may be null (validate accepts it; `mirror` will not). Pair i is teams.A[i]
-and teams.B[i] in the arena file. `symmetry` asks the game's arena.symmetry (the game runs with BG3AI_ARENA=1) and exits
-1 on any problem: a field that differs within a pair, a field that doesn't read, or one display name for two members.
+the class's character-creation equipment (EQP_CC_<class>) less EXCLUDED, plus KIT_ADDS, as a multiset; weapons and
+armour are equipped unless the entry says "equip": false. The game's lists themselves (which skills, styles, spells a
+selector offers) are checked live by arena.mirror_kit. `template` may be null (validate accepts it; `mirror` will
+not). Pair i is teams.A[i] and teams.B[i] in the arena file. `symmetry` asks the game's arena.symmetry (the game runs
+with BG3AI_ARENA=1) and exits 1 on any problem: a field that differs within a pair, a field that doesn't read, or one
+display name for two members.
 """
 
 from __future__ import annotations
@@ -56,17 +62,22 @@ SCHEMA = "arena-mirror.v1"
 SIDES = ("A", "B")
 PAIRS = 4
 # Spawn geometry, as arena.setup checks it (Server/ArenaSetup.lua Setup.check_geometry): each team on a line along x
-# through its spawn, LINE_GAP_M apart; the spawns under SPAWN_DY_MAX_M apart in height; every distance across the lines
-# the same both ways (A's member i to B's member j = B's i to A's j) within PAIR_DIST_TOL_M.
+# through its spawn, LINE_GAP_M (or the arena's location.line_gap) apart; the spawns under SPAWN_DY_MAX_M apart in
+# height; every distance across the lines the same both ways (A's member i to B's member j = B's i to A's j)
+# within PAIR_DIST_TOL_M.
 LINE_GAP_M = 1.5
 SPAWN_DY_MAX_M = 0.3
 PAIR_DIST_TOL_M = 0.1
 # The arena's classes: each needs our stat entry (Shared/ArenaStats.lua) and its hireling in arena_static.json. The
 # Cleric (subclass at 1) and Wizard (at 2) need the kit's subclass part (ops/logs/arena-4v4-builds.md G5).
-CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard")
+CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard", "Bard")
 LEVELS = (1, 2)  # the arena's level: what the twins read after MakePlayer (setup fails on any other)
-TIERS = (2, 5, 12)  # a build file's level (arena-4v4-builds.md; levels above 2 need the tier-XP step, G6)
+TIERS = (2, 5, 12)  # a build file's level (arena-4v4-builds.md; arena.setup's tier-XP step: mirror.party_xp)
 PREPARERS = ("Cleric", "Wizard")  # prepare casting-modifier + level spells (min 1) from what they have
+# A preparer whose spells are all selector picks (no class row AddSpells a spell list): its kit adds only the prepared
+# picks, so a copy's book is what the build plays. A Cleric's class rows add its whole list, which no call removes (S1
+# P3): its `prepared` stays in the kit, named not_applied by arena.mirror_kit.
+PICKS_ARE_ITS_BOOK = ("Wizard",)
 ALL_ABILITIES = "b9149c8e-52c8-46e5-9cb6-fc39301c05fe"  # the AbilityList every ASI and the +2/+1 pick from
 ENCHANT = {5: 1, 12: 2}  # a tier's items: each weapon and armour as its +N entry (<item>_N) where the game has one
 EXTRA_POTIONS = {5: ("OBJ_Potion_Healing_Greater",), 12: ("OBJ_Potion_Healing_Greater", "OBJ_Potion_Healing_Superior")}
@@ -76,17 +87,22 @@ PLAYER_PASSIVES = ("DeathSavingThrows",)
 STATIC = Path(__file__).resolve().parent / "arena_static.json"
 # Character creation's items a kit leaves out: the Revivify scroll (orchestrator D300), what plays no part in a fight,
 # and the knock-down sources (Fable REVIEW-12 option (d), 2026-11-04: Prone can cost a whole phase in the shared turn
-# group, and no turn order fixes it; the Rogue's grease bottles and the Ranger's Arrow of Ice make PRONE surfaces).
+# group, and no turn order fixes it; the Rogue's grease bottles and the Ranger's Arrow of Ice make PRONE surfaces; a
+# Quarterstaff unlocks Topple, tools/dev/arena_scan.py).
 EXCLUDED = (
     "OBJ_Scroll_Revivify",
     "OBJ_GreaseBottle",
     "OBJ_ArrowOfIce",
+    "WPN_Quarterstaff",
     "OBJ_Keychain",
     "OBJ_Bag_AlchemyPouch",
     "ARM_Camp_Body",
     "ARM_Camp_Shoes",
     "OBJ_Backpack_CampSupplies",
 )
+# What a kit holds in the place of a weapon EXCLUDED takes: a Wizard is proficient with daggers, and the scan finds
+# nothing behind Piercing Thrust.
+KIT_ADDS = {"Wizard": ("WPN_Dagger",)}
 SKILLS = (
     "Deception",
     "Intimidation",
@@ -134,18 +150,18 @@ def _vec3(v: Any, what: str) -> list[float]:
     return [float(x) for x in v]
 
 
-def _line(spot: list[float], n: int) -> list[list[float]]:
-    return [[spot[0] + (i - (n - 1) / 2) * LINE_GAP_M, spot[1], spot[2]] for i in range(n)]
+def _line(spot: list[float], n: int, gap: float) -> list[list[float]]:
+    return [[spot[0] + (i - (n - 1) / 2) * gap, spot[1], spot[2]] for i in range(n)]
 
 
-def check_geometry(a: list[float], b: list[float], n: int) -> None:
+def check_geometry(a: list[float], b: list[float], n: int, gap: float = LINE_GAP_M) -> None:
     """SpecError unless both teams stand on the same terms (arena.setup refuses the same spawns)."""
     dy = abs(a[1] - b[1])
     if dy >= SPAWN_DY_MAX_M:
         raise SpecError(
             f"location.spawns A and B are {dy:.2f} m apart in height (y); they must be under {SPAWN_DY_MAX_M} m"
         )
-    la, lb = _line(a, n), _line(b, n)
+    la, lb = _line(a, n, gap), _line(b, n, gap)
     for i in range(n):
         for j in range(n):
             ab, ba = math.dist(la[i], lb[j]), math.dist(lb[i], la[j])
@@ -296,6 +312,12 @@ def _per_selector(v: Any, n: int, what: str) -> list[list[str]]:
     return v
 
 
+def _row_ability(args: list[str], i: int) -> str | None:
+    """The casting ability a selector's row names at args[i] (AddSpells(list,,Charisma,,AlwaysPrepared): 2,
+    SelectSpells(list,1,0,HighElfCantrip,Intelligence): 4), or None: a real character's spell then has its class's."""
+    return (args[i] or None) if len(args) > i else None
+
+
 def improvement_plan(imp: Any, lv: int, static: dict[str, Any], taken: list[str], what: str) -> dict[str, Any]:
     """One AllowImprovement level: {"asi": {ability: points}} (2 points, at most 2 in one) or {"feat": name, picks per
     the feat's selectors: "abilities", "passives", "spells", "skills"}. -> {boosts: [...], passives, spells, choices}"""
@@ -337,7 +359,10 @@ def improvement_plan(imp: Any, lv: int, static: dict[str, Any], taken: list[str]
             if len(ids) != int(args[1]):
                 raise SpecError(f"{w}: {name} takes {args[1]} {kind}")
             _in_list(ids, args[0], static, f"{w}: {kind}")
-            out["choices"].append({"kind": kind, "list": args[0], "n": int(args[1]), "exact": True, "ids": ids})
+            x = {"kind": kind, "list": args[0], "n": int(args[1]), "exact": True, "ids": ids}
+            if kind == "spells":
+                x["ability"] = _row_ability(args, 4)
+            out["choices"].append(x)
         else:
             raise SpecError(f"{w}: {name} has {sel}, a choice a kit can't make")
     if extra := sorted(set(imp) - allowed):
@@ -363,8 +388,10 @@ def kit_plan(
     c = static["classes"][cls]
     rows = selector_rows(cls, kit.get("subclass"), level, static, what)
     choices: list[dict[str, Any]] = []
-    grants: dict[str, list[str]] = {"boosts": [], "passives": [], "spells": []}
+    grants: dict[str, list[str]] = {"boosts": [], "passives": [], "passives_removed": [], "spells": []}
     pool: list[str] = []  # spells a preparer prepares from (no AlwaysPrepared flag)
+    class_spells: list[str] = []  # what the class rows' AddSpells give: the game's, its upcasts the kit's
+    abilities: dict[str, str] = {}  # spell -> its ability: AddSpell gives none, ArenaMirror writes the rows
     improvements = kit.get("improvements") or []
     if not isinstance(improvements, list):
         raise SpecError(f"{what}: improvements must list one entry per improvement level")
@@ -381,19 +408,31 @@ def kit_plan(
         if r["source"] == "subclass":
             grants["boosts"] += [b for b in (row.get("Boosts") or "").split(";") if b]
             grants["passives"] += [x for x in (row.get("PassivesAdded") or "").split(";") if x]
+            grants["passives_removed"] += [x for x in (row.get("PassivesRemoved") or "").split(";") if x]
         for name, args in selectors(row["Selectors"]):
             prepared_flag = len(args) > 6 and args[6] == "AlwaysPrepared"
             if name == "AddSpells":
                 if r["source"] == "subclass":
-                    grants["spells"] += _spells_of(args[0], static)  # the class's own: the game's (stat entry)
-                elif not (len(args) > 4 and args[4] == "AlwaysPrepared"):
-                    pool += _spells_of(args[0], static)
+                    ids = _spells_of(args[0], static)  # the class's own: the game's (stat entry)
+                    grants["spells"] += ids
+                    if spell_ab := _row_ability(args, 2) or c["casting"]:
+                        abilities.update(dict.fromkeys(ids, spell_ab))
+                else:
+                    class_spells += _spells_of(args[0], static)
+                    if not (len(args) > 4 and args[4] == "AlwaysPrepared"):
+                        pool += _spells_of(args[0], static)
+                continue
+            if name == "ReplacePassives":  # the game offers a swap of an earlier pick: a build keeps its pick
+                continue
+            if name == "SelectEquipment":  # a Bard's instrument: a twin has none, and dress takes the reference's away
                 continue
             if name == "SelectAbilityBonus":
                 bonus = True
             elif name in CHOICE:  # every pick exact
                 x = {"kind": CHOICE[name], "list": args[0], "n": int(args[1]), "exact": True, "level": lv}
                 x["pool"] = CHOICE[name] == "spells" and not prepared_flag
+                if CHOICE[name] == "spells":
+                    x["ability"] = _row_ability(args, 4)
                 choices.append(x)
             else:
                 raise SpecError(f"{what}: {cls} level {lv} has {name}, a choice a kit can't make")
@@ -423,9 +462,13 @@ def kit_plan(
             raise SpecError(
                 f"{what}: {x['kind']} has {n}, the game's selector takes {'' if x['exact'] else '1..'}{x['n']}"
             )
-        if x.pop("pool"):
+        x["from_pool"] = x.pop("pool")
+        if x["from_pool"]:
             pool += x["ids"]
-    race, rpart, rchoices, fixed = race_plan(kit, static, what)
+    race, rpart, rchoices, fixed = race_plan(kit, static, what, c["casting"])
+    abilities.update(rpart.pop("spell_abilities", {}))
+    book_only = cls in PICKS_ARE_ITS_BOOK and kit.get("prepared") is not None
+    pool_picks = [x for x in choices if x.pop("from_pool", False)]
     bg = kit.get("background")
     player = list(PLAYER_PASSIVES)
     if bg is not None:
@@ -434,6 +477,10 @@ def kit_plan(
             raise SpecError(f"{what}: background must be one of {', '.join(static['backgrounds'])}")
         player.append(b["passive"])
         fixed += [(s, f"background {bg}") for s in b.get("skills", [])]
+    # A passive's skill leaves the class group once it's picked (live 2026-11-06: Bounty Hunter, Investigation)
+    gives = static.get("passive_skills", {})
+    for x in (c for c in choices if c["kind"] == "passives"):
+        fixed += [(s, f"passive {p}") for p in x["ids"] for s in gives.get(p, [])]
     choices = rchoices + choices
     picked = [s for x in choices if x["kind"] == "skills" for s in x["ids"]]
     for s in picked:
@@ -476,12 +523,26 @@ def kit_plan(
             raise SpecError(f"{what}: prepared {', '.join(bad)} is not a spell the {cls} has to prepare")
     elif prepared is not None:
         raise SpecError(f"{what}: {cls} doesn't prepare spells (prepared must be left out)")
+    if book_only:
+        for x in pool_picks:
+            x["ids"], x["exact"] = [i for i in x["ids"] if i in prepared], False
+        choices = [x for x in choices if x["ids"]]
+    for x in choices:
+        spell_ab = x.pop("ability", None) or c["casting"]
+        if x["kind"] == "spells" and spell_ab:
+            abilities.update(dict.fromkeys(x["ids"], spell_ab))
+    upcast = _upcasts([*abilities, *class_spells], rows, static)
+    # A class row's spell is the game's, so only its upcasts can be added; the kit's own goes in with them by one boost
+    grants["spells"] += [x for x, spell in upcast.items() if spell in class_spells]
+    unlocks = {spell: abilities[spell] for spell in upcast.values() if spell not in class_spells}
+    for entry, spell in upcast.items():
+        abilities[entry] = abilities.get(spell) or c["casting"]
     out_kit: dict[str, Any] = {
         "race": rpart,
         "player": {"passives": player},
         "ability_bonus": ab,
         "choices": choices,
-        "items": _items(kit.get("items"), c["equipment"], cls, what, level, static),
+        "items": _items(kit.get("items"), class_items(cls, static), cls, what, level, static),
     }
     if kit.get("subclass") is not None:
         out_kit["subclass"] = static["subclasses"][kit["subclass"]]["uuid"]
@@ -491,17 +552,33 @@ def kit_plan(
             "passives": grants["passives"],
             "spells": grants["spells"],
         }
-    if prepared is not None:
+        if grants["passives_removed"]:  # a Berserker's RageFrenzyUnlock replaces the class row's RageUnlock
+            out_kit["grants"]["passives_removed"] = grants["passives_removed"]
+    if prepared is not None and not book_only:
         out_kit["prepared"] = list(prepared)
+    if abilities:
+        out_kit["spell_abilities"] = abilities
+    if unlocks:
+        out_kit["unlocks"] = unlocks
     return {"race": race, "kit": out_kit}
 
 
+def _upcasts(held: list[str], rows: list[dict[str, Any]], static: dict[str, Any]) -> dict[str, str]:
+    """{entry: its spell}: what `held` spells have at the slots these rows open. A character's book gets those rows from
+    the game (live L5 S4); AddSpell gives a copy the one id it names."""
+    boosts = ";".join(r["row"].get("Boosts") or "" for r in rows)
+    top = max(map(int, re.findall(r"ActionResource\(SpellSlot,\d+,(\d+)\)", boosts)), default=0)
+    table = static["upcasts"]
+    return {x: sid for sid in held for p, ids in table.get(sid, {}).items() if int(p) <= top for x in ids}
+
+
 def race_plan(
-    kit: dict[str, Any], static: dict[str, Any], what: str
+    kit: dict[str, Any], static: dict[str, Any], what: str, casting: str | None = None
 ) -> tuple[str, dict[str, Any], list[dict[str, Any]], list[tuple[str, str]]]:
     """The kit's race part from the race's level-1 rows, its parent race's first (A1, D411: a build's race, so a Wood
     Half-Elf also gets the subrace's Movement and Stealth). -> (race id, the kit's race part {race, boosts, passives,
-    spells?}, the race's choices (Human: one skill, from kit.race_skills), [(skill, where from)] the rows give)."""
+    spells?, spell_abilities?}, the race's choices (Human: one skill, from kit.race_skills), [(skill, where from)] the
+    rows give). `casting`: the class's, for a row that names no ability."""
     name = kit.get("race")
     race = static["races"].get(name)
     if race is None:
@@ -510,17 +587,29 @@ def race_plan(
     boosts = [b for r in rows for b in (r["Boosts"] or "").split(";") if b]
     passives = [x for r in rows for x in (r["PassivesAdded"] or "").split(";") if x]
     spells: list[str] = []
+    abilities: dict[str, str] = {}
     choices: list[dict[str, Any]] = []
     for r in rows:
         for sel, args in selectors(r["Selectors"]):
             if sel == "AddSpells" and args[0] in static.get("spell_lists", {}):
                 spells += static["spell_lists"][args[0]]["spells"]
+                if ab := _row_ability(args, 2) or casting:
+                    abilities.update(dict.fromkeys(static["spell_lists"][args[0]]["spells"], ab))
             elif sel == "SelectSpells":
                 ids = _names(kit.get("race_spells", []), None, f"{what}: race_spells")
                 if len(ids) != int(args[1]):
                     raise SpecError(f"{what}: race_spells has {len(ids)}, the race {name}'s selector takes {args[1]}")
                 _in_list(ids, args[0], static, f"{what}: race_spells")
-                choices.append({"kind": "spells", "list": args[0], "n": int(args[1]), "exact": True, "ids": ids})
+                choices.append(
+                    {
+                        "kind": "spells",
+                        "list": args[0],
+                        "n": int(args[1]),
+                        "exact": True,
+                        "ids": ids,
+                        "ability": _row_ability(args, 4),
+                    }
+                )
             elif sel == "SelectSkills":
                 ids = _names(kit.get("race_skills", []), SKILLS, f"{what}: race_skills")
                 if len(ids) != int(args[1]):
@@ -535,7 +624,16 @@ def race_plan(
     part: dict[str, Any] = {"race": race["race"], "boosts": ";".join(boosts), "passives": passives}
     if spells:
         part["spells"] = spells
+    if abilities:
+        part["spell_abilities"] = abilities
     return race["race"], part, choices, fixed
+
+
+def class_items(cls: str, static: dict[str, Any]) -> list[dict[str, Any]]:
+    """The class's character-creation equipment and its KIT_ADDS, as {item, type, root}."""
+    cat = static.get("items", {})
+    adds = [{"item": x, "type": cat[x]["type"], "root": cat[x]["root"]} for x in KIT_ADDS.get(cls, ())]
+    return [*static["classes"][cls]["equipment"], *adds]
 
 
 def tier_items(cc: list[dict[str, Any]], level: int, static: dict[str, Any]) -> list[dict[str, Any]]:
@@ -598,7 +696,9 @@ def _items(
             else ""
         )
         raise SpecError(
-            f"{what}: items must be EQP_CC_{cls} less {', '.join(EXCLUDED)}{tier}"
+            f"{what}: items must be EQP_CC_{cls} less {', '.join(EXCLUDED)}"
+            + (f" plus {', '.join(KIT_ADDS[cls])}" if cls in KIT_ADDS else "")
+            + tier
             + (f"; not that: {', '.join(sorted(set(extra)))}" if extra else "")
             + (f"; missing: {', '.join(sorted(set(short)))}" if short else "")
         )
@@ -656,6 +756,16 @@ def _builds() -> Any:
     return arena_builds
 
 
+def _spawn_arg(s: str) -> list[float]:
+    try:
+        v = [float(x) for x in s.split(",")]
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"want x,y,z, got {s!r}") from e
+    if len(v) != 3:
+        raise argparse.ArgumentTypeError(f"want x,y,z, got {s!r}")
+    return v
+
+
 def _schema_of(path: Path) -> Any:
     try:
         doc = json.loads(Path(path).read_text())
@@ -682,13 +792,56 @@ def main(argv: Sequence[str] | None = None) -> int:
     bm.add_argument("names", nargs="+", type=_pair_arg, help="each pair's twins' names, A:B, in the builds' order")
     m = sub.add_parser("mirror", help="print the arena file's level, teams and mirror section for a pairs spec")
     m.add_argument("spec", type=Path)
+    ba = sub.add_parser(
+        "builds-arena", help="write an arena file: a base arena's save, seed, round and wall caps, a build file's pairs"
+    )
+    ba.add_argument("builds", type=Path)
+    ba.add_argument("base", type=Path, help="the arena file whose save, seed, round and wall caps it takes")
+    ba.add_argument("name", help="the new arena's name (its file's stem)")
+    ba.add_argument("names", nargs="+", type=_pair_arg, help="each pair's twins' names, A:B, in the builds' order")
+    ba.add_argument("--spawn-a", required=True, type=_spawn_arg, help="x,y,z")
+    ba.add_argument("--spawn-b", required=True, type=_spawn_arg, help="x,y,z")
+    ba.add_argument("--line-gap", type=float, help=f"members' gap along a line, m (default {LINE_GAP_M})")
+    ba.add_argument("--round-cap", type=int, help="else the base's")
+    ba.add_argument("--wall-cap-min", type=float, help="else the base's")
+    ba.add_argument("--out", required=True, type=Path)
     y = sub.add_parser("symmetry", help="ask the running game whether each pair is a mirror")
     y.add_argument("pairs", nargs="+", type=_pair_arg)
+    rr = sub.add_parser("reference-read", help="read a hireling's profile from the running game into the build file")
+    rr.add_argument("builds", type=Path)
+    rr.add_argument("build")
+    rr.add_argument("uuid")
+    rr.add_argument("--evidence", required=True, help="where the read is logged (live.md section, files)")
+    rd = sub.add_parser(
+        "reference-diff", help="a twin in the running game against its build's reference; exit 1 on a diff"
+    )
+    rd.add_argument("builds", type=Path)
+    rd.add_argument("build")
+    rd.add_argument("uuid")
     args = ap.parse_args(argv)
     try:
         if args.cmd == "builds-mirror":
             arena_builds = _builds()
             print(json.dumps(arena_builds.mirror_section(arena_builds.load_builds(args.builds), args.names), indent=1))
+            return 0
+        if args.cmd == "builds-arena":
+            arena_builds = _builds()
+            base = json.loads(args.base.read_text())
+            a = arena_builds.arena_file(
+                arena_builds.load_builds(args.builds),
+                base,
+                args.name,
+                args.names,
+                args.spawn_a,
+                args.spawn_b,
+                line_gap=args.line_gap,
+            )
+            if args.round_cap is not None:
+                a["round_cap"] = args.round_cap
+            if args.wall_cap_min is not None:
+                a["wall_cap_min"] = args.wall_cap_min
+            args.out.write_text(json.dumps(a, indent=1) + "\n")
+            print(f"{args.out}: {args.name}, {len(a['mirror']['pairs'])} pairs, level {a['level']}")
             return 0
         if args.cmd == "validate" and _schema_of(args.spec) == "arena-builds.v1":
             arena_builds = _builds()
@@ -710,8 +863,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         from bg3ai.game import GameError
         from bg3ai.tools import core
 
+        def rpc(op: str, a: dict[str, Any]) -> Any:
+            return core.game.rpc(op, a)
+
         try:
-            r = check_symmetry(lambda op, a: core.game.rpc(op, a), args.pairs)
+            if args.cmd in ("reference-read", "reference-diff"):
+                arena_builds = _builds()
+                if args.cmd == "reference-read":
+                    print(arena_builds.reference_read(rpc, args.builds, args.build, args.uuid, args.evidence))
+                    return 0
+                d = arena_builds.reference_diff(rpc, arena_builds.load_builds(args.builds), args.build, args.uuid)
+                print(json.dumps(d, indent=1))
+                return 0 if d.get("ok") else 1
+            r = check_symmetry(rpc, args.pairs)
         except GameError as e:
             print(f"make_arena_save: {e}", file=sys.stderr)
             return 1

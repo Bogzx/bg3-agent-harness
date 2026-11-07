@@ -499,3 +499,27 @@ test("audit S3-3: ref/roll rings refuse a side; nav.activity counts the side's o
     eq(jobs("B"), b0 + 1, "B: its own job")
     eq(jobs(nil), h0 + 1, "the harness: every job")
 end)
+
+-- L5 reads (live.md 01:03:22): a twin's prompt shows only while a twin holds the HUD.
+test("the HUD stays on a living team member, and only moves when it isn't on one", function()
+    begin()
+    local made = {}
+    rawset(Osi, "MakePlayerActive", function(u) made[#made + 1] = u end)
+    Ar.hud_at = nil
+    Ar.hud_check()
+    eq(#made, 1, "the host holds it: moved")
+    eq(made[1], A1, "to a team member")
+    Ar.hud_check()
+    eq(#made, 1, "checked at most every HUD_CHECK_MS")
+    world[B2].comps.ClientControl = {}
+    clock = clock + Ar.HUD_CHECK_MS
+    Ar.hud_check()
+    eq(#made, 1, "a twin of either side holds it: left alone")
+    osiv[key("IsDead", B2)] = 1
+    clock = clock + Ar.HUD_CHECK_MS
+    Ar.hud_check()
+    eq(#made, 2, "its holder died: moved")
+    world[B2].comps.ClientControl = nil
+    osiv[key("IsDead", B2)] = nil
+    rawset(Osi, "MakePlayerActive", nil)
+end)

@@ -239,6 +239,24 @@ class FakeSpellPage:
         return out
 
 
+class FakeOwnPicks(FakeSpellPage):
+    """A selector's Additions as the probe's remove = true sees them: `names` are the picks, a click takes one off."""
+
+    stuck = False   # the click lands and nothing moves
+
+    def click(self, x, y, button="L", count=1, sync=True):
+        self.cursor = (x, y)
+        k = self.under()
+        if k and not self.stuck:
+            self.names.pop(k - 1)
+
+    def rpc(self, op, args):
+        assert args["remove"] is True
+        if args["name"] not in self.names:
+            return {"placed": True}
+        return super().rpc(op, args)
+
+
 NAMES = ["Burning Hands", "Charm Person", "Chromatic Orb", "Colour Spray", "Disguise Self", "Expeditious Retreat",
          "False Life", "Feather Fall", "Find Familiar", "Ice Knife", "Enhance Leap", "Longstrider", "Magic Missile",
          "Protection from Evil and Good", "Ray of Sickness", "Shield", "Tasha's Hideous Laughter"]
@@ -334,6 +352,20 @@ class SpellClicks(unittest.TestCase):
         self.assertEqual(r["failed"], {})
         self.assertEqual(pg.picked, ["Magic Missile", "Shield"])
         self.assertLess(r["probes"], 40)
+
+    def test_own_picks_come_off(self):
+        pg = FakeOwnPicks(["Sleep", "Shield", "Grease"])
+        needs = [{"name": "Sleep", "cantrips": False, "remove": True}, {"name": "Grease", "remove": True}]
+        r = LV.click_spells(pg.rpc, pg, needs)
+        self.assertEqual((r["failed"], r["picked"], pg.names), ({}, ["Sleep", "Grease"], ["Shield"]))
+        self.assertIn("picks", LV._last_hit)
+        self.assertNotIn("spells", LV._last_hit)
+
+    def test_a_pick_that_stays_is_named(self):
+        pg = FakeOwnPicks(["Sleep"])
+        pg.stuck = True
+        r = LV.click_spells(pg.rpc, pg, [{"name": "Sleep", "remove": True}])
+        self.assertIn("still picked", r["failed"]["Sleep"])
 
     def test_grid_elsewhere(self):
         # the list further left and lower than the search start, at a fractional offset

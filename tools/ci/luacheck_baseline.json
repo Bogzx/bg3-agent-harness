@@ -17,11 +17,11 @@
   "mod/Mods/BG3AI/ScriptExtender/Lua/Client/ProgressionCC.lua": {
    "W211": 1,
    "W212": 1,
-   "W631": 14
+   "W631": 12
   },
   "mod/Mods/BG3AI/ScriptExtender/Lua/Client/ProgressionLevelUp.lua": {
    "W431": 1,
-   "W631": 23
+   "W631": 22
   },
   "mod/Mods/BG3AI/ScriptExtender/Lua/Client/Services.lua": {
    "W211": 1,
@@ -55,7 +55,7 @@
   },
   "mod/Mods/BG3AI/ScriptExtender/Lua/Client/UIActionsPrompts.lua": {
    "W241": 1,
-   "W631": 2
+   "W631": 1
   },
   "mod/Mods/BG3AI/ScriptExtender/Lua/Client/UISettings.lua": {
    "W211": 1
@@ -68,7 +68,7 @@
   },
   "mod/Mods/BG3AI/ScriptExtender/Lua/Server/ActionsCast.lua": {
    "W431": 1,
-   "W631": 5
+   "W631": 4
   },
   "mod/Mods/BG3AI/ScriptExtender/Lua/Server/ActionsClick.lua": {
    "W631": 2

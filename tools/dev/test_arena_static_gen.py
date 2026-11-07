@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import arena_static_gen as gen
 import pak
 
+DAGGERS = ("WPN_Dagger", "WPN_Dagger_1", "WPN_Dagger_2")
+
 FIGHTER_T, BM_T, RACE_T, SUB_T = (f"{i}0000000-0000-0000-0000-000000000000" for i in "1234")
 FIGHTER, BM, RACE, SUB, BG, ORIGIN, LIST, SKILLS = (f"a{i}000000-0000-0000-0000-000000000000" for i in "12345678")
 
@@ -42,7 +44,7 @@ def row(table: str, level: int, uuid: str, **kw: str) -> tuple[str, dict[str, st
     )
 
 
-def game(tmp: Path, *, shared_rows=(), dev_rows=(), x_rows=()) -> Path:
+def game(tmp: Path, *, shared_rows=(), dev_rows=(), x_rows=(), subrace=SUB) -> Path:
     """A Data folder: Shared.pak (Shared + SharedDev), Gustav.pak (GustavDev), GustavX.pak."""
     fighter_rows = [
         row(
@@ -63,6 +65,11 @@ def game(tmp: Path, *, shared_rows=(), dev_rows=(), x_rows=()) -> Path:
         'new entry "WPN_Longsword"\ntype "Weapon"\ndata "RootTemplate" "root-ls"\n\n'
         'new entry "WPN_Longsword_1"\ntype "Weapon"\nusing "WPN_Longsword"\ndata "RootTemplate" "root-ls1"\n'
         'data "Rarity" "Uncommon"\n'
+    )
+    stats += "".join(f'new entry "{w}"\ntype "Weapon"\ndata "RootTemplate" "root-{w}"\n\n' for w in DAGGERS)
+    passives = (
+        'new entry "Trained"\ntype "PassiveData"\ndata "Boosts" "ProficiencyBonus(Skill,Stealth);Tag(X)"\n\n'
+        'new entry "Plain"\ntype "PassiveData"\ndata "Boosts" "ProficiencyBonus(SavingThrow,Wisdom)"\n\n'
     )
     objects = "".join(f'new entry "{p}"\ntype "Object"\ndata "RootTemplate" "root-{p}"\n\n' for p in gen.POTIONS)
     xp = "".join(f'key "Level{i}","{i * 100}"\n\n' for i in range(1, 12))
@@ -103,7 +110,7 @@ def game(tmp: Path, *, shared_rows=(), dev_rows=(), x_rows=()) -> Path:
                         "Name": "Hireling_Fighter",
                         "UUID": ORIGIN,
                         "RaceUUID": RACE,
-                        "SubRaceUUID": SUB,
+                        "SubRaceUUID": subrace,
                         "BackgroundUUID": BG,
                     },
                     [],
@@ -146,6 +153,7 @@ def game(tmp: Path, *, shared_rows=(), dev_rows=(), x_rows=()) -> Path:
         ),
         "Public/Shared/Stats/Generated/Data/Weapon.txt": stats.encode(),
         "Public/Shared/Stats/Generated/Data/Object.txt": objects.encode(),
+        "Public/Shared/Stats/Generated/Data/Passive.txt": passives.encode(),
         "Public/Shared/Stats/Generated/Data/XPData.txt": xp.encode(),
     }
     data = tmp / "Data"
@@ -175,6 +183,8 @@ def test_class_rows_skip_the_multiclass_row_and_keep_improvements_subclass_count
     ]
     # the +1 entry inherits its type through `using` and is in the catalog with its own root and rarity
     assert g["items"]["WPN_Longsword_1"] == {"type": "Weapon", "root": "root-ls1", "rarity": "Uncommon"}
+    assert [g["items"][w]["root"] for w in DAGGERS] == [f"root-{w}" for w in DAGGERS]  # a kit's weapon, in no EQP_CC
+    assert g["passive_skills"] == {"Trained": ["Stealth"]}
     assert set(gen.POTIONS) <= set(g["items"])
 
 
@@ -192,6 +202,24 @@ def test_race_rows_parent_first_background_hireling_feats_lists_and_xp_totals(tm
     }  # comma-separated
     assert g["lists"][SKILLS]["ids"] == ["Athletics", "Perception"]
     assert g["xp"]["2"] == 100 and g["xp"]["3"] == 300 and g["xp"]["12"] == sum(i * 100 for i in range(1, 12))
+
+
+def test_a_hirelings_template_gives_the_subrace_its_origin_leaves_out(tmp_path, monkeypatch):
+    (tmp_path / "a").mkdir()
+    assert run(tmp_path / "a", subrace="")["hirelings"]["Fighter"]["race"] == "HalfElf"
+    monkeypatch.setattr(gen, "TEMPLATE_SUBRACE", {"Fighter": "HalfElf_Wood"})
+    (tmp_path / "b").mkdir()
+    g = run(tmp_path / "b", subrace="")
+    assert g["hirelings"]["Fighter"]["race"] == "HalfElf_Wood"
+    assert [r["race"] for r in g["races"]["HalfElf_Wood"]["rows"]] == ["HalfElf", "HalfElf_Wood"]
+    assert g["races"]["HalfElf_Wood"]["race"] == SUB
+
+
+def test_the_static_files_hirelings_agree_with_the_generators_template_races():
+    static = json.loads(gen.STATIC.read_text())
+    for cls, race in gen.TEMPLATE_SUBRACE.items():
+        assert static["hirelings"][cls]["race"] == race
+        assert [r["race"] for r in static["races"][race]["rows"]] == ["Drow", race]
 
 
 def test_a_later_modules_row_at_the_same_level_replaces_one_module_twice_is_an_error(tmp_path):
@@ -236,3 +264,33 @@ def test_main_writes_only_when_every_difference_is_accepted(tmp_path, monkeypatc
     assert "nothing written" in capsys.readouterr().err and "xp" not in json.loads(out.read_text())
     assert gen.main([str(data), "--out", str(out), "--accept", "classes.Fighter.equipment"]) == 0
     assert json.loads(out.read_text())["xp"]["12"] > 0
+
+
+def test_upcasts_come_from_root_and_power_a_containers_variant_under_the_container_and_a_later_entry_extends():
+    def f(name: str, text: str, module: str = "Shared") -> dict[str, bytes]:
+        return {f"Public/{module}/Stats/Generated/Data/Spell_{name}.txt": text.encode()}
+
+    files = f(
+        "Target",
+        'new entry "Bane"\ndata "Level" "1"\n'
+        'new entry "Bane_2"\nusing "Bane"\ndata "RootSpellID" "Bane"\ndata "PowerLevel" "2"\n'
+        'new entry "Bane_3"\nusing "Bane_2"\ndata "PowerLevel" "3"\n'
+        'new entry "Bane_AI"\nusing "Bane"\n',
+    ) | f(
+        "Shout",
+        'new entry "Recovery"\ndata "ContainerSpells" "Recovery_1"\n'
+        'new entry "Recovery_1"\ndata "SpellContainerID" "Recovery"\n'
+        'new entry "Recovery_2"\nusing "Recovery_1"\ndata "RootSpellID" "Recovery_1"\ndata "PowerLevel" "2"\n'
+        'new entry "Curse"\ndata "ContainerSpells" "Curse_A"\n'
+        'new entry "Curse_A"\ndata "SpellContainerID" "Curse"\n'
+        'new entry "Curse_4"\ndata "RootSpellID" "Curse"\ndata "PowerLevel" "4"\n'
+        'new entry "Curse_A_4"\ndata "SpellContainerID" "Curse_4"\ndata "RootSpellID" "Curse_A"\n'
+        'data "PowerLevel" "4"\n',
+    )
+    files |= f("Target", 'new entry "Bane_3"\nusing "Bane_3"\ndata "Cooldown" "x"\n', "GustavX")
+    assert gen.upcasts(files) == {
+        "Bane": {"2": ["Bane_2"], "3": ["Bane_3"]},
+        "Recovery": {"2": ["Recovery_2"]},
+        "Curse": {"4": ["Curse_4"]},
+        "Curse_A": {"4": ["Curse_A_4"]},
+    }

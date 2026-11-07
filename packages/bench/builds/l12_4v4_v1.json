@@ -1,11 +1,11 @@
 {
  "schema": "arena-builds.v1",
  "name": "l12_4v4_v1",
- "title": "Level 12: Fighter (Battle Master), Cleric (Life), Wizard (Evocation), Rogue (Thief); each its hireling's race and background",
+ "title": "Level 12: Fighter (Battle Master), Bard (Lore), Wizard (Evocation), Rogue (Thief); each its hireling's race and background",
  "tier": "L12",
  "level": 12,
  "game_build": "25605617",
- "draft": "no reference profiles yet (plan S3: one respecced hireling per build at this level); the Cleric and Wizard hireling templates are not read yet, and the kit's subclass, improvement and prepared-spell parts are not in arena.mirror_kit yet (website repo ops/logs/arena-4v4-builds.md G5, G10) (2026-11-04)",
+ "draft": "no reference profiles yet (plan S3: one respecced hireling per build at this level) (2026-11-06)",
  "builds": [
   {
    "id": "fighter",
@@ -123,127 +123,191 @@
    "reference": null
   },
   {
-   "id": "cleric",
-   "class": "Cleric",
-   "subclass": "LifeDomain",
-   "race": "Elf_HighElf",
-   "background": "Acolyte",
-   "role": "healer: Life Domain, mace and shield",
+   "id": "bard",
+   "class": "Bard",
+   "subclass": "LoreCollege",
+   "race": "Halfling_Lightfoot",
+   "background": "Entertainer",
+   "role": "healer: College of Lore, rapier and hand crossbow",
    "script": {
     "cc": {
      "abilities": {
-      "Strength": 14,
-      "Dexterity": 10,
+      "Strength": 8,
+      "Dexterity": 14,
       "Constitution": 14,
       "Intelligence": 8,
-      "Wisdom": 15,
-      "Charisma": 10
+      "Wisdom": 12,
+      "Charisma": 15
      },
      "ability_bonus": [
-      "Wisdom",
+      "Charisma",
       "Constitution"
      ],
      "skills": [
+      "Persuasion",
       "Medicine",
-      "Persuasion"
-     ],
-     "race_spells": [
-      "Projectile_FireBolt"
+      "Insight"
      ],
      "spells": [
       [
-       "Target_SacredFlame",
-       "Target_TollTheDead",
-       "Target_Guidance"
+       "Target_ViciousMockery",
+       "Shout_BladeWard"
+      ],
+      [
+       "Target_HealingWord",
+       "Target_CureWounds",
+       "Target_FaerieFire",
+       "Target_Bane"
       ]
      ]
     },
     "level_ups": [
      {
-      "level": 2
+      "level": 2,
+      "spells": [
+       [
+        "Target_Heroism"
+       ]
+      ]
      },
      {
-      "level": 3
+      "level": 3,
+      "spells": [
+       [
+        "Target_Blindness"
+       ]
+      ],
+      "expertise": [
+       [
+        "Persuasion",
+        "Performance"
+       ]
+      ],
+      "skills": [
+       [
+        "Arcana",
+        "Perception",
+        "Deception"
+       ]
+      ]
      },
      {
       "level": 4,
       "spells": [
        [
-        "Target_Resistance"
+        "Target_TrueStrike"
+       ],
+       [
+        "Target_Shatter"
        ]
       ],
       "improvement": {
        "asi": {
-        "Wisdom": 2
+        "Charisma": 2
        }
       }
      },
      {
-      "level": 5
+      "level": 5,
+      "spells": [
+       [
+        "Target_BestowCurse"
+       ]
+      ]
      },
      {
-      "level": 6
+      "level": 6,
+      "spells": [
+       [
+        "Target_Silence"
+       ],
+       [
+        "Shout_HealingWord_Mass",
+        "Shout_SpiritGuardians"
+       ]
+      ]
      },
      {
-      "level": 7
+      "level": 7,
+      "spells": [
+       [
+        "Target_FreedomOfMovement"
+       ]
+      ]
      },
      {
       "level": 8,
+      "spells": [
+       [
+        "Target_Invisibility_Greater"
+       ]
+      ],
       "improvement": {
        "asi": {
-        "Wisdom": 1,
+        "Charisma": 1,
         "Constitution": 1
        }
       }
      },
      {
-      "level": 9
+      "level": 9,
+      "spells": [
+       [
+        "Target_CureWounds_Mass"
+       ]
+      ]
      },
      {
       "level": 10,
       "spells": [
        [
-        "Shout_BladeWard"
+        "Target_Friends"
+       ],
+       [
+        "Target_GreaterRestoration"
+       ],
+       [
+        "Target_DeathWard",
+        "Shout_AuraOfVitality"
+       ]
+      ],
+      "expertise": [
+       [
+        "Medicine",
+        "Insight"
        ]
       ]
      },
      {
-      "level": 11
+      "level": 11,
+      "spells": [
+       [
+        "Target_EnhanceAbility"
+       ]
+      ]
      },
      {
       "level": 12,
+      "spells": [
+       [
+        "Target_LesserRestoration"
+       ]
+      ],
       "improvement": {
-       "feat": "WarCaster"
+       "asi": {
+        "Constitution": 2
+       }
       }
      }
-    ],
-    "prepared": [
-     "Target_HealingWord",
-     "Target_ShieldOfFaith",
-     "Projectile_GuidingBolt",
-     "Target_Sanctuary",
-     "Target_InflictWounds",
-     "Target_SpiritualWeapon",
-     "Target_HoldPerson",
-     "Shout_SpiritGuardians",
-     "Shout_HealingWord_Mass",
-     "Target_WardingBond",
-     "Shout_PrayerOfHealing",
-     "Target_Banishment",
-     "Target_FreedomOfMovement",
-     "Target_FlameStrike",
-     "Target_InsectPlague",
-     "Target_Heal",
-     "Wall_BladeBarrier"
     ]
    },
    "gear": [
-    "WPN_Mace_2",
-    "ARM_Shield_2",
-    "ARM_ChainShirt_Body_2",
+    "WPN_Rapier_2",
+    "WPN_HandCrossbow_2",
+    "OBJ_Potion_Healing",
+    "OBJ_Potion_Healing",
+    "ARM_Bard",
     "ARM_Boots_Leather",
-    "OBJ_Potion_Healing",
-    "OBJ_Potion_Healing",
     "OBJ_Potion_Healing_Greater",
     "OBJ_Potion_Healing_Superior"
    ],
@@ -284,7 +348,7 @@
        "Projectile_MagicMissile",
        "Shout_Shield_Wizard",
        "Target_MageArmor",
-       "Projectile_ChromaticOrb",
+       "Projectile_RayOfSickness",
        "Zone_BurningHands",
        "Projectile_WitchBolt"
       ]
@@ -415,7 +479,7 @@
      "Projectile_MagicMissile",
      "Shout_Shield_Wizard",
      "Target_MageArmor",
-     "Projectile_ChromaticOrb",
+     "Projectile_RayOfSickness",
      "Zone_BurningHands",
      "Projectile_ScorchingRay",
      "Target_MistyStep",
@@ -432,7 +496,7 @@
     ]
    },
    "gear": [
-    "WPN_Quarterstaff_2",
+    "WPN_Dagger_2",
     "ARM_Robe_Body_2",
     "ARM_Shoes",
     "OBJ_Potion_Healing",

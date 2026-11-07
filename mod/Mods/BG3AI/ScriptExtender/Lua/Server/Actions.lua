@@ -533,6 +533,7 @@ function A.dispatch(event, args)
     elseif (event == "CastSpell" or event == "CastedSpell") and args[1] then
         U.each_side(A.foe_cast, event, args[1], args[2]) -- "outside the party" is per side in an arena
         A.track_cast(event, args[1], args[2])
+        if event == "CastedSpell" then A.held_cast_landed(args[1], args[2]) end
         A.scroll_cast(event, args[1])
         A.note_cast(args[1]) -- the idle teleport watch: a jump right after it is the caster's spell (ActionsMove)
     elseif event == "ReactionInterruptUsed" and args[1] then
@@ -757,7 +758,7 @@ local function start(kind, char, spec)
         -- block every later order and are saved with the game. A finished
         -- cast is left alone (its spell task may still be resolving).
         if char and job.osi_task and not job.stopping and A.active[char] == nil
-            and (job.status ~= "done" or job.osi_task ~= "spell") then
+            and (job.status ~= "done" or job.osi_task ~= "spell") and not A.cast_paused(char) then
             local n = osi_tasks(char)
             if n > 0 then
                 job.stopping = true

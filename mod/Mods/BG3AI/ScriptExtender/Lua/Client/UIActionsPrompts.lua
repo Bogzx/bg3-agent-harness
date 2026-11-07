@@ -170,17 +170,58 @@ local function reactRows(w)
     return UI.findAll(w, function(e) return UI.name(e) == "ReactButton" end, { prune = true })
 end
 
--- The job after an answer: done when the shown prompt has one event fewer, or none.
-local function reactWait(dc)
-    local before = UI.count(UI.path(dc, "Data.InterruptEvents"))
-    return waitJob("ui.react", 10000, function()
+-- Done when the shown prompt has one event fewer than `before`, or none. The next prompt comes back as the answering
+-- side sees it (a job's checks run as its side): REVIEW-reactions F1.
+local function reactClosed(before)
+    return function()
         local w2 = reactionPopup()
         local d2 = w2 and try(function() return w2.DataContext end)
         local n = d2 and UI.count(UI.path(d2, "Data.InterruptEvents")) or 0
         if n < before or n == 0 then
-            local wmap = UI.widgetMap()
-            return "done", { pending = n > 0 and n or nil, reaction = n > 0 and S.reaction(wmap) or nil }
+            local next_prompt = n > 0 and S.sideReaction(S.reaction(UI.widgetMap())) or nil
+            return "done", { pending = n > 0 and n or nil, reaction = next_prompt }
         end
+    end
+end
+
+-- The job after an answer.
+local function reactWait(dc)
+    return waitJob("ui.react", 10000, reactClosed(UI.count(UI.path(dc, "Data.InterruptEvents"))))
+end
+
+-- The interruptors with a row chosen. Each is what InterruptUndecidedCommand takes (ReactionDecisionPopup.xaml:84).
+local function chosenInterruptors(w)
+    local out = {}
+    for _, root in ipairs(UI.findAll(w, function(e) return UI.name(e) == "InterruptorRoot" end, { prune = true })) do
+        for _, b in ipairs(reactRows(root)) do
+            if S.rowChosen(b) then
+                out[#out + 1] = try(function() return root.DataContext end)
+                break
+            end
+        end
+    end
+    return out
+end
+
+-- Do Not React on a prompt with a row chosen: the row is unchosen first. live.md 03:44:15 read 4b: chosen, then
+-- declined, the attack did no damage on a roll that hit, with nothing paid and no status; the same decline with nothing
+-- chosen landed. A click that chose a row and an accept that didn't follow leave this (a failed read, the runner's
+-- bound).
+local function untickThenDecline(dc, ticked)
+    local closed = reactClosed(UI.count(UI.path(dc, "Data.InterruptEvents")))
+    for _, vm in ipairs(ticked) do check(UI.command(dc, "InterruptUndecidedCommand", vm)) end
+    local declined = false
+    return waitJob("ui.react", 10000, function()
+        -- REVIEW-reactions U1: the event can leave before the first tick, with another prompt up: nothing to decline
+        -- then, and the decline reads the popup's context and event afresh, as those it started with can be stale
+        local status, res = closed()
+        if status or declined then return status, res end
+        local w2 = reactionPopup()
+        if not w2 or #chosenInterruptors(w2) > 0 then return nil end
+        declined = true
+        local dc2 = try(function() return w2.DataContext end)
+        check(UI.command(dc2, "InterruptDontReactPlayerCommand", UI.path(dc2, "Data.InterruptEvents.1")))
+        return nil
     end)
 end
 
@@ -188,7 +229,7 @@ RPC.register("ui.react", function(args)
     local w = reactionPopup() or error("no reaction prompt on screen")
     -- an arena side answers only a prompt for its own characters (one that names nobody of its team is not its own)
     local side = RPC.side and RPC.side()
-    if side and S.reactionSide(S.reactionRows(w)) ~= side then error("not your reaction", 0) end
+    if side and S.promptSide(S.reactionRows(w), S.heldInterrupt()) ~= side then error("not your reaction", 0) end
     local dc = try(function() return w.DataContext end)
     local ev = UI.path(dc, "Data.InterruptEvents.1") or error("no pending interrupt")
     if args.use ~= false then
@@ -206,30 +247,66 @@ RPC.register("ui.react", function(args)
         -- multi-binding (decision, interruptor); bg3le reads converter-bound parameters as nil (DonateBtn, live D10),
         -- so the press most likely ran the command with nil, and Lua can't build that pair. A click on the row is
         -- what answers it: the bridge clicks. A row already chosen (checked) is accepted by command below, as before.
-        if #roots <= 1 and (#btns > 1 or (#btns == 1 and UI.prop(btns[1], "IsChecked") ~= true)) then
+        if #roots <= 1 and (#btns > 1 or (#btns == 1 and not S.rowChosen(btns[1]))) then
             local i = tonumber(args.which) or 1
             if not btns[i] then error("no reaction option " .. tostring(args.which) .. " (" .. #btns .. " shown)") end
             return { needs_click = i, rows = #btns }
         end
+        -- L5 reads (live.md 02:00:05): several interruptors (Cutting Words + Shield): the press chose nothing, Confirm
+        -- stayed grey, and InterruptAcceptPlayerCommand closed the prompt with no reaction, read as done. The same
+        -- click chooses the row; the bridge then asks again, and a row that reads chosen is accepted here.
+        if #roots > 1 then
+            local i = tonumber(args.which) or 1
+            if not btns[i] then error("no reaction option " .. tostring(args.which) .. " (" .. #btns .. " shown)") end
+            if not S.rowChosen(btns[i]) then return { needs_click = i, rows = #btns, confirm = true } end
+        end
     end
     if args.use == false then
+        local ticked = not args.dry and chosenInterruptors(w) or {}
+        if #ticked > 0 then return untickThenDecline(dc, ticked) end
         check(UI.command(dc, "InterruptDontReactPlayerCommand", ev, args.dry))
     else
-        if args.which then
-            -- ReactButton toggles, in display order; their CommandParameter
-            -- is the PassThrough (decision, interruptor) object.
-            local btns = reactRows(w)
-            local b = btns[tonumber(args.which)] or error("no reaction option " .. tostring(args.which) .. " (" .. #btns .. " shown)")
-            if UI.prop(b, "IsChecked") ~= true then check(UI.press(b, args.dry)) end
-        end
         check(UI.command(dc, "InterruptAcceptPlayerCommand", ev, args.dry))
     end
     if args.dry then return { can = true } end
     return reactWait(dc)
 end)
 
+-- What a prompt's observers hold, all resources summed. A reaction that happened spent something; the prompt closing
+-- says nothing (L5 reads: two "done" answers with nobody reacting). No uuids: the open prompt's observers, once.
+-- A side reads only its own characters. -> {uuids, total}
+local function resourceTotal(uuids)
+    local total = 0
+    for _, u in ipairs(uuids) do
+        local e = try(Ext.Entity.Get, u)
+        local res = e and try(function() return e.ActionResources.Resources end)
+        for _, list in pairs(res or {}) do
+            for _, r in pairs(list) do total = total + (tonumber(r.Amount) or 0) end
+        end
+    end
+    return total
+end
+
+RPC.register("ui.react_spent", function(args)
+    local side = RPC.side and RPC.side()
+    local uuids, seen = {}, {}
+    local held = not args.uuids and S.heldInterrupt() or nil
+    for _, r in ipairs(args.uuids or (held and held.rows) or {}) do
+        local u = type(r) == "table" and r.uuid or r
+        if not seen[u] and (not side or BG3AI.Arena.member_side(u) == side) then
+            seen[u] = true
+            uuids[#uuids + 1] = u
+        end
+    end
+    return { uuids = uuids, total = resourceTotal(uuids) }
+end)
+
 RPC.register("ui.react_probe", function(args)
     local w = reactionPopup()
+    -- a side's click walks by this: the other side's prompt reads as none, so a click can't land on it. Not on a watch:
+    -- it reads no rows while the game takes the popup down, and it clicks nothing (reactclick._watch)
+    local side = RPC.side and RPC.side()
+    if w and side and not args.watch and S.promptSide(S.reactionRows(w), S.heldInterrupt()) ~= side then w = nil end
     local dc = w and try(function() return w.DataContext end)
     local n = dc and UI.count(UI.path(dc, "Data.InterruptEvents")) or 0
     local out = { open = w ~= nil and n > 0, events = n }

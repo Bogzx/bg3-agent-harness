@@ -23,6 +23,11 @@
 --   resource_max: per ActionResources entry "name|level|MaxAmount|ReplenishType" (current amounts are `resources`)
 --   passive_state: per passive "id|ToggledOn|Disabled"
 --   hp, temp_hp: Health.Hp / Health.TemporaryHp (as State.lua reads them), compared only as the fight starts
+-- Sym.reference_diff compares a twin's profile with its build's reference (a respecced hireling's profile, website
+-- ops/logs/arena-4v4-builds.md S3-S4) field by field over FIELDS: each value as flat "key=value" entries, so a diff
+-- names the entries only one side has. An entry a build accepts by name (reference.accepted, each with its why) is
+-- not a problem; everything else is. arena.profile {uuid} reads one profile, arena.reference_diff {uuid, reference}
+-- that diff.
 -- The template is recorded, not compared (where the copy came from, not how it plays). A field that doesn't read is
 -- a problem too: it would hide a difference. Display names must be unique across all members (reaction ownership is
 -- matched by name on the client).
@@ -269,6 +274,114 @@ local function canon(v)
 end
 Sym.canon = canon
 
+-- A field's value as a sorted list of entries: a list's items ("index=item" when its order means something, as in
+-- abilities: Str..Cha), a map's "key=value", anything else its one text.
+local function flat(v, ordered)
+    if type(v) ~= "table" then return { tostring(v) } end
+    local out = {}
+    if #v > 0 or next(v) == nil then
+        for i, x in ipairs(v) do out[#out + 1] = ordered and i .. "=" .. canon(x) or canon(x) end
+    else
+        for k, x in pairs(v) do out[#out + 1] = tostring(k) .. "=" .. canon(x) end
+    end
+    return sorted(out)
+end
+
+-- What `a` holds more often than `b` (entries repeat: two potions).
+local function beyond(a, b)
+    local left, out = {}, {}
+    for _, x in ipairs(b) do left[x] = (left[x] or 0) + 1 end
+    for _, x in ipairs(a) do
+        if (left[x] or 0) > 0 then left[x] = left[x] - 1 else out[#out + 1] = x end
+    end
+    return out
+end
+
+-- The entries of `list` a build doesn't accept (accepted: the field's entries from reference.accepted).
+local function unaccepted(list, accepted)
+    local ok, out = {}, {}
+    for _, x in ipairs(accepted or {}) do ok[x] = true end
+    for _, x in ipairs(list) do
+        if not ok[x] then out[#out + 1] = x end
+    end
+    return out
+end
+
+-- The boost a kit gives a spell and its upcast rows by, as the Circle of the Land passives' Boosts write it, and the
+-- row it reads as (live: AddBoosts' rows keep their text, `ActionResource|ActionResource|Movement,9,0|`).
+local SPELL_SLOT = "d136c5d9-0ff0-43da-acce-a74a07f8d6bf"
+local KIT_UNLOCK = "^UnlockSpell|UnlockSpell|[%w_]+,AddChildren," .. SPELL_SLOT:gsub("%-", "%%-") .. ",,%a+|$"
+function Sym.unlock_boost(id, ability)
+    return ("UnlockSpell(%s,AddChildren,%s,,%s)"):format(id, SPELL_SLOT, ability)
+end
+
+-- A field as reference_diff compares it, so that a stored reference stays as it was read:
+-- boosts by type, since one boost reads two ways: AddBoosts' `ActionResource|ActionResource|Movement,9,0|`, a
+--   progression's `ActionResource|||` (S4, live 2026-11-06); what its text says is compared by resources, skills and
+--   derived. Ability rows left out: the respec stores the base as boosts, a twin has it in its stats, `abilities`
+--   compares the scores (orchestrator's ruling). A kit's unlock left out by that exact form: its rows are `spells`'.
+-- statuses without INSURFACE: where a character stood when read, nothing of its build (the same ruling).
+local function comparable(f, v)
+    if type(v) ~= "table" then return v end
+    local out = {}
+    if f == "boosts" then
+        for _, row in ipairs(v) do
+            local t = tostring(row):match("^[^|]*")
+            if t ~= "Ability" and not tostring(row):find(KIT_UNLOCK) then out[#out + 1] = t end
+        end
+        return out
+    elseif f == "statuses" then
+        for _, id in ipairs(v) do
+            if id ~= "INSURFACE" then out[#out + 1] = id end
+        end
+        return out
+    end
+    return v
+end
+
+-- A twin's profile against reference {profile, accepted = [{field, only_twin, only_reference, why}]}:
+-- {ok, diffs = [{field, only_twin, only_reference}], accepted = [same], unread = [field]}.
+-- A field that doesn't read on either side is unread and not ok: it would hide a difference.
+function Sym.reference_diff(profile, reference)
+    if type(reference) ~= "table" or type(reference.profile) ~= "table" then
+        error("a reference needs its profile", 0)
+    end
+    local accepted = {}
+    for _, a in ipairs(reference.accepted or {}) do accepted[a.field] = a end
+    local out = { diffs = {}, accepted = {}, unread = {} }
+    for _, f in ipairs(Sym.FIELDS) do
+        local t, r = profile[f], reference.profile[f]
+        if t == nil or r == nil then
+            out.unread[#out.unread + 1] = f
+        else
+            local ft, fr = flat(comparable(f, t), f == "abilities"), flat(comparable(f, r), f == "abilities")
+            local onlyT, onlyR = beyond(ft, fr), beyond(fr, ft)
+            local a = accepted[f] or {}
+            local badT, badR = unaccepted(onlyT, a.only_twin), unaccepted(onlyR, a.only_reference)
+            if #badT > 0 or #badR > 0 then
+                out.diffs[#out.diffs + 1] = { field = f, only_twin = badT, only_reference = badR }
+            end
+            if #badT < #onlyT or #badR < #onlyR then
+                out.accepted[#out.accepted + 1] = { field = f, only_twin = beyond(onlyT, badT),
+                    only_reference = beyond(onlyR, badR) }
+            end
+        end
+    end
+    out.ok = #out.diffs == 0 and #out.unread == 0
+    return out
+end
+
+-- One line per diff, for a setup failure.
+function Sym.diff_text(d)
+    local out = {}
+    for _, f in ipairs(d.unread) do out[#out + 1] = f .. " doesn't read" end
+    for _, x in ipairs(d.diffs) do
+        out[#out + 1] = ("%s: only the twin %s, only the reference %s"):format(x.field, canon(x.only_twin),
+            canon(x.only_reference))
+    end
+    return table.concat(out, "; ")
+end
+
 -- {ok, pairs = [{a, b, names, diffs = [{field, a, b}]}], problems = [text], members = {uuid = profile}}
 function Sym.check(list, opts)
     if type(list) ~= "table" or #list == 0 then error("pairs must list [uuid, uuid] pairs", 0) end
@@ -312,10 +425,22 @@ function Sym.check(list, opts)
     return out
 end
 
-RPC.register("arena.symmetry", function(args)
-    if not Ar.enabled() then error("arena ops need BG3AI_ARENA=1 in the game's environment", 0) end
-    if RPC.Ctx.side then error("arena ops are the harness's (no side)", 0) end
-    return Sym.check((args or {}).pairs)
-end)
+local function member(args)
+    local u = V.uuid((args or {}).uuid)
+    if not u or not V.entity(u) then error("no character " .. tostring((args or {}).uuid), 0) end
+    return Sym.profile(u:lower())
+end
+
+for name, fn in pairs({
+    ["arena.symmetry"] = function(args) return Sym.check((args or {}).pairs) end,
+    ["arena.profile"] = member,
+    ["arena.reference_diff"] = function(args) return Sym.reference_diff(member(args), (args or {}).reference) end,
+}) do
+    RPC.register(name, function(args)
+        if not Ar.enabled() then error("arena ops need BG3AI_ARENA=1 in the game's environment", 0) end
+        if RPC.Ctx.side then error("arena ops are the harness's (no side)", 0) end
+        return fn(args)
+    end)
+end
 
 return Sym

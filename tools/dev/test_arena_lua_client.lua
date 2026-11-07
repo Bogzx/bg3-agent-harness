@@ -104,8 +104,12 @@ end
 function UI.dc() return nil end
 function UI.anyDC() return nil end
 function UI.pcall(f, ...) return pcall(f, ...) end
-UI.commands = {}
-function UI.command(_, name) UI.commands[#UI.commands + 1] = name return true end
+UI.commands, UI.params = {}, {}
+function UI.command(_, name, param)
+    UI.commands[#UI.commands + 1] = name
+    UI.params[#UI.commands] = param
+    return true
+end
 
 BG3AI = { UI = UI, Util = { loca = function(h) return h end } }
 dofile(LUA .. "/Shared/RPC.lua")
@@ -116,9 +120,17 @@ local function try(f, ...)
     local ok, v = pcall(f, ...)
     if ok then return v end
 end
+local function waitJob(kind, ms, fn) -- UIActions.lua's: a job whose check ticks
+    local job = BG3AI.RPC.start_job(kind, { timeout_ms = ms })
+    job.on_tick = function(j)
+        local status, result = fn(j)
+        if status then BG3AI.RPC.finish_job(j, status, result) end
+    end
+    return { job = job.id }
+end
 BG3AI.UIActions = { inner = { try = try, check = function(ok, err) if not ok then error(err, 0) end return ok end,
-    sig = function() return "" end, waitJob = function() return { job = 1 } end, dialogueSnapshot = function() end,
-    settleDialogue = function() end }, waitJob = function() return { job = 1 } end }
+    sig = function() return "" end, waitJob = waitJob, dialogueSnapshot = function() end,
+    settleDialogue = function() end }, waitJob = waitJob }
 dofile(LUA .. "/Client/UIActionsPrompts.lua")
 dofile(LUA .. "/Client/UISettings.lua")
 dofile(LUA .. "/Client/ArenaCamera.lua")
@@ -144,7 +156,7 @@ local failures, count = 0, 0
 local function test(name, fn)
     count = count + 1
     env = { BG3AI_ARENA = "1" }
-    pages, entities, UI.commands = { HotBar = { name = "HotBar" } }, {}, {}
+    pages, entities, UI.commands, UI.params = { HotBar = { name = "HotBar" } }, {}, {}, {}
     clock, RPC.jobs, RPC.sideInputAt = 1000, {}, {}
     channel({ teams = { A = { A1 }, B = { B1 } }, names = { A = { "Ana" }, B = { "Bo" } } })
     local ok, err = pcall(fn)
@@ -182,6 +194,206 @@ test("ui.react: the other side's prompt is 'not your reaction'; its own goes on"
     local a = rpc("ui.react", "{use=false}", "A")
     eq(a.ok, true, "A: " .. tostring(a.error))
     eq(UI.commands[1], "InterruptDontReactPlayerCommand", "A's answer")
+end)
+
+-- L5 reads (live.md 01:03:22): the popup's rows don't name a twin; the game's own InterruptActionState does.
+local function held(...)
+    local actions = {}
+    for _, o in ipairs({ ... }) do
+        actions[#actions + 1] = { Observer = { Uuid = { EntityUuid = o } },
+            Interrupt = { InterruptData = { Interrupt = "Interrupt_Counterspell" } } }
+    end
+    entities[#entities + 1] = { InterruptActionState = { SpellCastGuid = "g1", Actions = actions } }
+end
+local function nameless_prompt()
+    prompt("Ana")
+    pages.ReactionDecisionPopup.children[1].DataContext.Character.Name = nil
+end
+
+test("a twin's prompt with no name on its rows is the observer's side's, shown only to it", function()
+    nameless_prompt()
+    held(B1)
+    local a = rpc("ui.state", "{}", "A").result
+    eq(a.reaction.other_side, true, "A: the other side's")
+    eq(a.reaction.unowned, nil, "A: owned")
+    eq(a.reaction.options, nil, "A: no rows")
+    eq(a.reaction.prompt, nil, "A: no text")
+    local b = rpc("ui.state", "{}", "B").result
+    eq(b.reaction.other_side, nil, "B: its own")
+    eq(b.reaction.options[1].who, "Bo", "B: who, from the observer")
+    local h = rpc("ui.state", "{}").result
+    eq(h.reaction.owner, "B", "the harness reads the owner")
+    eq(h.reaction.unowned, nil, "not unowned")
+end)
+
+test("react: the observer's side answers, the other is refused", function()
+    nameless_prompt()
+    held(B1)
+    eq(rpc("ui.react", "{use=false}", "A").error, "not your reaction", "A")
+    eq(rpc("ui.react", "{use=false}", "B").ok, true, "B")
+    eq(UI.commands[1], "InterruptDontReactPlayerCommand", "B's answer")
+end)
+
+test("the observer outranks a row's name; observers on both sides fall back to the rows", function()
+    prompt("Ana")
+    held(B1)
+    eq(rpc("ui.react", "{use=false}", "A").error, "not your reaction", "the observer's, not the row's")
+    entities = {}
+    nameless_prompt()
+    held(A1, B1)
+    eq(rpc("ui.state", "{}").result.reaction.unowned, true, "both sides, no name: nobody's")
+end)
+
+test("held_reaction: the harness reads a hold with no popup; a side never does", function()
+    held(B1)
+    local h = rpc("ui.state", "{}").result.held_reaction
+    eq(h.side, "B", "side")
+    eq(h.interrupts[1], "Interrupt_Counterspell", "what")
+    assert(h.key:find("g1", 1, true), h.key)
+    eq(rpc("ui.state", "{}", "A").result.held_reaction, nil, "A")
+    eq(rpc("ui.state", "{}", "B").result.held_reaction, nil, "B")
+    entities = {}
+    eq(rpc("ui.state", "{}").result.held_reaction, nil, "nothing held")
+end)
+
+-- L5 reads (live.md 02:00:05): Cutting Words + Shield: use=true read done, nobody reacted, Confirm stayed grey.
+test("two interruptors: use=true hands the row to the bridge; only a row that reads chosen is accepted", function()
+    prompt("Bo", "Bo")
+    held(B1)
+    local r = rpc("ui.react", "{use=true,which=2}", "B")
+    eq(r.result.needs_click, 2, "the row")
+    eq(r.result.confirm, true, "and a confirm after")
+    eq(#UI.commands, 0, "nothing accepted")
+    local row = pages.ReactionDecisionPopup.children[2].children[1]
+    row.DataContext = { Decision = "Undecided" }
+    eq(rpc("ui.react", "{use=true,which=2}", "B").result.needs_click, 2, "Undecided isn't chosen")
+    -- live.md 02:42:47: the row ticked on screen and IsChecked nil, as here; Decision is what says it
+    row.DataContext.Decision = "Use"
+    eq(rpc("ui.state", "{}", "B").result.reaction.options[2].chosen, true, "ui.state shows it")
+    rpc("ui.react", "{use=true,which=2}", "B")
+    eq(UI.commands[1], "InterruptAcceptPlayerCommand", "accepted")
+    local bad = rpc("ui.react", "{use=true,which=9}", "B").error
+    assert(tostring(bad):find("no reaction option 9 (2 shown)", 1, true), bad)
+end)
+
+-- One tick of the newest job, as its side (RPC.lua tick_jobs); the job.
+local function tickJob()
+    local j = RPC.lastJob
+    RPC.with_side(j.side, j.on_tick, j)
+    return j
+end
+
+-- REVIEW-reactions F1: a job ticks outside the call, so the result of A's answer read B's prompt with no side.
+test("an answered prompt with the other side's next: the job's result has only that it's there", function()
+    prompt("Ana")
+    pages.ReactionDecisionPopup.DataContext.Data.InterruptEvents = { {}, {} }
+    local job = rpc("ui.react", "{use=false}", "A")
+    eq(job.ok, true, tostring(job.error))
+    pages.ReactionDecisionPopup = nil
+    prompt("Bo")
+    local r = tickJob()
+    eq(r.status, "done", "status")
+    eq(r.result.pending, 1, "pending")
+    eq(r.result.reaction.other_side, true, "other side")
+    eq(r.result.reaction.options, nil, "no rows")
+    eq(r.result.reaction.prompt, nil, "no text")
+end)
+
+test("the same with the side's own next: it reads its prompt", function()
+    prompt("Ana")
+    pages.ReactionDecisionPopup.DataContext.Data.InterruptEvents = { {}, {} }
+    rpc("ui.react", "{use=false}", "A")
+    pages.ReactionDecisionPopup.DataContext.Data.InterruptEvents = { {} }
+    local r = tickJob()
+    eq(r.result.reaction.options[1].who, "Ana", "its row")
+end)
+
+-- live.md 03:44:15 read 4b: chosen, then Do Not React: a roll that hit did no damage, nothing paid.
+test("Do Not React on a chosen row unchooses it first, and waits for that", function()
+    prompt("Ana")
+    local root = pages.ReactionDecisionPopup.children[1]
+    local row = root.children[1]
+    row.DataContext = { Decision = "Use" }
+    local job = rpc("ui.react", "{use=false}", "A")
+    eq(job.ok, true, tostring(job.error))
+    eq(UI.commands[1], "InterruptUndecidedCommand", "unchosen first")
+    eq(UI.params[1], root.DataContext, "by the interruptor")
+    eq(#UI.commands, 1, "no decline yet")
+    eq(tickJob().status, "running", "still chosen: waits")
+    eq(#UI.commands, 1, "still no decline")
+    row.DataContext.Decision = "Undecided"
+    tickJob()
+    eq(UI.commands[2], "InterruptDontReactPlayerCommand", "then the decline")
+    pages.ReactionDecisionPopup.DataContext.Data.InterruptEvents = {}
+    eq(tickJob().status, "done", "closed")
+    eq(#UI.commands, 2, "one decline")
+end)
+
+test("Do Not React on a chosen row: an event gone before the first tick is declined by nobody (U1)", function()
+    prompt("Ana")
+    local data = pages.ReactionDecisionPopup.DataContext.Data
+    data.InterruptEvents = { { id = "ana" }, { id = "bo" } }
+    pages.ReactionDecisionPopup.children[1].children[1].DataContext = { Decision = "Use" }
+    rpc("ui.react", "{use=false}", "A")
+    data.InterruptEvents = { { id = "bo" } } -- Ana's left with the unchoosing: Bo's prompt is up
+    pages.ReactionDecisionPopup.children[1].children[1].DataContext = { Decision = "Undecided" }
+    eq(tickJob().status, "done", "closed")
+    eq(#UI.commands, 1, "only the unchoosing: Bo's prompt isn't declined, nor Ana's stale event sent")
+end)
+
+test("Do Not React on a chosen row: the decline reads the event afresh (U1)", function()
+    prompt("Ana")
+    local data = pages.ReactionDecisionPopup.DataContext.Data
+    data.InterruptEvents = { { id = "old" } }
+    local row = pages.ReactionDecisionPopup.children[1].children[1]
+    row.DataContext = { Decision = "Use" }
+    rpc("ui.react", "{use=false}", "A")
+    local now = { id = "now" }
+    data.InterruptEvents = { now }
+    row.DataContext.Decision = "Undecided"
+    tickJob()
+    eq(UI.commands[2], "InterruptDontReactPlayerCommand", "the decline")
+    eq(UI.params[2], now, "today's event")
+end)
+
+test("Do Not React with nothing chosen: only the decline", function()
+    prompt("Ana")
+    pages.ReactionDecisionPopup.children[1].children[1].DataContext = { Decision = "Undecided" }
+    rpc("ui.react", "{use=false}", "A")
+    eq(UI.commands[1], "InterruptDontReactPlayerCommand", "decline")
+    eq(#UI.commands, 1, "alone")
+end)
+
+test("ui.react_spent: the observers' total, a side's own only; ui.react_probe hides the other side's prompt", function()
+    nameless_prompt()
+    held(B1)
+    local ent = { ActionResources = { Resources = { a = { { Amount = 1 } }, b = { { Amount = 2 }, { Amount = 3 } } } } }
+    local get = Ext.Entity.Get
+    Ext.Entity.Get = function(u) return u == B1 and ent or nil end
+    local m = rpc("ui.react_spent", "{}", "B").result
+    eq(m.total, 6, "summed")
+    eq(m.uuids[1], B1, "the observer")
+    eq(#rpc("ui.react_spent", "{}", "A").result.uuids, 0, "A gets nobody")
+    eq(rpc("ui.react_spent", '{uuids={"' .. B1 .. '"}}', "A").result.total, 0, "nor by asking for it")
+    ent.ActionResources.Resources.a[1].Amount = 0
+    eq(rpc("ui.react_spent", '{uuids={"' .. B1 .. '"}}', "B").result.total, 5, "after the spend")
+    Ext.Entity.Get = get
+    eq(rpc("ui.react_probe", "{}", "A").result.open, false, "A: no prompt")
+    eq(rpc("ui.react_probe", "{}", "B").result.open, true, "B: its own")
+    -- pQ N3: a watch runs while the game takes the popup down: it walks no rows, whoever asks
+    local rows_of = S.reactionRows
+    S.reactionRows = function() error("walked the rows on a watch") end
+    eq(rpc("ui.react_probe", "{watch=true}", "A").result.open, true, "a watch reads only that it shows")
+    S.reactionRows = rows_of
+end)
+
+test("the hold's key doesn't follow the order of the game's list", function()
+    held(B1)
+    entities[1].InterruptActionState.SpellCastGuid = "z"
+    held(B1)
+    local one = rpc("ui.state", "{}").result.held_reaction.key
+    entities[1], entities[2] = entities[2], entities[1]
+    eq(rpc("ui.state", "{}").result.held_reaction.key, one, "same key")
 end)
 
 test("a prompt naming both sides, or someone of neither, is nobody's", function()

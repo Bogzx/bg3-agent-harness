@@ -187,6 +187,54 @@ local function test_setup(title, fn)
     end)
 end
 
+-- A build's reference (website ops/logs/arena-4v4-builds.md G7): read after RestoreParty, before anyone is hostile.
+local function refJob(profiles)
+    local r, j = setup(arena())
+    eq(r.result and r.result.status, "running", "a job: " .. enc(r))
+    local base = {}
+    for _, f in ipairs(Ar.Symmetry.FIELDS) do base[f] = {} end
+    base.passives = { "DiscipleOfLife" }
+    j.mirror = { pairs = { { build = "fighter", reference = { profile = base } },
+        { build = "cleric", reference = { profile = base } }, {}, {} } }
+    local profile, check = Ar.Symmetry.profile, Ar.Symmetry.check
+    local read = {}
+    Ar.Symmetry.profile = function(u)
+        read[#read + 1] = { u, #named("RestoreParty"), #named("SetHostileAndEnterCombat") }
+        local p = {}
+        for k, v in pairs(base) do p[k] = v end
+        p.passives = profiles[u] or base.passives
+        return p
+    end
+    Ar.Symmetry.check = function() return { ok = true, problems = {} } end
+    local ok, err = pcall(run, j)
+    Ar.Symmetry.profile, Ar.Symmetry.check = profile, check
+    if not ok then error(err, 0) end
+    return j, read
+end
+
+test_setup("every twin that differs from its build's reference is named and setup fails before anyone is hostile",
+    function()
+        game()
+        local j = refJob({ [A1] = { "Other" }, [A2] = { "Another" } })
+        eq(j.status, "failed", "failed")
+        assert(j.error:find("pair 1", 1, true) and j.error:find("build fighter", 1, true)
+            and j.error:find("pair 2", 1, true) and j.error:find("Another", 1, true), j.error)
+        eq(#named("SetHostileAndEnterCombat"), 0, "nobody hostile")
+        eq(j.result.positions[A1] ~= nil and j.result.positions[B4] ~= nil, true, "where they stood, for the record")
+        eq(enc(j.result.reference[2].diffs[1].only_reference), enc({ "DiscipleOfLife" }), "the rows in the result")
+    end)
+
+test_setup("twins that are their builds: read after RestoreParty, the rows in the result, the match begins", function()
+    game()
+    local j, read = refJob({})
+    eq(j.status, "done", tostring(j.error))
+    eq(read[1][1], A1, "the A twin read")
+    eq(read[1][2], 1, "after RestoreParty")
+    eq(read[1][3], 0, "before the hostile call")
+    eq(enc({ j.result.reference[1].ok, j.result.reference[2].build, #j.result.reference }), enc({ true, "cleric", 2 }),
+        "pairs without a reference aren't listed")
+end)
+
 -- A mirror arena's pairs are checked again as the fight starts, statuses included (live check 13d: a twin on a
 -- surface read INSURFACE after setup, its pair not). The teams stand in for the twins: only the last step reads mirror.
 test_setup("a mirror arena whose pairs differ as the fight starts fails setup; the match doesn't begin", function()
@@ -508,6 +556,33 @@ test_setup("arena.setup refuses spawns 0.3 m or more apart in height, or offset 
         j.status = "interrupted"
     end)
 
+-- A site can be too narrow for a line of 4 at the default gap (S1's P5: exact landing overlaps 4.0 m, a 1.5 m line
+-- of 4 needs 4.5 m), so an arena may name its own; its limits stay the same.
+test_setup("arena.setup: location.line_gap stands the members that far apart; the fairness limits don't move",
+    function()
+        game()
+        local spawns = { A = { 0, 0, 0 }, B = { 0, 0, 10.5 } }
+        local _, j = setup(arena({ location = { spawns = spawns, line_gap = 1.25 } }))
+        eq(j and j.status, "running", "a job")
+        for _ = 1, 100 do
+            if #named("TeleportToPosition") >= 8 or j.status ~= "running" then break end
+            tick()
+        end
+        local xs = {}
+        for i, c in ipairs(named("TeleportToPosition")) do xs[i] = c[3] end
+        eq(enc(xs), enc({ -1.875, -0.625, 0.625, 1.875, -1.875, -0.625, 0.625, 1.875 }), "both lines at 1.25 m")
+        j.status = "interrupted"
+        calls = {}
+        local off = { A = { 0, 0, 0 }, B = { 0.5, 0, 10.5 } }
+        local r = enc(setup(arena({ location = { spawns = off, line_gap = 1.25 } })))
+        assert(r:find("must be the same within 0.1 m", 1, true), r)
+        eq(#calls, 0, "no game call")
+        for _, bad in ipairs({ 0, -1, "1.25" }) do
+            r = enc(setup(arena({ location = { spawns = spawns, line_gap = bad } })))
+            assert(r:find("location.line_gap must be a number above 0", 1, true), r)
+        end
+    end)
+
 test_setup("arena.setup: a member not at the arena's level after joining fails setup with every level; none begun",
     function()
     game()
@@ -521,6 +596,9 @@ test_setup("arena.setup: a member not at the arena's level after joining fails s
     eq(j.status, "failed", "level off")
     eq(j.error, "levels after setup differ from the arena's level 4: Bix 1, Bree 1", "error")
     eq(enc(j.result.members[B3].level), enc({ 4, 1 }), "Bix before/after kept in the result")
+    local stood = 0
+    for _ in pairs(j.result.positions) do stood = stood + 1 end
+    eq(stood, 8, "a failed setup says where its members stood")
     eq(Ar.state, nil, "no match begun")
     game()
     for _, bad in ipairs({ "nil", "0", "2.5", '"4"', "13" }) do

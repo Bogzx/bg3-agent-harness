@@ -5,7 +5,7 @@
  "tier": "L2",
  "level": 2,
  "game_build": "25605617",
- "draft": "no reference profiles yet (plan S3: one respecced hireling per build at this level); the Cleric and Wizard hireling templates are not read yet, and the kit's subclass, improvement and prepared-spell parts are not in arena.mirror_kit yet (website repo ops/logs/arena-4v4-builds.md G5, G10) (2026-11-04)",
+ "draft": "no reference profiles yet (plan S3: one respecced hireling per build at this level); a Cleric copy's book is its whole class list and nothing limits it to the build's prepared spells (website repo ops/logs/arena-4v4-S1-sheet.md P3, ops/logs/arena-4v4-tests.md) (2026-11-06)",
  "builds": [
   {
    "id": "fighter",
@@ -148,7 +148,7 @@
        "Projectile_MagicMissile",
        "Shout_Shield_Wizard",
        "Target_MageArmor",
-       "Projectile_ChromaticOrb",
+       "Projectile_RayOfSickness",
        "Zone_BurningHands",
        "Projectile_WitchBolt"
       ]
@@ -169,12 +169,12 @@
      "Projectile_MagicMissile",
      "Shout_Shield_Wizard",
      "Target_MageArmor",
-     "Projectile_ChromaticOrb",
+     "Projectile_RayOfSickness",
      "Zone_BurningHands"
     ]
    },
    "gear": [
-    "WPN_Quarterstaff",
+    "WPN_Dagger",
     "ARM_Robe_Body",
     "ARM_Shoes",
     "OBJ_Potion_Healing",

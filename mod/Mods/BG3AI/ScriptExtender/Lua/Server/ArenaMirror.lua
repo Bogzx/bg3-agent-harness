@@ -15,7 +15,8 @@
 --   -> {twins = [u1, u2] (in spot order), order = [spot indices in creation order], reads}
 -- arena.mirror_kit {twins = [u1, u2], race, kit} (a job): the same level-1 choices on both twins, in the same order,
 --   by the game's own calls, once both twins read ready (READY_WAIT_MS: race set, items readable, the containers the
---   calls write present; a copy fresh from CreateAt has none of it in its spawn tick, live check 13b).
+--   calls write present; a copy fresh from CreateAt has none of it in its spawn tick, live check 13b) and SETTLE_MS has
+--   passed. A finished kit fails, naming it, when a twin holds a passive twice.
 --   kit (make_arena_save.py builds it from the spec's kit and the game data):
 --     race = {race, boosts, passives, spells}: the race's level-1 fixed parts, its parent race's rows first (the game
 --       applies none to a spawned copy; its Movement boost is the copy's only Movement resource: live check 12 step
@@ -24,14 +25,28 @@
 --     player = {passives}: what every player character has and a copy lacks (DeathSavingThrows, whose own boost is
 --       DownedStatus(DOWNED): Lae'zel's, live check 12 step 10)
 --     ability_bonus = {+2 ability, +1 ability} or nil (SelectAbilityBonus)
+--     grants = {boosts, passives, passives_removed, spells}: what a subclass's rows up to the level and the
+--       improvements (an ASI's Ability boosts, a feat's own parts) give; the game gives a copy only the class rows'
 --     choices = [{kind = skills|expertise|passives|spells, list, n, exact, ids}]: one per Select* selector;
 --       every id must be in the game's list (Ext.StaticData SkillList / PassiveList / SpellList), #ids == n when
 --       exact, else 1..n (a wizard's prepared spells out of its spellbook selector)
 --     items = [{item, root, count, equip}]: TemplateAddTo(root, twin, count); the item shows in an inventory a tick
 --       later (live check 12 step 7), then Equip(twin, item, 1, 0, 1) when equip (Equip takes 5 arguments)
+--     subclass (uuid): written to the copy's one Classes row and replicated (S1 P2: the game grants nothing for it, the
+--       kit's grants do; it reads back on both contexts and held 18 min). A read-back that differs fails the job.
+--     spell_abilities = {spell id: ability}: AddSpell takes no ability, so a kit's spell reads None in the book (S4,
+--       live 2026-11-06: a Ranger's Cure Wounds) where a real character's row has the ability its progression row gave.
+--       A finished kit writes them, a container spell's variants by their originator, and every SpellSet row (Jump,
+--       Dash...) to the stats' ability: the game gives a copy's SpellSet rows its class's, a real player's its stats'.
+--     unlocks = {spell id: ability}: a kit's spell with upcast rows goes in by Sym.unlock_boost, not AddSpell: AddSpell
+--       gives the one id it names, and an AddSpell'd X_2 reads in `prepared` where a character's holds X only (S4, live
+--       2026-11-07). The spell's id stays in its list above; spell_abilities names the rows to expect.
+--     prepared (spell ids): no game call limits a copy to them (S1 P3: a Cleric copy's book is its class list, all
+--       AlwaysPrepared, and nothing removes a spell). The job's result names it as not_applied; a build's reference
+--       compare then shows what differs. A kit key nobody reads is refused, so a part can't be dropped without a word.
 --   Refused at the call, nothing applied, when a twin is missing or a choice fails its list; the job fails, nothing
 --   applied, when a ready twin is not of `race` or already holds items, or a twin isn't ready in READY_WAIT_MS.
---   -> job result {twins, calls}
+--   -> job result {twins, calls, not_applied = [kit keys]}
 
 BG3AI = BG3AI or {}
 local RPC = BG3AI.RPC
@@ -53,11 +68,20 @@ M.NAME_WAIT_MS = 5000
 -- A copy fresh from CreateAt reads its components a moment later (live check 13b: Race empty in the spawn tick, set
 -- "a moment later"; names by the next tick, 10 ms). Not measured beyond that: the same later-tick bound as items.
 M.READY_WAIT_MS = 5000
+-- The game rebuilds a copy's passives some time after MakePlayer, and a passive AddPassive already put there comes back
+-- on top of itself: arena.setup's kit on the first tick read Script x5, Feat, Stats x7, Script x5 (builds-1 load 1),
+-- Fighter AC 17 from Defense twice; the same kit 1.0 s after the spawn read each once, AC 16 (builds-1 0a). No read
+-- shows the rebuild's tick or what marks its end, so this is a wait: Setup.SETTLE_MS's bound, over the 1.0 s measured.
+M.SETTLE_MS = 2000
 M.NULL = "00000000-0000-0000-0000-000000000000"
 -- kind -> the game's resource and its list field (bg3se GuidResources.h: SkillList.Skills Array<SkillId>,
 -- PassiveList.Passives Array<FixedString>, SpellList.Spells HashSet<FixedString>: set = asked per id, never walked)
 M.LISTS = { skills = { "SkillList", "Skills" }, expertise = { "SkillList", "Skills" },
     passives = { "PassiveList", "Passives" }, spells = { "SpellList", "Spells", set = true } }
+
+M.KIT_KEYS = { race = true, player = true, ability_bonus = true, grants = true, choices = true, items = true,
+    subclass = true, prepared = true, spell_abilities = true, unlocks = true }
+M.NOT_APPLIED = { "prepared" } -- kit keys with no game call (S1 P3)
 
 local function osi(fn, ...) return V.osi(fn, ...) end
 local function now_ms() return Ext.Utils.MonotonicTime() end
@@ -194,15 +218,43 @@ local function checkChoice(c, i)
     end
 end
 
+-- The copy's subclass field (S1 P2), read back; recorded with the calls.
+local function setSubclass(calls, u, id)
+    local e = V.entity(u)
+    local rows = U.items(e.Classes.Classes)
+    if #rows ~= 1 then error(("%s has %d class rows, a copy has one"):format(u, #rows), 0) end
+    e.Classes.Classes[1].SubClassUUID = id
+    e:Replicate("Classes")
+    local now = tostring(e.Classes.Classes[1].SubClassUUID)
+    if now ~= id then error(("%s's subclass reads %s after the write of %s"):format(u, now, id), 0) end
+    calls[#calls + 1] = { "SubClassUUID", u, id }
+end
+
+-- One of the kit's spells into a twin's book.
+local function addSpell(calls, u, kit, id)
+    local ability = (kit.unlocks or {})[id]
+    if ability then
+        call(calls, "AddBoosts", { u, Ar.Symmetry.unlock_boost(id, ability), M.SOURCE, u })
+    else
+        call(calls, "AddSpell", { u, id, 0, 1 })
+    end
+end
+
 -- The non-item calls for one twin, in the kit's order.
 local function applyChoices(calls, u, kit)
+    if kit.subclass then setSubclass(calls, u, kit.subclass) end
     local race = kit.race or {}
     if race.boosts and race.boosts ~= "" then call(calls, "AddBoosts", { u, race.boosts, M.SOURCE, u }) end
     for _, p in ipairs(race.passives or {}) do call(calls, "AddPassive", { u, p }) end
-    for _, id in ipairs(race.spells or {}) do call(calls, "AddSpell", { u, id, 0, 1 }) end
+    for _, id in ipairs(race.spells or {}) do addSpell(calls, u, kit, id) end
     for _, p in ipairs((kit.player or {}).passives or {}) do call(calls, "AddPassive", { u, p }) end
     local ab = kit.ability_bonus
     if ab then call(calls, "AddBoosts", { u, ("Ability(%s,2);Ability(%s,1)"):format(ab[1], ab[2]), M.SOURCE, u }) end
+    local g = kit.grants or {}
+    if g.boosts and g.boosts ~= "" then call(calls, "AddBoosts", { u, g.boosts, M.SOURCE, u }) end
+    for _, p in ipairs(g.passives or {}) do call(calls, "AddPassive", { u, p }) end
+    for _, p in ipairs(g.passives_removed or {}) do call(calls, "RemovePassive", { u, p }) end
+    for _, id in ipairs(g.spells or {}) do addSpell(calls, u, kit, id) end
     for _, c in ipairs(kit.choices or {}) do
         if c.kind == "skills" or c.kind == "expertise" then
             local fmt = c.kind == "skills" and "ProficiencyBonus(Skill,%s)" or "ExpertiseBonus(%s)"
@@ -212,14 +264,84 @@ local function applyChoices(calls, u, kit)
         elseif c.kind == "passives" then
             for _, id in ipairs(c.ids) do call(calls, "AddPassive", { u, id }) end
         else
-            for _, id in ipairs(c.ids) do call(calls, "AddSpell", { u, id, 0, 1 }) end
+            for _, id in ipairs(c.ids) do addSpell(calls, u, kit, id) end
         end
+    end
+end
+
+-- A book row's ability (spell_abilities by id, by originator, then by the container of either), or nil when the kit
+-- says nothing of it. A variant's originator is itself, not its container (Guard.unprepared_id), and the kit names the
+-- container: Bestow Curse's 9 variants, Ensnaring Strike's 2.
+local function rowAbility(e, s, abilities)
+    local id = s.Id
+    if tostring(id.SourceType) == "SpellSet" then return tostring(e.Stats.SpellCastingAbility) end
+    local proto, origin = tostring(id.Prototype), tostring(id.OriginatorPrototype)
+    local box = BG3AI.Guard.container_of(origin) or BG3AI.Guard.container_of(proto)
+    return abilities[proto] or abilities[origin] or (box and abilities[box])
+end
+
+-- The book's rows set to their abilities, read back and replicated. -> the kit's spells not in the book yet.
+local function setAbilities(calls, u, kit)
+    local e, abilities, late, wrote = V.entity(u), kit.spell_abilities or {}, {}, 0
+    local seen = {}
+    for _, s in ipairs(U.items(e.SpellBook.Spells)) do
+        seen[tostring(s.Id.Prototype)], seen[tostring(s.Id.OriginatorPrototype)] = true, true
+        local ab = rowAbility(e, s, abilities)
+        if ab and tostring(s.SpellCastingAbility) ~= ab then
+            s.SpellCastingAbility = ab
+            local now = tostring(s.SpellCastingAbility)
+            if now ~= ab then
+                error(("%s's %s reads %s after the write of %s"):format(u, tostring(s.Id.Prototype), now, ab), 0)
+            end
+            wrote = wrote + 1
+        end
+    end
+    for id in pairs(abilities) do
+        if not seen[id] then late[#late + 1] = id end
+    end
+    if wrote > 0 then
+        e:Replicate("SpellBook")
+        calls[#calls + 1] = { "SpellCastingAbility", u, wrote }
+    end
+    table.sort(late)
+    return late
+end
+
+-- Passives a twin holds more than once (see SETTLE_MS), sorted.
+local function doubled(u)
+    local n, out = {}, {}
+    for _, pe in ipairs(U.items(V.entity(u).PassiveContainer.Passives)) do
+        local id = tostring(pe.Passive.PassiveId)
+        n[id] = (n[id] or 0) + 1
+        if n[id] == 2 then out[#out + 1] = id end
+    end
+    table.sort(out)
+    return out
+end
+
+-- The last of a kit, once the items are in: the rows' abilities, then the passives' count. Waits (ITEM_WAIT_MS) for a
+-- spell the book doesn't show yet: AddSpell lands a tick later (S1 P3).
+local function finish(job)
+    job.spellsBy = job.spellsBy or now_ms() + M.ITEM_WAIT_MS
+    local late, twice = {}, {}
+    for _, u in ipairs(job.twins) do
+        for _, id in ipairs(setAbilities(job.calls, u, job.kit)) do late[#late + 1] = u .. ": " .. id end
+        for _, id in ipairs(doubled(u)) do twice[#twice + 1] = u .. ": " .. id end
+    end
+    local partial = { twins = job.twins, calls = job.calls }
+    if #twice > 0 then
+        RPC.finish_job(job, "failed", partial, "passives held twice: " .. table.concat(twice, "; "))
+    elseif #late == 0 then
+        RPC.finish_job(job, "done", { twins = job.twins, calls = job.calls, not_applied = job.not_applied })
+    elseif now_ms() >= job.spellsBy then
+        RPC.finish_job(job, "failed", partial,
+            ("spells not in the book %d ms after the kit: %s"):format(M.ITEM_WAIT_MS, table.concat(late, "; ")))
     end
 end
 
 -- What keeps a twin from being kitted yet ("" when it is ready), or error when a ready twin can't be kitted.
 local KIT_COMPONENTS = { "BoostsContainer", "PassiveContainer", "SpellBook" } -- AddBoosts, AddPassive, AddSpell
-local function notReady(u, race)
+local function notReady(u, race, kit)
     local e = V.entity(u)
     if not e then return "no entity" end
     local r = read(function() return tostring(e.Race.Race) end)
@@ -228,6 +350,7 @@ local function notReady(u, race)
     for _, c in ipairs(KIT_COMPONENTS) do
         if not read(function() return e[c] ~= nil end) then return "no " .. c end
     end
+    if kit.subclass and not read(function() return e.Classes.Classes ~= nil end) then return "no Classes" end
     local p = Ar.Symmetry.profile(u)
     if not (p.equipment and p.inventory) then return "items don't read" end
     if next(p.equipment) or #p.inventory > 0 then error(u .. " already holds items: the kit starts empty", 0) end
@@ -238,7 +361,7 @@ end
 local function start(job)
     local why = {}
     for _, u in ipairs(job.twins) do
-        local ok, w = pcall(notReady, u, job.race)
+        local ok, w = pcall(notReady, u, job.race, job.kit)
         if not ok then
             RPC.finish_job(job, "failed", { twins = job.twins, calls = job.calls }, tostring(w))
             return
@@ -252,6 +375,7 @@ local function start(job)
         end
         return
     end
+    if now_ms() < job.settleAt then return end
     for _, u in ipairs(job.twins) do applyChoices(job.calls, u, job.kit) end
     job.ready = true
 end
@@ -260,10 +384,7 @@ end
 local function tick(job)
     if not job.ready then return start(job) end
     local it = job.kit.items[job.item]
-    if not it then
-        RPC.finish_job(job, "done", { twins = job.twins, calls = job.calls })
-        return
-    end
+    if not it then return finish(job) end
     if not job.added then
         for _, u in ipairs(job.twins) do call(job.calls, "TemplateAddTo", { it.root, u, it.count, 0 }) end
         job.added, job.waitUntil = true, now_ms() + M.ITEM_WAIT_MS
@@ -293,9 +414,31 @@ function M.check_kit_race(kit, race, what)
     end
 end
 
+-- The kit's grants, checked at the call (nothing applied on a wrong shape).
+local function checkGrants(g)
+    if g == nil then return end
+    if type(g) ~= "table" or (g.boosts ~= nil and type(g.boosts) ~= "string") then
+        error("the kit's grants must be {boosts = text, passives, passives_removed, spells}", 0)
+    end
+    for _, k in ipairs({ "passives", "passives_removed", "spells" }) do
+        if g[k] ~= nil and type(g[k]) ~= "table" then error("the kit's grants." .. k .. " must list ids", 0) end
+    end
+end
+
 function M.kit(args)
     local twins, kit = two(args.twins, "twins"), args.kit
     if type(kit) ~= "table" then error("arena.mirror_kit needs the kit", 0) end
+    for k in pairs(kit) do
+        if not M.KIT_KEYS[k] then error("the kit has a part nothing applies: " .. tostring(k), 0) end
+    end
+    checkGrants(kit.grants)
+    if kit.subclass ~= nil and type(kit.subclass) ~= "string" then error("the kit's subclass must be its uuid", 0) end
+    if kit.spell_abilities ~= nil and type(kit.spell_abilities) ~= "table" then
+        error("the kit's spell_abilities must map spell ids to abilities", 0)
+    end
+    if kit.unlocks ~= nil and type(kit.unlocks) ~= "table" then
+        error("the kit's unlocks must map spell ids to abilities", 0)
+    end
     for i, u in ipairs(twins) do
         u = V.uuid(u)
         if not (u and V.entity(u)) then error("no twin " .. tostring(args.twins[i]), 0) end
@@ -310,11 +453,14 @@ function M.kit(args)
             error("item " .. i .. " needs root and count", 0)
         end
     end
-    local calls = {}
+    local calls, notApplied = {}, {}
+    for _, k in ipairs(M.NOT_APPLIED) do
+        if kit[k] ~= nil then notApplied[#notApplied + 1] = k end
+    end
     kit.items = kit.items or {}
     local job = RPC.start_job("arena.mirror_kit", { timeout_ms = M.TIMEOUT_MS, on_tick = tick, twins = twins,
         race = args.race, kit = kit, calls = calls, item = 1, added = false, ready = false,
-        readyBy = now_ms() + M.READY_WAIT_MS })
+        readyBy = now_ms() + M.READY_WAIT_MS, settleAt = now_ms() + M.SETTLE_MS, not_applied = notApplied })
     job.partial = { twins = twins, calls = calls }
     return { job = job.id, status = job.status }
 end

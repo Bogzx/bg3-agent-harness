@@ -70,7 +70,10 @@ def test_every_arena_file_is_valid_and_the_placeholder_is_a_draft():
         "arena-v0-seed3",
         "arena-v0.1",
         "arena-v0",
+        "builds-l12-4v4-v1",
         "builds-l2-4v4-v1",
+        "builds-l5-4v4-team2-v1",
+        "builds-l5-4v4-v1",
         "crash-companions-v1",
         "crash-mirror-v1",
         "draft_open_field",
@@ -174,19 +177,77 @@ def test_the_mirror_arena_names_four_twin_pairs_and_waits_for_its_live_check():
     assert "NOT READY FOR RATED MATCHES" in a["about"]
 
 
-def test_the_builds_arena_is_a_4v4_red_blue_draft_from_the_build_file_with_a_race_per_pair():
+def test_the_builds_arena_is_a_rated_4v4_red_blue_from_the_build_file_with_a_race_per_pair():
     a = arena.load_named("builds-l2-4v4-v1")
     pairs = a["mirror"]["pairs"]
     assert [p["build"] for p in pairs] == ["fighter", "rogue", "barbarian", "ranger"]
+    assert a["turn_cap_s"] == 90  # the cap all paid arena play ran at, not its base's 60
     assert len({p["race"] for p in pairs}) == 4 and len({p["template"] for p in pairs}) == 4  # A1: a race per build
     assert all(p["kit"]["race"]["race"] == p["race"] for p in pairs)
+    assert "draft" not in a and all(p["reference"]["profile"] for p in pairs)  # S3's four references
     names = arena.team_names(a)
     assert all(n.startswith("Red ") for n in names["A"]) and all(n.startswith("Blue ") for n in names["B"])
     assert [n.split(" ", 1)[1] for n in names["A"]] == [n.split(" ", 1)[1] for n in names["B"]]
-    assert a["location"]["spawns"] == {"A": None, "B": None} and "TODO" in a["draft"]
+    # S1's P5 cells: a 1.5 m line of 4 doesn't fit the ground that lands exactly, a 1.25 m line does
+    loc = a["location"]
+    assert loc["line_gap"] == 1.25
+    assert loc["spawns"] == {"A": [212.875, 10.98, 288.0], "B": [212.875, 10.98, 296.0]}
+    assert arena.check_geometry(loc["spawns"], len(pairs), loc["line_gap"]) == []
     assert {k: a[k] for k in ("save", "seed", "karmic")} == {
         k: arena.load_named("crash-mirror-v1")[k] for k in ("save", "seed", "karmic")
     }
+
+
+def test_the_builds_arena_accepts_only_each_builds_own_weapon_action_dc_row():
+    for p in arena.load_named("builds-l2-4v4-v1")["mirror"]["pairs"]:
+        ref = p["reference"]
+        dc = ref["profile"]["derived"]["weapon_action_dc"]
+        assert [(a["field"], a["only_twin"], a["only_reference"]) for a in ref["accepted"]] == [
+            ("derived", ["weapon_action_dc=8"], [f"weapon_action_dc={dc}"])
+        ]
+        assert "D148" in ref["accepted"][0]["why"]
+
+
+def test_a_kits_unlocks_need_a_reference_too():
+    a = copy.deepcopy(raw("arena-v0.1"))
+    a["mirror"]["pairs"][0]["kit"]["unlocks"] = {"Target_Bane": "Charisma"}
+    assert arena.validate(a, "arena-v0.1") == [
+        "mirror.pairs[0]: a kit with unlocks has no reference (only a draft may lack one)"
+    ]
+
+
+def test_a_kit_part_only_a_reference_checks_needs_one_whatever_build_says():
+    a = copy.deepcopy(raw("arena-v0.1"))
+    assert arena.validate(a, "arena-v0.1") == []
+    a["mirror"]["pairs"][0]["kit"]["prepared"] = ["Target_Bless"]
+    a["mirror"]["pairs"][0]["kit"]["subclass"] = "life"
+    assert arena.validate(a, "arena-v0.1") == [
+        "mirror.pairs[0]: a kit with subclass, prepared has no reference (only a draft may lack one)"
+    ]
+    a["mirror"]["pairs"][0]["reference"] = {"profile": {}}
+    assert arena.validate(a, "arena-v0.1") == []
+    del a["mirror"]["pairs"][0]["reference"]
+    a["draft"] = "a kit in progress"
+    assert arena.validate(a, "arena-v0.1") == []
+
+
+def test_location_line_gap_is_optional_checked_and_used_by_the_geometry():
+    with_gap = _with(location={**FAIR, "line_gap": 1.25})
+    jsonschema.validate(with_gap, ARENA_SCHEMA)
+    assert arena.validate(with_gap, READY["name"]) == []
+    for bad in (0, -1, "1.25", True):
+        got = arena.validate(_with(location={**FAIR, "line_gap": bad}), READY["name"])
+        assert got == ["location.line_gap must be a number above 0 (metres)"]
+    assert arena.validate(_with(location={**FAIR, "gap": 1.25}), READY["name"]) == [
+        "location must be {level, spawns, line_gap?}"
+    ]
+    # the cross rule scales with the line: this offset fails on a long line and passes on a short one
+    spawns = {"A": [0.0, 0.0, 0.0], "B": [0.5, 0.0, 8.0]}
+    n = 4
+    assert arena.check_geometry(spawns, n, 0.25) == []
+    assert "must be the same within" in arena.check_geometry(spawns, n, 3.0)[0]
+    far = _with(location={"level": FAIR["level"], "spawns": spawns, "line_gap": 3.0})
+    assert any("must be the same within" in e for e in arena.validate(far, READY["name"]))
 
 
 def test_a_draft_may_leave_both_spawns_todo_but_not_one():

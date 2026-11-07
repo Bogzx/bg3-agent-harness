@@ -1,10 +1,10 @@
--- Progression, part 2 of 3 (Progression.lua loads the parts in order; split for the 1000-line cap):
+-- Progression, part 2 of 4 (Progression.lua loads the parts in order; split for the 1000-line cap):
 -- the step runner, new game and character creation (options, apply stages, name).
 local P = BG3AI.Progression
 local RPC = BG3AI.RPC
 local UI = BG3AI.UI
 local I = P.inner
-local widgetDC, spellSelectors, set, list, pressFor = I.widgetDC, I.spellSelectors, I.set, I.list, I.pressFor
+local widgetDC, spellSelectors, set, list = I.widgetDC, I.spellSelectors, I.set, I.list
 local str, label, skillGroups, same, selectTab = I.str, I.label, I.skillGroups, I.same, I.selectTab
 local abilityName, skillsView, visibleWidget = I.abilityName, I.skillsView, I.visibleWidget
 local tabStage, pages, validity, passivesView, norm = I.tabStage, I.pages, I.validity, I.passivesView, I.norm
@@ -199,7 +199,7 @@ local function abilitiesView(dc)
             local n = abilityOf(it)
             opts[#opts + 1] = n
             local p = UI.props(it)
-            if p.IsSelected == true or p.Selected == true or p.IsChecked == true then chosen = n end
+            if (tonumber(p.Improvement) or 0) ~= 0 then chosen = n end -- CharacterRespec.xaml: 0 hides the mark
         end
         bonus[#bonus + 1] = { bonus = UI.prop(col, "AbilityBonus"), picked = chosen, options = opts }
     end
@@ -371,17 +371,45 @@ local function wantList(v)
     return v
 end
 
--- Skills: toggle each wanted skill on (searching class, race, expertise and feat groups in that order).
-local function skillsStage(getDC, ctx, wanted)
+-- Skills: toggle each wanted skill on (searching class, race, expertise and feat groups in that order; `only` names
+-- one group: expertise's skills are proficient ones, so the class group lists them too and would stop the search).
+-- moves (a plan that is the group's whole pick list, on a page that opens with someone's picks in it): first turn off
+-- the group's own picks the plan doesn't name, since a full group ignores ToggleSkill (live 2026-11-06: a hireling's
+-- Rogue kept every pick, no error). Selected with Enabled false is a pick of another source (background, race).
+local function skillsStage(getDC, ctx, wanted, only, moves)
+    local cleared = false
     return function()
         local dc = getDC()
         local want = wantList(wanted)
+        if only and not want then return "next", 0 end
         local groups = skillGroups(dc)
+        if moves and not cleared then
+            cleared = true
+            for _, g in ipairs(groups) do
+                if g.key == only then
+                    local keep = {}
+                    for _, name in ipairs(want) do
+                        local item = pick(g.skills, name)
+                        if item then keep[label(item)] = true end
+                    end
+                    for _, it in ipairs(list(g.skills)) do
+                        if UI.prop(it, "Selected") == true and UI.prop(it, "Enabled") ~= false and not keep[label(it)] then
+                            local ok, err = UI.command(dc, "ToggleSkill", it)
+                            if not ok then
+                                ctx.result.problems[#ctx.result.problems + 1] = "skill " .. tostring(label(it)) .. " off: "
+                                    .. tostring(err)
+                            end
+                        end
+                    end
+                end
+            end
+            return "wait", ctx.fast and P.CC_SETTLE_MS or 300
+        end
         if want then
             for _, name in ipairs(want) do
                 local done = false
                 for _, g in ipairs(groups) do
-                    local item = pick(g.skills, name)
+                    local item = (only == nil or g.key == only) and pick(g.skills, name) or nil
                     if item then
                         if UI.prop(item, "Selected") ~= true then
                             local ok, err = UI.command(dc, "ToggleSkill", item)
@@ -430,11 +458,29 @@ local function missingPick(ctx, msg)
     ctx.missing[#ctx.missing + 1] = msg
 end
 
-local function passivesStage(getDC, ctx, wanted, defaults)
+local function passivesStage(getDC, ctx, wanted, defaults, moves)
+    local cleared = false
     return function()
         local dc = getDC()
         local want = wantList(wanted)
         local found = {}
+        if moves and want and not cleared then -- as skillsStage's moves: a full selector ignores the toggle
+            cleared = true
+            for _, sel in ipairs(passiveSelectors(dc)) do
+                P.namePassives(sel)
+                local items, keep, mine = UI.prop(sel, "Passives"), {}, false
+                for _, name in ipairs(want) do
+                    local item = pick(items, name)
+                    if item then keep[label(item)], mine = true, true end
+                end
+                for _, it in ipairs(mine and list(items) or {}) do
+                    if passiveOn(it) and UI.prop(it, "Enabled") ~= false and not keep[label(it)] then
+                        UI.command(dc, "TogglePassive", it)
+                    end
+                end
+            end
+            return "wait", ctx.fast and P.CC_SETTLE_MS or 300
+        end
         for _, sel in ipairs(passiveSelectors(dc)) do
             P.namePassives(sel)
             local items = UI.prop(sel, "Passives")
@@ -515,12 +561,69 @@ function P.findSpell(dc, name, cantrips)
     return nil, nil, offered and "already known" or "not offered"
 end
 
-local function spellsStage(widgetName, getDC, ctx, wantSpells, wantCantrips)
+-- The selector holding `name` as a pick: sel entry, its Additions item; nil when no selector does. A pick taken off
+-- leaves its slot in Additions with Spell nil (live L5 launch 2 again), so an empty slot holds nothing, and it loses
+-- its made-up name here, or the next spell put in that slot would read as the hireling's own pick.
+function P.findPick(dc, name, cantrips)
+    for _, s in ipairs(spellSelectors(dc)) do
+        if cantrips == nil or (UI.prop(s.sel, "IsCantrips") == true) == cantrips then
+            P.nameSpells(s.sel)
+            local item = pick(UI.prop(s.sel, "Additions"), name)
+            if item and UI.prop(item, "Spell") ~= nil then return s, item end
+            if item then P.vmNames[tostring(item)] = nil end
+        end
+    end
+    return nil
+end
+
+-- A respec's page opens with the hireling's own picks in its selectors, and a full selector takes no click. When the
+-- plan names a kind (spells, cantrips) it is that kind's whole pick list, so what else a selector holds goes first:
+-- { name, cantrips, remove = true } in needs_clicks, ahead of the adds. A hireling's picks are other VMs than
+-- Available's, so they read no name (live L5 launch 2), and two can share a level and school, so which is which
+-- can't be told; but Available's Selected says what's held. When that isn't all the plan's, every unnamed pick goes
+-- under a made-up name, and the plan's go on by name in the next pass.
+local function ownPicks(dc, wantSpells, wantCantrips)
+    local out = {}
+    for _, s in ipairs(spellSelectors(dc)) do
+        local cantrips = UI.prop(s.sel, "IsCantrips") == true
+        local want = wantSpells
+        if cantrips then want = wantCantrips end
+        want = wantList(want)
+        if want and s.source ~= "FeatDetails" then
+            P.nameSpells(s.sel)
+            local keep, planned, stray = {}, {}, false
+            for _, n in ipairs(want) do
+                local item = pick(UI.prop(s.sel, "Additions"), n)
+                if item then keep[tostring(item)] = true end
+                local offered = pick(UI.prop(s.sel, "Available"), n)
+                if offered then planned[tostring(offered)] = true end
+            end
+            for _, it in ipairs(list(UI.prop(s.sel, "Available"))) do
+                local held = UI.prop(it, "Selected") == true or UI.prop(it, "NotAvailable") == true
+                stray = stray or (held and not planned[tostring(it)])
+            end
+            for _, it in ipairs(list(UI.prop(s.sel, "Additions"))) do
+                if UI.prop(it, "Spell") ~= nil and not keep[tostring(it)] then
+                    local n = label(it)
+                    if not n and stray then
+                        P.ownPicks = (P.ownPicks or 0) + 1
+                        n = "own pick " .. P.ownPicks
+                        P.vmNames[tostring(it)] = n
+                    end
+                    if n then out[#out + 1] = { name = n, cantrips = cantrips, remove = true } end
+                end
+            end
+        end
+    end
+    return out
+end
+
+local function spellsStage(widgetName, getDC, ctx, wantSpells, wantCantrips, moves)
     return function()
         local dc = getDC()
         if not dc then return "fail", "page closed" end
         if #spellSelectors(dc) == 0 then return "next", 0 end
-        local needs = {}
+        local needs = moves and ownPicks(dc, wantSpells, wantCantrips) or {}
         local function queue(names, cantrips)
             for _, n in ipairs(wantList(names) or {}) do
                 local s, item, why = P.findSpell(dc, n, cantrips)
@@ -546,7 +649,8 @@ local function spellsReport(getDC, ctx)
             if s.complete == false and s.open > 0 then
                 local waiting = 0
                 for _, nd in ipairs(ctx.result.needs_clicks or {}) do
-                    if nd.cantrips == nil or nd.cantrips == s.cantrips then waiting = waiting + 1 end
+                    local kind = nd.cantrips == nil or nd.cantrips == s.cantrips
+                    if kind and not nd.remove then waiting = waiting + 1 end
                 end
                 if waiting < s.open then
                     missingPick(ctx, "spell choice '" .. s.title .. "' needs "
@@ -687,93 +791,8 @@ end)
 ------------------------------------------------------------------------
 -- ui.cc_apply {plan = {origin?, race?, subrace?, class?, subclass?, deity?, background?,
 --               abilities? = "recommended" | {Str=,Dex=,Con=,Int=,Wis=,Cha=}, bonus? = {"+2 ability","+1 ability"},
---               skills?, cantrips?, spells?, passives?, name?}, finish? = true}
+--               skills?, expertise?, cantrips?, spells?, passives?, name?}, finish? = true}
 ------------------------------------------------------------------------
-
-local function abilitiesStage(ctx, plan)
-    local state = { reset = false, steps = 0 }
-    return function()
-        local dc = P.ccDC()
-        local want = plan.abilities
-        if want == nil or want == "recommended" then
-            if UI.prop(dc, "CanUseRecommendedAbilities") ~= false then
-                local ok, err = UI.command(dc, "UseRecommendedAbilities", nil)
-                if not ok then ctx.result.problems[#ctx.result.problems + 1] = "recommended abilities: " .. tostring(err) end
-            end
-            return "next", ctx.fast and P.CC_SETTLE_MS or 300
-        end
-        if type(want) ~= "table" then return "fail", "abilities must be \"recommended\" or a table" end
-        if not state.reset then
-            state.reset = true
-            if UI.prop(dc, "CanResetAbilities") ~= false then UI.command(dc, "ResetAbilities", nil) end
-            return "wait", 300
-        end
-        local abilities = list(UI.path(dc, "DummyCharacter.Stats.Abilities"))
-        -- live9: a point-buy plan's ~27 presses at a fixed 120 ms each were 3.4 s of cc_apply's 5.6 s. With state
-        -- waits a press waits until its score reads back changed (CC_POLL_MS polls), the 120 ms as the cap.
-        local pend = state.pending
-        if pend then
-            local v
-            for _, a in ipairs(abilities) do
-                if abilityOf(a) == pend.name then v = tonumber(UI.prop(a, "Value")) end
-            end
-            if v == pend.value and RPC.now_ms() - pend.at < P.CC_POINT_MS then return "wait", P.CC_POLL_MS end
-            state.pending = nil
-        end
-        -- One point per tick, re-reading the page each time (point-buy costs differ per score).
-        state.steps = state.steps + 1
-        if state.steps > 80 then return "fail", "point buy did not converge" end
-        for _, a in ipairs(abilities) do
-            local name = abilityOf(a)
-            local target
-            for k, v in pairs(want) do
-                if abilityName(k) == name then target = tonumber(v) end
-            end
-            local cur = tonumber(UI.prop(a, "Value")) or 0
-            local base = cur - (tonumber(UI.prop(a, "RaceBonus")) or 0)
-            local cmd = target and (base < target and UI.prop(a, "CanIncrease") ~= false and "IncreaseAbility"
-                or base > target and UI.prop(a, "CanDecrease") ~= false and "DecreaseAbility") or nil
-            if cmd and UI.command(dc, cmd, a) then
-                if not ctx.fast then return "wait", P.CC_POINT_MS end
-                state.pending = { name = name, value = cur, at = RPC.now_ms() }
-                return "wait", P.CC_POLL_MS
-            end
-        end
-        return "next", ctx.fast and P.CC_SETTLE_MS or 200
-    end
-end
-
--- Racial +2/+1: press the bonus buttons on the ability tab (MultiBinding parameter).
-local function abilityBonusStage(ctx, plan)
-    local state = { tabbed = false, idx = 1 }
-    return function()
-        local want = plan.bonus
-        if type(want) ~= "table" or #want == 0 then return "next", 0 end
-        if not state.tabbed then
-            state.tabbed = true
-            selectTab(ctx.widget, P.ccTab(ctx.page, "abilityTab"))
-            return "wait", 500
-        end
-        local dc = P.ccDC()
-        local cols = list(UI.path(dc, "RaceProgressionDetails.AbilityBonusSelection"))
-        table.sort(cols, function(a, b) return (tonumber(UI.prop(a, "AbilityBonus")) or 0) > (tonumber(UI.prop(b, "AbilityBonus")) or 0) end)
-        local col = cols[state.idx]
-        local name = want[state.idx]
-        if not col or not name then return "next", 200 end
-        state.idx = state.idx + 1
-        local target
-        for _, it in ipairs(list(UI.prop(col, "BonusAbilities"))) do
-            if abilityOf(it) == abilityName(name) then target = it end
-        end
-        if not target then
-            ctx.result.problems[#ctx.result.problems + 1] = "bonus " .. tostring(name) .. ": not offered"
-            return "wait", 0
-        end
-        local ok, err = pressFor(ctx.widget, { "button" }, target)
-        if not ok then ctx.result.problems[#ctx.result.problems + 1] = "bonus " .. tostring(name) .. ": " .. tostring(err) end
-        return "wait", 300
-    end
-end
 
 -- cc_apply pacing. Naut series (2026-10-13): every call took 6.1 s, all of it fixed waits (450 ms after each of the 8
 -- tabs, 300 ms after each pick/command). With P.CC_STATE_WAITS a stage waits for the state the next step needs
@@ -852,6 +871,18 @@ RPC.register("ui.cc_apply", function(args)
         unless("subrace", { "subrace", selectStage(get, ctx, "subrace", "SelectedSubRace", "SelectableSubRaces",
             plan.subrace, true) }),
         unless("subrace", { "subrace?", verifyStage(get, ctx) }),
+        { "before", function() -- what the page opened with: a respec's hireling brings its own picks
+            ctx.result.before = { abilities = abilitiesView(get()), skills = skillsView(get()),
+                passives = I.passivesView(get()), passive_props = {} }
+            for i, sel in ipairs(passiveSelectors(get())) do -- whether a selector shows its list: unread so far
+                local plain = {}
+                for k, v in pairs(UI.props(sel)) do
+                    if type(v) ~= "table" and type(v) ~= "userdata" then plain[k] = tostring(v) end
+                end
+                ctx.result.before.passive_props[i] = plain
+            end
+            return "next", 0
+        end },
         { "class_tab", tabStage(ctx, tab.classTab) },
         { "class", selectStage(get, ctx, "class", "SelectedClass", "SelectableClasses", plan.class) },
         { "class?", verifyStage(get, ctx) },
@@ -861,20 +892,40 @@ RPC.register("ui.cc_apply", function(args)
         { "deity_tab", tabStage(ctx, tab.deityTab) },
         { "deity", selectStage(get, ctx, "deity", "SelectedDeity", "SelectableDeities", plan.deity, true) },
         { "deity?", verifyStage(get, ctx) },
-        { "background_tab", tabStage(ctx, tab.backgroundTab) },
-        { "background", selectStage(get, ctx, "background", "SelectedBackground", "SelectableBackgrounds", plan.background) },
-        { "background?", verifyStage(get, ctx) },
-        { "abilities", abilitiesStage(ctx, plan), 30000 },
-        { "ability_bonus", abilityBonusStage(ctx, plan) },
+        unless("background", { "background_tab", tabStage(ctx, tab.backgroundTab) }),
+        unless("background", { "background", selectStage(get, ctx, "background", "SelectedBackground",
+            "SelectableBackgrounds", plan.background) }),
+        unless("background", { "background?", verifyStage(get, ctx) }),
+        { "abilities", I.abilitiesStage(ctx, plan), 30000 },
+        { "ability_bonus", I.abilityBonusStage(ctx, plan) },
         { "abilities?", function()
-            ctx.result.set.abilities = abilitiesView(get())
+            local got = abilitiesView(get())
+            ctx.result.set.abilities = got
+            local left = tonumber(got.points_left) or 0
+            if type(plan.abilities) == "table" and left ~= 0 then
+                ctx.result.problems[#ctx.result.problems + 1] = ("abilities: %s points left"):format(left)
+            end
+            local cols = { table.unpack(got.bonus or {}) }
+            table.sort(cols, function(a, b) return (tonumber(a.bonus) or 0) > (tonumber(b.bonus) or 0) end)
+            for i, name in ipairs(type(plan.bonus) == "table" and plan.bonus or {}) do
+                local has = cols[i] and cols[i].picked
+                if has and has ~= abilityName(name) then
+                    ctx.result.problems[#ctx.result.problems + 1] = ("bonus %s: the page has %s"):format(name, has)
+                end
+            end
             return "next", 0
         end },
         { "skills", skillsStage(get, ctx, plan.skills) },
+        { "class_skills", skillsStage(get, ctx, plan.class_skills, "class", true) },
+        { "race_skills", skillsStage(get, ctx, plan.race_skills, "race", true) },
+        { "expertise", skillsStage(get, ctx, plan.expertise, "expertise", true) },
         { "skills?", skillsReport(get, ctx) },
-        { "passives", passivesStage(get, ctx, plan.passives, true) },
-        { "spells", spellsStage(pg.widget, get, ctx, plan.spells, plan.cantrips) },
+        { "passive_lists", I.passiveListsStage(get, ctx, plan.passive_lists) },
+        { "passives", passivesStage(get, ctx, plan.passives, true, true) },
+        pg.widget == "CharacterRespec" and { "equipment", I.equipmentStage(get, ctx) } or kept,
+        { "spells", spellsStage(pg.widget, get, ctx, plan.spells, plan.cantrips, pg.widget == "CharacterRespec") },
         { "spells?", spellsReport(get, ctx) },
+        { "picks?", I.picksStage(get, ctx, plan) },
         { "name?", function()
             if plan.name == nil then return "next", 0 end
             if UI.prop(get(), "CanEditName") == false then
@@ -932,4 +983,5 @@ end)
 P.inner.runJob, P.inner.selectStage, P.inner.verifyStage = runJob, selectStage, verifyStage
 P.inner.skillsStage, P.inner.skillsReport, P.inner.missingPick = skillsStage, skillsReport, missingPick
 P.inner.passivesStage, P.inner.passivesReport = passivesStage, passivesReport
+P.inner.wantList, P.inner.passiveOn = wantList, passiveOn
 P.inner.spellsStage, P.inner.spellsReport = spellsStage, spellsReport

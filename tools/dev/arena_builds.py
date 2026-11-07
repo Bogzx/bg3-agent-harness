@@ -13,14 +13,16 @@ class can be its reference):
                        "spells": [[...] per SelectSpells]},
                 "level_ups": [{"level": 2, "passives": [...], "spells": [...]}]},
      "gear": ["WPN_Longsword", {"item": "WPN_Handaxe", "equip": false}, ...],
-     "reference": null | {"profile": {...}, "game_build": "25605617", "hireling": "<origin uuid>", "evidence": "..."}}
+     "reference": null | {"profile": {...}, "game_build": "25605617", "hireling": "<origin uuid>", "evidence": "...",
+                          "accepted"?: [{"field": ..., "only_twin": [...], "only_reference": [...], "why": ...}]}}
 
 The script is what the respec page is driven through (character creation's choices, then one entry per level-up up to
 the file's level, each holding only that level's selectors) and also what the per-match copies' kit is made from
 (route S, as live 15): one source, so the reference and the copies can't be given different choices. `abilities` is
 the point-buy and must equal our stat entry's (Shared/ArenaStats.lua: the copies spawn with it). `role` is a
 description for people, never prompt text. A file is rated only when it has no `draft` and every build has a reference
-read on the file's game build; a draft may lack references (plan step 3 reads them).
+read on the file's game build; a draft may lack references (plan step 3 reads them). `accepted` names the entries of a
+Symmetry field a build's twins may differ by from the reference, each with why (arena.setup fails on any other entry).
 """
 
 from __future__ import annotations
@@ -38,8 +40,34 @@ CC_KEYS = {"abilities", "ability_bonus", "skills", "expertise", "race_skills", "
 UP_KEYS = {"level", "passives", "spells", "skills", "expertise", "improvement"}
 KINDS = ("passives", "spells", "skills", "expertise")
 REFERENCE_KEYS = {"profile", "game_build", "hireling", "evidence"}
+REFERENCE_OPTIONAL = {"accepted"}
+ACCEPTED_KEYS = {"field", "only_twin", "only_reference", "why"}
 ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,23}$")
+TURN_CAP_S = 90  # every builds arena's, whatever its base says: all paid arena play ran at 90 (arena-s6-prep.md)
 STATS_LUA = mas.REPO / "mod/Mods/BG3AI/ScriptExtender/Lua/Shared/ArenaStats.lua"
+# Server/ArenaSymmetry.lua Sym.FIELDS: what a reference holds and arena.setup compares
+REFERENCE_FIELDS = (
+    "race",
+    "level",
+    "classes",
+    "abilities",
+    "max_hp",
+    "ac",
+    "equipment",
+    "inventory",
+    "spells",
+    "prepared",
+    "passives",
+    "statuses",
+    "resources",
+    "proficiencies",
+    "skills",
+    "boosts",
+    "spellcast",
+    "derived",
+    "resource_max",
+    "passive_state",
+)
 
 
 class BuildError(mas.SpecError):
@@ -50,7 +78,7 @@ def stat_abilities(path: Path = STATS_LUA) -> dict[str, dict[str, int]]:
     """Our stat entries' point-buy per class, read from Shared/ArenaStats.lua (AS.CLASSES)."""
     text = path.read_text()
     out = {}
-    for m in re.finditer(r"(\w+) = \{ table = \"[^\"]+\", casting = \"\w+\",\s*abilities = \{ ([\d, ]+) \} \}", text):
+    for m in re.finditer(r"(\w+) = \{ table = \"[^\"]+\",\s*abilities = \{ ([\d, ]+) \} \}", text):
         out[m.group(1)] = dict(zip(mas.ABILITIES, (int(x) for x in m.group(2).split(",")), strict=True))
     if not out:
         raise BuildError(f"no class abilities read from {path}")
@@ -158,14 +186,39 @@ def check_build(build: Any, level: int, static: dict[str, Any], abilities: dict[
     ref = build["reference"]
     if ref is not None and (
         not isinstance(ref, dict)
-        or set(ref) != REFERENCE_KEYS
+        or not REFERENCE_KEYS <= set(ref) <= REFERENCE_KEYS | REFERENCE_OPTIONAL
         or not isinstance(ref["profile"], dict)
         or ref["hireling"] != h["origin"]
     ):
         raise BuildError(
-            f"{what}: reference must be null or {{{', '.join(sorted(REFERENCE_KEYS))}}} of the {cls} hireling"
+            f"{what}: reference must be null or {{{', '.join(sorted(REFERENCE_KEYS))}, accepted?}} "
+            f"of the {cls} hireling"
         )
+    if ref is not None:
+        _check_accepted(ref.get("accepted", []), what)
     return plan
+
+
+def _check_accepted(accepted: Any, what: str) -> None:
+    """Each accepted difference names one field once, the entries on each side, and why."""
+    seen: set[str] = set()
+    if not isinstance(accepted, list):
+        raise BuildError(f"{what}: reference.accepted must list differences")
+    for a in accepted:
+        if (
+            not isinstance(a, dict)
+            or set(a) != ACCEPTED_KEYS
+            or not isinstance(a["only_twin"], list)
+            or not isinstance(a["only_reference"], list)
+            or not (a["only_twin"] or a["only_reference"])
+            or not (isinstance(a["why"], str) and a["why"].strip())
+        ):
+            raise BuildError(
+                f"{what}: an accepted difference must be {{{', '.join(sorted(ACCEPTED_KEYS))}}}: {a!r:.120}"
+            )
+        if a["field"] in seen:
+            raise BuildError(f"{what}: reference.accepted names {a['field']} twice")
+        seen.add(a["field"])
 
 
 def check_builds(doc: Any, static: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -218,9 +271,19 @@ def load_builds(path: Path) -> dict[str, Any]:
     return check_builds(doc)
 
 
+def party_xp(level: int, static: dict[str, Any]) -> dict[str, int]:
+    """arena.setup's XP window for a tier: {total, below} from the game's XP table (no below at its last level)."""
+    xp = static["xp"]
+    out = {"total": xp[str(level)]}
+    if str(level + 1) in xp:
+        out["below"] = xp[str(level + 1)]
+    return out
+
+
 def mirror_section(doc: dict[str, Any], names: list[tuple[str, str]], static: dict[str, Any] | None = None) -> dict:
     """The arena file's level, teams and mirror section for a checked build file: pair i is build i, its twins named
-    names[i] (A, B), spawned from the build's class's hireling template (its race) with the build's kit."""
+    names[i] (A, B), spawned from the build's class's hireling template (its race) with the build's kit and, once read,
+    its reference (profile and accepted differences; arena.setup compares). The mirror's party_xp is the tier's."""
     static = static if static is not None else mas.load_static()
     if len(names) != len(doc["builds"]):
         raise BuildError(f"names must give {len(doc['builds'])} pairs")
@@ -239,19 +302,101 @@ def mirror_section(doc: dict[str, Any], names: list[tuple[str, str]], static: di
             f"build {b['id']}",
             base=stat_abilities()[b["class"]],
         )
-        pairs.append(
-            {
-                "class": b["class"],
-                "build": b["id"],
-                "template": static["hirelings"][b["class"]]["template"],
-                "race": plan["race"],
-                "stats": f"BG3AI_Arena_{b['class']}_L1",
-                "names": {"A": a, "B": bn},
-                "kit": plan["kit"],
-            }
-        )
+        pair = {
+            "class": b["class"],
+            "build": b["id"],
+            "template": static["hirelings"][b["class"]]["template"],
+            "race": plan["race"],
+            "stats": f"BG3AI_Arena_{b['class']}_L1",
+            "names": {"A": a, "B": bn},
+            "kit": plan["kit"],
+        }
+        if b["reference"] is not None:
+            pair["reference"] = {"profile": b["reference"]["profile"], "accepted": b["reference"].get("accepted", [])}
+        pairs.append(pair)
     seen = [n.lower() for p in pairs for n in p["names"].values()]
     if len(set(seen)) != len(seen) or not all(mas.MEMBER_RE.match(n) for p in pairs for n in p["names"].values()):
         raise BuildError("names must be display names, unique across both teams")
     teams = {s: [{"name": p["names"][s]} for p in pairs] for s in mas.SIDES}
-    return {"level": doc["level"], "teams": teams, "mirror": {"pairs": pairs}}
+    return {
+        "level": doc["level"],
+        "teams": teams,
+        "mirror": {"party_xp": party_xp(doc["level"], static), "pairs": pairs},
+    }
+
+
+def arena_file(
+    doc: dict[str, Any],
+    base: dict[str, Any],
+    name: str,
+    names: list[tuple[str, str]],
+    spawn_a: list[float],
+    spawn_b: list[float],
+    static: dict[str, Any] | None = None,
+    line_gap: float | None = None,
+) -> dict[str, Any]:
+    """An arena file for a checked build file: `base`'s save, seed, round and wall caps and rule keys, TURN_CAP_S, the
+    builds' level, teams and mirror, these spawns on the base's game level, line_gap when it isn't the default. A draft
+    build file makes a draft arena (it can't be played)."""
+    keep = ("schema", "save", "seed", "karmic", "round_cap", "wall_cap_min", "turn_cap_s", "condition", "tools_off")
+    a = {k: base[k] for k in keep if k in base}
+    a["turn_cap_s"] = TURN_CAP_S
+    a["name"], a["title"] = name, doc["title"]
+    a["about"] = (
+        f"The build file {doc['name']} (tools/dev/make_arena_save.py builds-arena), each pair's twins made per match, "
+        f"on {base['name']}'s save."
+    )
+    if "draft" in doc:
+        a["draft"] = doc["draft"]
+    a["location"] = {"level": base["location"]["level"], "spawns": {"A": spawn_a, "B": spawn_b}}
+    if line_gap is not None:
+        a["location"]["line_gap"] = line_gap
+    mas.check_geometry(spawn_a, spawn_b, len(doc["builds"]), mas.LINE_GAP_M if line_gap is None else line_gap)
+    return a | mirror_section(doc, names, static)
+
+
+def _build_in(doc: dict[str, Any], build_id: str) -> dict[str, Any]:
+    for b in doc["builds"]:
+        if b["id"] == build_id:
+            return b
+    raise BuildError(f"{doc['name']} has no build {build_id}")
+
+
+def reference_read(rpc: mas.Rpc, path: Path, build_id: str, uuid: str, evidence: str) -> str:
+    """The character's profile from the running game (arena.profile) as the build's reference, written to the file. A
+    character of another class count or level than the build is refused; a build's accepted differences stay."""
+    doc = json.loads(Path(path).read_text())
+    b = _build_in(doc, build_id)
+    prof = rpc("arena.profile", {"uuid": uuid})
+    if not isinstance(prof, dict) or prof.get("level") != doc["level"]:
+        got = prof.get("level") if isinstance(prof, dict) else prof
+        raise BuildError(f"{uuid} reads level {got}, the file's tier is {doc['level']}: not its reference")
+    unread = [f for f in REFERENCE_FIELDS if prof.get(f) is None]
+    if unread:
+        raise BuildError(f"{uuid}: {', '.join(unread)} doesn't read: a reference can't hide a field")
+    ref = {
+        "profile": {k: prof[k] for k in REFERENCE_FIELDS},
+        "game_build": doc["game_build"],
+        "hireling": mas.load_static()["hirelings"][b["class"]]["origin"],
+        "evidence": evidence,
+    }
+    if b["reference"] and b["reference"].get("accepted"):
+        ref["accepted"] = b["reference"]["accepted"]
+    b["reference"] = ref
+    check_builds(doc)
+    Path(path).write_text(json.dumps(doc, indent=1) + "\n")
+    return f"{doc['name']}: {build_id}'s reference read from {uuid} ({len(json.dumps(ref))} bytes)"
+
+
+def reference_diff(rpc: mas.Rpc, doc: dict[str, Any], build_id: str, uuid: str) -> dict[str, Any]:
+    """arena.reference_diff of a twin against the build's reference; BuildError when the build has none yet."""
+    ref = _build_in(doc, build_id)["reference"]
+    if ref is None:
+        raise BuildError(f"build {build_id} has no reference yet")
+    r = rpc(
+        "arena.reference_diff",
+        {"uuid": uuid, "reference": {"profile": ref["profile"], "accepted": ref.get("accepted", [])}},
+    )
+    if not isinstance(r, dict) or "ok" not in r:
+        raise BuildError(f"arena.reference_diff answered {r!r}")
+    return r

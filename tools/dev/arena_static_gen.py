@@ -18,7 +18,9 @@ What it writes into the static file (merged, never dropping a key it doesn't mak
 - backgrounds, feats (name, uuid, selectors, passives, boosts, repeatable), lists (uuid -> {kind, name, ids}) for
   every list a written row or feat selects from, xp (total XP per level), items (each EQP_CC item and its _1/_2
   entries, the healing potions: type, root, rarity), hirelings (new classes only: origin, race, background; their
-  template stays null until read, the root templates are in binary .lsf files).
+  template stays null until read, the root templates are in binary .lsf files), passive_skills (each passive whose
+  Boosts give a skill: a kit can't pick that skill too), upcasts (per spell a book holds, the entries it has at higher
+  slots: a character's book gets those rows from the game, a copy's AddSpell doesn't).
 
 An existing value the generator makes again must come out the same (the L1-2 rows read by hand before, races,
 backgrounds, hirelings it would add): a difference stops it before writing, naming the key (--dry-run prints the
@@ -42,9 +44,13 @@ import pak  # tools/pak.py
 STATIC = Path(__file__).resolve().parent / "arena_static.json"
 PAKS = ("Shared.pak", "Gustav.pak", "GustavX.pak")
 MODULES = ("Shared", "SharedDev", "Gustav", "GustavDev", "GustavX")
-CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard")
+CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard", "Bard")
 MAX_LEVEL = 12
 POTIONS = ("OBJ_Potion_Healing", "OBJ_Potion_Healing_Greater", "OBJ_Potion_Healing_Superior")
+# A hireling whose origin names only the parent race: the character's race is its template's, in a binary .lsf. Read
+# live: a hired Ranger reads 4d30b4f9 before and after its respec (2026-11-06, its reference), the origin says Drow.
+TEMPLATE_SUBRACE = {"Ranger": "Drow_Seldarine"}
+KIT_WEAPONS = ("WPN_Dagger",)  # make_arena_save.KIT_ADDS: in no EQP_CC, so named here with their _1/_2
 NULL = "00000000-0000-0000-0000-000000000000"
 SOURCE = (
     "game data of the installed BG3 (build in game_build), read-only from Shared.pak, Gustav.pak and GustavX.pak "
@@ -58,7 +64,7 @@ def read_paks(data_dir: Path) -> Files:
     want = re.compile(
         r"Public/[^/]+/(Progressions/Progressions\.lsx|ClassDescriptions/ClassDescriptions\.lsx|Races/Races\.lsx"
         r"|Backgrounds/Backgrounds\.lsx|Origins/Origins\.lsx|Feats/Feats\.lsx|Lists/(Spell|Passive|Skill)Lists\.lsx"
-        r"|Stats/Generated/Equipment\.txt|Stats/Generated/Data/(Weapon|Armor|Object|XPData)\.txt)"
+        r"|Stats/Generated/Equipment\.txt|Stats/Generated/Data/(Weapon|Armor|Object|XPData|Passive|Spell_\w+)\.txt)"
     )
     out: Files = {}
     for name in PAKS:
@@ -96,9 +102,13 @@ def stat_entries(files: Files, rel: str) -> dict[str, dict[str, str]]:
     raw: dict[str, dict[str, str]] = {}
     for _, data in _each(files, rel):
         cur: dict[str, str] | None = None
+        name, before = "", None
         for line in data.decode("utf-8", "replace").splitlines():
             if m := re.match(r'new entry "([^"]+)"', line):
-                cur = raw[m.group(1)] = {}
+                name, before = m.group(1), raw.get(m.group(1))
+                cur = raw[name] = {}
+            elif cur is not None and before is not None and line.strip() == f'using "{name}"':
+                cur = raw[name] = before  # a later module's entry that extends its own earlier one
             elif cur is not None and (m := re.match(r'(type|using) "([^"]*)"', line)):
                 cur["@" + m.group(1)] = m.group(2)
             elif cur is not None and (m := re.match(r'data "([^"]+)" "([^"]*)"', line)):
@@ -113,6 +123,24 @@ def stat_entries(files: Files, rel: str) -> dict[str, dict[str, str]]:
     return {n: resolved(n) for n in raw}
 
 
+def upcasts(files: Files) -> dict[str, dict[str, list[str]]]:
+    """{spell a book holds: {slot level: [entries]}}, from each entry's RootSpellID and PowerLevel. A variant that stays
+    in its root's container goes under the container, which is what the book holds: Arcane Recovery's _2 has root _1
+    and container Shout_ArcaneRecovery. A container's own upcast (Target_BestowCurse_4) brings its variants with it."""
+    rels = {k.split("/", 2)[2] for k in files if re.search(r"/Stats/Generated/Data/Spell_\w+\.txt$", k)}
+    spells: dict[str, dict[str, str]] = {}
+    for rel in sorted(rels):
+        spells.update(stat_entries(files, rel))
+    out: dict[str, dict[str, list[str]]] = {}
+    for sid, e in sorted(spells.items()):
+        root, power = e.get("RootSpellID"), e.get("PowerLevel")
+        if root and power:
+            box = e.get("SpellContainerID")
+            held = box if box and spells.get(root, {}).get("SpellContainerID") == box else root
+            out.setdefault(held, {}).setdefault(power, []).append(sid)
+    return out
+
+
 def equipment(files: Files) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for _, data in _each(files, "Stats/Generated/Equipment.txt"):
@@ -122,6 +150,15 @@ def equipment(files: Files) -> dict[str, list[str]]:
                 cur = out[m.group(1)] = []
             elif cur is not None and (m := re.match(r'add equipment entry "([^"]+)"', line)):
                 cur.append(m.group(1))
+    return out
+
+
+def passive_skills(files: Files) -> dict[str, list[str]]:
+    """Passive -> the skills its Boosts give."""
+    out = {}
+    for name, e in sorted(stat_entries(files, "Stats/Generated/Data/Passive.txt").items()):
+        if skills := re.findall(r"ProficiencyBonus\(Skill,\s*(\w+)\)", e.get("Boosts", "")):
+            out[name] = skills
     return out
 
 
@@ -239,8 +276,13 @@ def generate(files: Files, classes: tuple[str, ...] = CLASSES) -> dict[str, Any]
             }
     for p in POTIONS:
         item(p)
+    for w in KIT_WEAPONS:
+        for n in (w, f"{w}_1", f"{w}_2"):
+            item(n)
     out["items"] = dict(sorted(items.items()))
     out["xp"] = xp_totals(files)
+    out["passive_skills"] = passive_skills(files)
+    out["upcasts"] = upcasts(files)
 
     hire = {o["Name"].removeprefix("Hireling_"): o for o in origins.values() if o["Name"].startswith("Hireling_")}
     out["hirelings"] = {}
@@ -250,6 +292,8 @@ def generate(files: Files, classes: tuple[str, ...] = CLASSES) -> dict[str, Any]
         o = hire[c]
         race = races[o["RaceUUID"]]
         sub = races.get(o.get("SubRaceUUID") or NULL)
+        if c in TEMPLATE_SUBRACE:
+            sub = next(r for r in races.values() if r["Name"] == TEMPLATE_SUBRACE[c])
         rname = (sub or race)["Name"]
         bg = bgs[o["BackgroundUUID"]]
         bname = bg["Passives"].removeprefix("Background_")
@@ -364,7 +408,7 @@ def merge(old: dict[str, Any], gen: dict[str, Any]) -> tuple[dict[str, Any], lis
                 "todo": "the root template (S_GLO_Hirelings_<Class> TemplateName, a binary .lsf) is not read yet: "
                 "arena.mirror_spawn needs it; read it live (Ext.Template) or with an .lsf reader",
             }
-    for key in ("subclasses", "items", "xp", "feats", "lists"):
+    for key in ("subclasses", "items", "xp", "feats", "lists", "passive_skills", "upcasts"):
         out[key] = gen[key]
     out["source"] = SOURCE
     return out, diffs

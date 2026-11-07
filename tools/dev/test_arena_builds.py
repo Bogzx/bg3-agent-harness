@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -67,6 +68,27 @@ class RaceTest(unittest.TestCase):
         r = mas.kit_plan(kit("Ranger", "Drow_Seldarine"), "Ranger", 2, STATIC)["kit"]["race"]
         self.assertEqual((r["race"], r["spells"]), (SELDARINE, ["Target_DancingLights"]))
         self.assertIn("ProficiencyBonus(Skill,Perception)", r["boosts"])
+
+    def test_a_spell_keeps_the_ability_its_row_gives_else_its_classs(self):
+        doc = json.loads((REPO / "packages/bench/builds/l2_hirelings_v1.json").read_text())
+        b = next(x for x in doc["builds"] if x["class"] == "Ranger")
+        r = mas.kit_plan(ab.kit_of(b, 2, STATIC), "Ranger", 2, STATIC)
+        self.assertEqual(
+            r["kit"]["spell_abilities"],
+            {"Target_DancingLights": "Charisma", "Target_HuntersMark": "Wisdom", "Target_CureWounds": "Wisdom"},
+        )
+        self.assertNotIn("spell_abilities", r["kit"]["race"])
+        self.assertTrue(all("ability" not in c for c in r["kit"]["choices"]), "nothing the mod doesn't read")
+
+    def test_a_kit_with_no_spells_of_its_own_has_no_spell_abilities(self):
+        r = mas.kit_plan(kit("Fighter", "HalfElf_Wood"), "Fighter", 2, STATIC)
+        self.assertNotIn("spell_abilities", r["kit"])
+
+    def test_a_row_that_names_no_ability_and_a_class_with_none_writes_nothing(self):
+        part = mas.race_plan(kit("Fighter", "Drow_Seldarine"), STATIC, "x")[1]
+        self.assertEqual(part["spell_abilities"], {"Target_DancingLights": "Charisma"}, "the row's own")
+        self.assertIsNone(mas._row_ability(["list", "", ""], 2))
+        self.assertIsNone(mas._row_ability(["list"], 2))
 
     def test_a_race_spell_list_not_in_the_data_is_refused(self):
         st = copy.deepcopy(STATIC)
@@ -131,7 +153,9 @@ class BuildsTest(unittest.TestCase):
 
     def test_a_rated_file_needs_every_reference_on_its_game_build(self):
         d = doc()
-        del d["draft"]
+        d.pop("draft", None)
+        for b in d["builds"]:
+            b["reference"] = None  # a live read may already be in the file
         with self.assertRaisesRegex(ab.BuildError, "build fighter: no reference profile"):
             ab.check_builds(d)
         for b in d["builds"]:
@@ -169,6 +193,10 @@ class BuildsTest(unittest.TestCase):
         bad(lambda d: build(0, d)["script"]["cc"]["abilities"].update(Strength=16), "stat entry's point-buy")
         bad(lambda d: build(3, d)["script"]["level_ups"][0].pop("spells"), "level-up 2 spells must have 1 lists")
         bad(lambda d: build(3, d)["script"]["cc"]["passives"].pop(), r"script.cc.passives must have 2 lists")
+        bad(
+            lambda d: build(3, d)["script"]["cc"]["skills"].__setitem__(2, "Investigation"),
+            "Investigation is picked, but passive FavoredEnemy_BountyHunter already gives it",
+        )
         bad(lambda d: build(0, d)["script"].update(level_ups=[]), "level_ups must list levels 2..2")
         bad(lambda d: build(0, d)["script"]["cc"].update(subclass="x"), "script.cc must have abilities and only")
         bad(lambda d: build(1, d).update(id="fighter"), "build id fighter is used twice")
@@ -197,9 +225,13 @@ class BuildsTest(unittest.TestCase):
 
     def test_validate_cli_draft_ok_rated_refused(self):
         out, err = io.StringIO(), io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
-            self.assertEqual(mas.main(["validate", str(BUILDS)]), 0)
-            self.assertEqual(mas.main(["validate", "--rated", str(BUILDS)]), 1)
+        with tempfile.TemporaryDirectory() as t:
+            draft = Path(t) / "draft.json"
+            draft.write_text(json.dumps({**doc(), "draft": "references not read yet"}))
+            with redirect_stdout(out), redirect_stderr(err):
+                self.assertEqual(mas.main(["validate", str(draft)]), 0)
+                self.assertEqual(mas.main(["validate", "--rated", str(draft)]), 1)
+                self.assertEqual(mas.main(["validate", "--rated", str(BUILDS)]), 0, "all four references are in")
         self.assertIn("l2_hirelings_v1: ok (draft)", out.getvalue())
         self.assertIn("l2_hirelings_v1 is a draft", err.getvalue())
         with tempfile.TemporaryDirectory() as t:
@@ -234,6 +266,13 @@ def tier(level: int) -> dict[str, Any]:
     return json.loads((REPO / f"packages/bench/builds/l{level}_4v4_v1.json").read_text())
 
 
+def unread(d: dict[str, Any]) -> dict[str, Any]:
+    """A tier's file as it was before its references: a draft."""
+    for b in d["builds"]:
+        b["reference"] = None
+    return d | {"draft": "no reference profiles yet"}
+
+
 def tbuild(d: dict[str, Any], bid: str) -> dict[str, Any]:
     return next(b for b in d["builds"] if b["id"] == bid)
 
@@ -246,16 +285,26 @@ def plan(d: dict[str, Any], bid: str) -> dict[str, Any]:
     )["kit"]  # fmt: skip
 
 
-class TierTest(unittest.TestCase):
-    """The 4v4 tiers (website repo ops/logs/arena-4v4-builds.md): Fighter (Battle Master), Cleric (Life), Wizard
-    (Evocation), Rogue (Thief) at levels 2, 5 and 12; subclass rows, improvements and prepared spells checked."""
+# The Bard's levelled spell lists: every SelectSpells a bard row has but its cantrips'
+LEVELLED = {
+    uuid
+    for uuid, v in STATIC["lists"].items()
+    if str(v.get("name")).startswith(("Bard spells", "Bard SLevel")) or "Magical Secrets" in str(v.get("name"))
+}
 
-    def test_the_three_tier_files_are_valid_drafts_of_the_same_four_builds(self):
+
+class TierTest(unittest.TestCase):
+    """The 4v4 tiers (website repo ops/logs/arena-4v4-builds.md): Fighter (Battle Master), a healer, Wizard (Evocation),
+    Rogue (Thief) at levels 2, 5 and 12; subclass rows, improvements and prepared spells checked. The healer is a Bard
+    (Lore) at 5 and 12 (owner D114): a Cleric copy's class rows add its whole list; l2_4v4_v1 keeps its Cleric draft."""
+
+    def test_the_three_tier_files_are_valid_and_hold_the_same_four_builds(self):
         for lv in (2, 5, 12):
             with self.subTest(level=lv):
                 d = ab.check_builds(tier(lv))
-                self.assertIn("draft", d)
-                self.assertEqual([b["class"] for b in d["builds"]], ["Fighter", "Cleric", "Wizard", "Rogue"])
+                self.assertEqual("draft" in d, lv != 5)  # L5's references are in
+                healer = "Cleric" if lv == 2 else "Bard"
+                self.assertEqual([b["class"] for b in d["builds"]], ["Fighter", healer, "Wizard", "Rogue"])
                 schema = json.loads((REPO / "packages/bench/schema/arena-builds.v1.schema.json").read_text())
                 __import__("jsonschema").validate(d, schema)
         self.assertEqual([b["subclass"] for b in tier(2)["builds"]], [None, "LifeDomain", "EvocationSchool", None])
@@ -268,13 +317,24 @@ class TierTest(unittest.TestCase):
         self.assertIn("Ability(Strength,2)", k["grants"]["boosts"])  # level 4's ASI
         man = [c for c in k["choices"] if c["kind"] == "passives" and c["n"] == 3]
         self.assertEqual(man[0]["ids"], ["PrecisionAttack", "Riposte", "GoadingAttack"])
-        cl = plan(tier(5), "cleric")
+        cl = plan(tier(2), "cleric")
         self.assertIn("DiscipleOfLife", cl["grants"]["passives"])
-        self.assertTrue({"Target_Bless", "Target_CureWounds", "Shout_Aid", "Shout_BeaconOfHope"}
-                        <= set(cl["grants"]["spells"]))  # fmt: skip
-        self.assertEqual(len(cl["prepared"]), 9)  # Wis 19 (+4) + level 5
+        self.assertTrue({"Target_Bless", "Target_CureWounds"} <= set(cl["grants"]["spells"]))
+        self.assertEqual(len(cl["prepared"]), 5)  # Wis 17 (+3) + level 2
         self.assertEqual(cl["choices"][0], {"kind": "spells", "list": "3cae2e56-9871-4cef-bba6-96845ea765fa",
                                             "n": 1, "exact": True, "ids": ["Projectile_FireBolt"]})  # fmt: skip
+
+    def test_a_bards_picks_are_its_book_its_college_a_grant_and_its_instrument_no_choice(self):
+        for lv, picks in ((5, 8), (12, 19)):
+            k = plan(tier(lv), "bard")
+            self.assertEqual(k["subclass"], STATIC["subclasses"]["LoreCollege"]["uuid"])
+            self.assertIn("CuttingWords", k["grants"]["passives"])
+            self.assertNotIn("prepared", k)  # no MustPrepareSpells: nothing the mod has to name as not_applied
+            leveled = [i for c in k["choices"] if c["kind"] == "spells" and c["list"] in LEVELLED for i in c["ids"]]
+            self.assertEqual(len(leveled), picks)
+            self.assertIn("Target_HealingWord", leveled)
+            self.assertFalse({i["item"] for i in k["items"]} & {"OBJ_Scroll_Revivify", "OBJ_Keychain"})
+        self.assertIn("SelectEquipment", STATIC["classes"]["Bard"]["levels"]["1"]["Selectors"])
 
     def test_improvements_feats_and_tier_items(self):
         k12 = plan(tier(12), "fighter")
@@ -291,8 +351,10 @@ class TierTest(unittest.TestCase):
 
     def test_no_mirror_section_while_a_builds_hireling_template_is_unread(self):
         names = [(f"Red {n}", f"Blue {n}") for n in ("Ash", "Birch", "Cedar", "Dune")]
+        unread = copy.deepcopy(STATIC)
+        unread["hirelings"]["Cleric"]["template"] = None
         with self.assertRaisesRegex(ab.BuildError, "build cleric: the Cleric hireling's root template is not read"):
-            ab.mirror_section(ab.check_builds(tier(2)), names)
+            ab.mirror_section(ab.check_builds(tier(2)), names, unread)
 
     def test_l2_kits_without_a_subclass_or_preparer_are_unchanged_in_shape(self):
         k = plan(tier(2), "rogue")
@@ -326,10 +388,11 @@ class TierTest(unittest.TestCase):
             "Tough is taken twice",
             12,
         )
-        bad(lambda d: tbuild(d, "cleric")["script"]["prepared"].pop(), "prepared has 8, a level-5 Cleric prepares 9")
+        bad(lambda d: tbuild(d, "cleric")["script"]["prepared"].pop(), "prepared has 4, a level-2 Cleric prepares 5", 2)
         bad(
             lambda d: tbuild(d, "cleric")["script"]["prepared"].__setitem__(0, "Projectile_Fireball"),
             "prepared Projectile_Fireball is not a spell the Cleric has to prepare",
+            2,
         )
         bad(
             lambda d: tbuild(d, "wizard")["script"]["prepared"].__setitem__(0, "Target_Haste"),
@@ -343,6 +406,11 @@ class TierTest(unittest.TestCase):
         bad(
             lambda d: tbuild(d, "cleric")["script"]["cc"].update(race_spells=["Target_SacredFlame"]),
             "Target_SacredFlame is not in the game's list Wizard cantrips",
+            2,
+        )
+        bad(
+            lambda d: tbuild(d, "bard")["script"]["cc"]["spells"][1].__setitem__(0, "Projectile_Fireball"),
+            "Projectile_Fireball is not in the game's list Bard spells level 1",
         )
         bad(
             lambda d: tbuild(d, "rogue").update(script={**tbuild(d, "rogue")["script"], "prepared": []}),
@@ -354,3 +422,253 @@ class TierTest(unittest.TestCase):
             "Intelligence above 20",
             12,
         )
+
+
+def ref_of(b: dict[str, Any], **over: Any) -> dict[str, Any]:
+    prof = {f: [] for f in ab.REFERENCE_FIELDS} | {"level": 5, "name": "Lia"}
+    return {
+        "profile": prof,
+        "game_build": "25605617",
+        "hireling": STATIC["hirelings"][b["class"]]["origin"],
+        "evidence": "live.md test",
+    } | over
+
+
+NAMES4 = [("Red Ash", "Blue Ash"), ("Red Bay", "Blue Bay"), ("Red Elm", "Blue Elm"), ("Red Oak", "Blue Oak")]
+
+
+class ReferenceAndArenaFileTest(unittest.TestCase):
+    """G6/G7: the tier's XP window, the references in the arena file; reference-read and -diff against a fake game."""
+
+    def test_party_xp_is_the_tiers_window_from_the_games_table(self):
+        self.assertEqual(ab.party_xp(2, STATIC), {"total": 300, "below": 900})
+        self.assertEqual(ab.party_xp(5, STATIC), {"total": 6500, "below": 13000})
+        self.assertEqual(ab.party_xp(12, STATIC), {"total": 100000})
+
+    def test_the_mirror_section_has_party_xp_and_each_read_reference(self):
+        d = unread(tier(5))
+        d["builds"][0]["reference"] = ref_of(d["builds"][0])
+        m = ab.mirror_section(ab.check_builds(d), NAMES4, STATIC)["mirror"]
+        self.assertEqual(m["party_xp"], {"total": 6500, "below": 13000})
+        self.assertEqual(
+            m["pairs"][0]["reference"], {"profile": d["builds"][0]["reference"]["profile"], "accepted": []}
+        )
+        self.assertNotIn("reference", m["pairs"][1])
+
+    def test_accepted_differences_need_a_field_entries_and_why_once_per_field(self):
+        d = tier(5)
+        b = d["builds"][0]
+        good = {"field": "classes", "only_twin": ["a"], "only_reference": ["b"], "why": "P2"}
+        b["reference"] = ref_of(b, accepted=[good])
+        ab.check_builds(d)
+        for bad, want in (
+            ([{**good, "why": " "}], "accepted difference"),
+            ([{**good, "only_twin": [], "only_reference": []}], "accepted difference"),
+            ([good, good], "twice"),
+            ("x", "must list"),
+        ):
+            b["reference"] = ref_of(b, accepted=bad)
+            with self.assertRaisesRegex(ab.BuildError, want):
+                ab.check_builds(d)
+
+    def test_arena_file_takes_the_bases_rules_and_the_builds_and_checks_the_spawns(self):
+        base = json.loads((REPO / "packages/bench/arenas/arena-v0.1.json").read_text())
+        a = ab.arena_file(ab.check_builds(unread(tier(5))), base, "arena-4v4-l5", NAMES4, [213.0, 10.98, 288.0],
+                          [213.0, 10.98, 296.0], STATIC)  # fmt: skip
+        self.assertEqual((a["level"], a["save"], a["name"]), (5, base["save"], "arena-4v4-l5"))
+        self.assertEqual(a["location"]["level"], base["location"]["level"])
+        self.assertIn("draft", a)  # a draft build file can't make a playable arena
+        with self.assertRaisesRegex(mas.SpecError, "height"):
+            ab.arena_file(tier(5), base, "x", NAMES4, [0.0, 0.0, 0.0], [0.0, 1.0, 8.0], STATIC)
+        sys.path.insert(0, str(REPO / "packages/bench/src"))
+        from bg3bench import arena as barena
+
+        self.assertEqual(barena.validate(a, "arena-4v4-l5"), [])
+        self.assertNotIn("line_gap", a["location"])  # the default isn't written
+        played = copy.deepcopy(a)
+        del played["draft"]
+        self.assertTrue(any("has no reference" in e for e in barena.validate(played, "arena-4v4-l5")))
+        for p, b in zip(played["mirror"]["pairs"], tier(5)["builds"], strict=True):
+            p["reference"] = {"profile": ref_of(b)["profile"], "accepted": []}
+        self.assertEqual(barena.validate(played, "arena-4v4-l5"), [])
+        del played["mirror"]["party_xp"]
+        self.assertTrue(any("needs mirror.party_xp" in e for e in barena.validate(played, "arena-4v4-l5")))
+
+    def test_every_builds_arena_is_what_its_build_file_generates(self):
+        # Names, spawns, line gap and the two caps are builds-arena's arguments, so they come from the file.
+        arenas = REPO / "packages/bench/arenas"
+        paths = sorted(arenas.glob("builds-*.json"))
+        self.assertEqual(len(paths), 4)  # a glob that finds nothing would pass
+        for path in paths:
+            with self.subTest(path.name):
+                a = json.loads(path.read_text())
+                m = re.fullmatch(r"The build file (\S+) .* on (\S+)'s save\.", a["about"])
+                assert m is not None, a["about"]
+                doc = ab.load_builds(REPO / f"packages/bench/builds/{m[1]}.json")
+                base = json.loads((arenas / f"{m[2]}.json").read_text())
+                names = [(p["names"]["A"], p["names"]["B"]) for p in a["mirror"]["pairs"]]
+                loc = a["location"]
+                want = ab.arena_file(
+                    doc, base, a["name"], names, loc["spawns"]["A"], loc["spawns"]["B"], STATIC, loc.get("line_gap")
+                )
+                self.assertEqual(a, want | {"round_cap": a["round_cap"], "wall_cap_min": a["wall_cap_min"]})
+
+    def test_arena_file_has_the_builds_turn_cap_not_the_bases(self):
+        base = json.loads((REPO / "packages/bench/arenas/crash-mirror-v1.json").read_text())
+        self.assertEqual(base["turn_cap_s"], 60)  # a base whose cap differs, or this test shows nothing
+        a = ab.arena_file(
+            ab.check_builds(tier(5)), base, "x", NAMES4, [213.0, 10.98, 288.0], [213.0, 10.98, 296.0], STATIC
+        )
+        self.assertEqual(a["turn_cap_s"], 90)
+
+    def test_arena_file_writes_a_line_gap_and_checks_the_spawns_with_it(self):
+        base = json.loads((REPO / "packages/bench/arenas/arena-v0.1.json").read_text())
+        spots = [212.875, 10.98, 288.0], [212.875, 10.98, 296.0]
+        a = ab.arena_file(ab.check_builds(tier(5)), base, "x", NAMES4, *spots, STATIC, line_gap=1.25)
+        self.assertEqual(a["location"]["line_gap"], 1.25)
+        with self.assertRaisesRegex(mas.SpecError, "must be the same within"):  # 0.1 m off along x: 4 m lines tell
+            mas.check_geometry([0.0, 0.0, 0.0], [0.15, 0.0, 8.0], 4, 3.0)
+        mas.check_geometry([0.0, 0.0, 0.0], [0.15, 0.0, 8.0], 4, 0.25)  # the same offset on short lines passes
+
+    def test_reference_read_writes_the_compared_fields_and_refuses_a_wrong_or_partial_read(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "b.json"
+            path.write_text(json.dumps(tier(5)))
+            prof = {f: [] for f in ab.REFERENCE_FIELDS} | {"level": 5, "name": "Lia", "hp": 3}
+            ab.reference_read(lambda op, a: prof, path, "fighter", "u1", "live.md X")
+            got = json.loads(path.read_text())["builds"][0]["reference"]
+            self.assertEqual(set(got["profile"]), set(ab.REFERENCE_FIELDS))  # no name or current HP
+            self.assertEqual(got["hireling"], STATIC["hirelings"]["Fighter"]["origin"])
+            ab.check_builds(json.loads(path.read_text()))
+            with self.assertRaisesRegex(ab.BuildError, "reads level 2"):
+                ab.reference_read(lambda op, a: prof | {"level": 2}, path, "fighter", "u1", "x")
+            with self.assertRaisesRegex(ab.BuildError, "spells doesn't read"):
+                ab.reference_read(lambda op, a: prof | {"spells": None}, path, "fighter", "u1", "x")
+            with self.assertRaisesRegex(ab.BuildError, "no build"):
+                ab.reference_read(lambda op, a: prof, path, "nobody", "u1", "x")
+
+    def test_reference_diff_sends_the_reference_and_needs_one(self):
+        d = unread(tier(5))
+        with self.assertRaisesRegex(ab.BuildError, "no reference yet"):
+            ab.reference_diff(lambda op, a: {}, d, "fighter", "u1")
+        d["builds"][0]["reference"] = ref_of(d["builds"][0])
+        asked = []
+        r = ab.reference_diff(lambda op, a: asked.append((op, a)) or {"ok": True}, d, "fighter", "u1")
+        self.assertTrue(r["ok"])
+        self.assertEqual(asked[0][0], "arena.reference_diff")
+        self.assertEqual(asked[0][1]["uuid"], "u1")
+
+    def test_a_kits_upcasts_are_the_rows_its_reference_holds_with_their_abilities(self):
+        ups = {x for v in STATIC["upcasts"].values() for ids in v.values() for x in ids}
+        doc = tier(5)
+        for b, want in zip(doc["builds"], (0, 12, 14, 0), strict=True):
+            with self.subTest(b["id"]):
+                k = plan(doc, b["id"])
+                got = set(k.get("spell_abilities", {})) & ups
+                self.assertEqual(len(got), want)
+                held = ups & set(b["reference"]["profile"]["spells"])
+                # the Wizard's learned, unprepared spells stay out with their upcasts: its twin holds neither
+                learned = [x for ids in b["script"]["cc"].get("spells", []) for x in ids]
+                learned += [x for u in b["script"]["level_ups"] for ids in u.get("spells", []) for x in ids]
+                unprepared = [x for x in learned if "prepared" in b["script"] and x not in b["script"]["prepared"]]
+                out = {x for sid in unprepared for v in STATIC["upcasts"].get(sid, {}).values() for x in v}
+                self.assertEqual(got, held - out)
+                casting = STATIC["classes"][b["class"]]["casting"]
+                self.assertEqual({k["spell_abilities"][x] for x in got} - {casting}, set())
+
+    def test_the_l5_wizards_accepted_rows_are_its_unprepared_spells_and_their_prepare_type_only(self):
+        wizard = next(b for b in tier(5)["builds"] if b["id"] == "wizard")
+        accepted = {a["field"]: a for a in wizard["reference"]["accepted"]}
+        self.assertEqual(set(accepted), {"derived", "spells", "spellcast", "prepared"})
+        self.assertEqual(accepted["prepared"]["only_twin"], ["Shout_ArcaneRecovery_2", "Shout_ArcaneRecovery_3"])
+        self.assertEqual(accepted["prepared"]["only_reference"], [])
+        learned = [x for ids in wizard["script"]["cc"].get("spells", []) for x in ids]
+        learned += [x for u in wizard["script"]["level_ups"] for ids in u.get("spells", []) for x in ids]
+        held = [x for c in plan(tier(5), "wizard")["choices"] if c["kind"] == "spells" for x in c["ids"]]
+        out = [x for x in learned if x not in held]
+        self.assertEqual(len(out), 5)
+        slots = {"2", "3"}  # a level-5 Wizard's upcast slots
+        ups = [x for s in out for p, ids in STATIC["upcasts"].get(s, {}).items() if p in slots for x in ids]
+        self.assertEqual(sorted(accepted["spells"]["only_reference"]), sorted(out + ups))
+        self.assertEqual(accepted["spells"]["only_twin"], [])
+        cast = accepted["spellcast"]
+        self.assertEqual(
+            sorted(r.replace("|AlwaysPrepared|", "|RequiresPreparation|") for r in cast["only_twin"]),
+            sorted(r for r in cast["only_reference"] if r.split("|")[0] not in out + ups),
+        )
+        self.assertEqual(len(cast["only_reference"]) - len(cast["only_twin"]), len(out + ups))
+
+    def test_a_kits_own_spell_with_upcasts_is_unlocked_and_a_class_rows_keeps_its_upcasts_added(self):
+        ups = {x for v in STATIC["upcasts"].values() for ids in v.values() for x in ids}
+        bard, wizard = plan(tier(5), "bard"), plan(tier(5), "wizard")
+        self.assertEqual(bard["unlocks"]["Target_Bane"], "Charisma")
+        self.assertEqual(wizard["unlocks"]["Projectile_MagicMissile"], "Intelligence")
+        self.assertNotIn("Shout_ArcaneRecovery", wizard["unlocks"])  # the class row gives the root
+        self.assertEqual(set(wizard["grants"]["spells"]) & ups, {"Shout_ArcaneRecovery_2", "Shout_ArcaneRecovery_3"})
+        self.assertEqual(set(bard["grants"]["spells"]) & ups, set())
+        self.assertNotIn("Target_ViciousMockery", bard["unlocks"])  # no upcasts: AddSpell's
+
+    def test_upcasts_stop_at_the_highest_slot_the_rows_open(self):
+        d = ab.load_builds(REPO / "packages/bench/builds/l5_4v4_team2_v1.json")
+        ups = {x for v in STATIC["upcasts"].values() for ids in v.values() for x in ids}
+        spells = set(plan(d, "ranger")["spell_abilities"]) & ups  # a half caster's level 5: 2nd-level slots
+        self.assertTrue(spells and all(x.endswith("_2") for x in spells), spells)
+        self.assertIn("Target_Bane_3", plan(tier(5), "bard")["spell_abilities"])
+        self.assertNotIn("Target_Bane_4", plan(tier(5), "bard")["spell_abilities"])
+        self.assertIn("Target_Bane_6", plan(tier(12), "bard")["spell_abilities"])
+
+    def test_the_second_team_is_valid_and_a_subclass_rows_removed_passive_is_in_the_kits_grants(self):
+        d = ab.load_builds(REPO / "packages/bench/builds/l5_4v4_team2_v1.json")
+        self.assertIn("draft", d)
+        self.assertEqual([b["class"] for b in d["builds"]], ["Barbarian", "Bard", "Wizard", "Ranger"])
+        __import__("jsonschema").validate(
+            d, json.loads((REPO / "packages/bench/schema/arena-builds.v1.schema.json").read_text())
+        )
+        k = plan(d, "barbarian")
+        self.assertEqual(k["grants"]["passives_removed"], ["RageUnlock"])
+        self.assertIn(["TotemSpirit_Bear"], [c["ids"] for c in k["choices"] if c["kind"] == "passives"])
+        self.assertNotIn("passives_removed", plan(tier(5), "fighter")["grants"])
+        v = plan(d, "bard")  # Valor: another removed passive, and proficiencies a copy gets only from the kit
+        self.assertEqual(v["grants"]["passives_removed"], ["BardicInspiration"])
+        self.assertIn("CombatInspiration", v["grants"]["passives"])
+        self.assertIn("Proficiency(MartialWeapons)", v["grants"]["boosts"])
+
+    def test_a_wizards_kit_adds_only_its_prepared_picks_and_a_clerics_keeps_prepared_for_the_mod_to_name(self):
+        for lv, n in ((2, 5), (5, 9), (12, 17)):
+            with self.subTest(level=lv):
+                d = tier(lv)
+                k, want = plan(d, "wizard"), set(tbuild(d, "wizard")["script"]["prepared"])
+                self.assertNotIn("prepared", k)
+                added = {i for c in k["choices"] if c["kind"] == "spells" and not c["exact"] for i in c["ids"]}
+                self.assertEqual(added, want)
+                self.assertEqual(len(want), n)
+                self.assertTrue(
+                    any(c["kind"] == "spells" and c["exact"] for c in k["choices"]), "the cantrips stay exact"
+                )
+                if lv == 2:
+                    self.assertIn("prepared", plan(d, "cleric"))
+
+    def test_the_cleric_and_wizard_templates_are_read_and_the_races_are_their_builds(self):
+        m = ab.mirror_section(ab.check_builds(tier(2)), NAMES4)["mirror"]["pairs"]
+        self.assertEqual(m[1]["template"], "4b0a059b-4bae-4884-8bdf-a683c5f2cbea")
+        self.assertTrue(m[1]["race"].startswith("4fda6bce"))
+        self.assertEqual(m[2]["template"], "3d24f5eb-7220-4e00-bc02-3e6ac819ac26")
+        self.assertTrue(m[2]["race"].startswith("2cf6c770"))
+
+    def test_no_build_picks_a_knock_down_source_in_its_script_or_kit(self):
+        # What a build picks. A Cleric copy's class rows add its whole list, Command included, and neither shows here:
+        # the reference compare fails that, and only the l2_4v4_v1 draft holds a Cleric. Sleet Storm, Ice Storm and
+        # Freezing Sphere: ice surfaces, from play. Thunderous Smite, Eyebite: PRONE_THUNDEROUS_SMITE, SLEEPING_EYEBITE
+        # (the paks). Chromatic Orb: its cold variant makes WaterFrozen from nothing (the paks), Arrow of Ice's reason.
+        # What these ids can reach is test_arena_scan's.
+        banned = {"Target_Grease", "Projectile_IceKnife", "Zone_Thunderwave", "Target_HideousLaughter", "Target_Sleep",
+                  "TripAttack", "PushingAttack", "MenacingAttack", "TotemSpirit_Elk", "Target_Command_Container",
+                  "Target_SleetStorm", "Target_IceStorm", "Target_FreezingSphere", "Target_Smite_Thunderous",
+                  "Target_Eyebite", "Projectile_ChromaticOrb", "Projectile_ChromaticOrb_Cold", "WPN_Quarterstaff",
+                  "WPN_Quarterstaff_1", "WPN_Quarterstaff_2"}  # fmt: skip
+        for path in sorted((REPO / "packages/bench/builds").glob("l*_4v4_*.json")):
+            d = json.loads(path.read_text())
+            for b in d["builds"]:
+                with self.subTest(file=path.name, build=b["id"]):
+                    held = json.dumps(b["script"]) + json.dumps(plan(d, b["id"]))
+                    self.assertFalse(banned & set(re.findall(r"[A-Za-z_]+", held)))
