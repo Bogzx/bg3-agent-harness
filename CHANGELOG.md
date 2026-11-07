@@ -129,9 +129,9 @@ game unless it says so.
   attack and a throw count as the game's check does. A weapon action with an Action cost takes the free attack, read
   live on L12. A hover preview's CastSpellFailed no longer ends the order, which had read `the game refused the cast (no
   reason given)`. Tool definitions and the bench prompts don't change. bench-v0.11's release cited it until 0.12.0.
-- 0.12.0 (2026-11-07): what the agent sees changed: words only, no order runs or stops that didn't. Until a held cast
-  has landed, a weapon attack with no Action and no free status reads `not enough action yet: ...`, and the list gives
-  it `last cast still resolving`. Before, they read `not enough action` and `no action` while a free attack was coming.
+- 0.12.0 (2026-11-07): what the agent sees changed: words only, no order runs or stops that didn't. Until a held weapon
+  attack has landed, a weapon attack with no Action and no free status reads `not enough action yet: ...`, and the list
+  gives it `last cast still resolving`. Before, they read `not enough action` and `no action` while a free attack was coming.
   Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
