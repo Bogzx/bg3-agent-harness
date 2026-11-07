@@ -228,7 +228,7 @@
   },
   "tools/dev/test_level_up.lua": {
    "W311": 1,
-   "W631": 41
+   "W631": 40
   },
   "tools/dev/test_mem.lua": {
    "W631": 2
