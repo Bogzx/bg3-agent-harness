@@ -1,7 +1,7 @@
 # S6, builds-l12-4v4-v1: one DeepSeek flash match against itself, the first model-played 4v4 at this tier (D105, D106: cap $1 for all
 # three tiers). A self-pair is graded, never rated, and `single` plays m1 only. No release: this is a test of the tier.
 # Played by `runner/play.py arena-matrix --matrix packages/bench/matrices/arena-s6-l12.toml`; --plan prints it.
-# A draft arena plans no match, so this matrix has none until its build file has its references.
+# A draft arena plans no match, so this matrix has none while builds-l12-4v4-v1 is a draft.
 #
 # Money: runtime/budget-arena-s6.json is shared by the three tiers' matrices and must hold {"cap": 1.0, "spent": 0}
 # before the first one. Each side is capped at $0.30, so a match reserves $0.60; a match starts only if that fits, reruns

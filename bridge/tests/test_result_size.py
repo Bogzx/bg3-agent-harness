@@ -157,6 +157,18 @@ class CombatTrim(unittest.TestCase):
         self.assertNotIn("Spell 3", out)
         self.assertIn("Dash [0m]", out)
 
+    def test_a_free_attack_still_coming_is_named_not_counted_as_spent(self):
+        # live.md L12 on main 807dce16: after a held swing's charge, the list read "no action: all 14 [A] ones"
+        weapon = [{"name": f"Attack {i}", "spell": f"Target_A{i}", "cost": {"action": 1}, "range": 1.5,
+                   "available": False, "reason": "last cast still resolving"} for i in range(3)]
+        plain = [{"name": "Dash", "spell": "Shout_Dash", "cost": {"action": 1}, "available": False,
+                  "reason": "no action"}]
+        out = render.render_actions({"actions": weapon + plain}, render.Handles())
+        self.assertIn("UNAVAILABLE: no action: all 1 [A] ones; last cast still resolving: Attack 0, Attack 1, Attack 2",
+                      out)
+        one = render.render_actions({"actions": weapon[:1]}, render.Handles())
+        self.assertIn("UNAVAILABLE: Attack 0 [A] 1.5m — last cast still resolving", one)
+
     def test_a_reason_shared_by_many_lists_names_once(self):
         acts = {"actions": [{"name": f"L3 Spell {i}", "spell": f"Target_L3_{i}", "cost": {"action": 1, "slot": 3},
                              "range": 18, "level": 3, "available": False, "reason": "no spell slot of level 3+"}

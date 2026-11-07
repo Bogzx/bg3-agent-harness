@@ -369,6 +369,31 @@ do
         and r.result == nil)
     check("cast taken", #L.casts == 0, #L.casts)
 
+    -- castDice: a swing with no CastedSpell (a Riposte's Canceled): the dice on its own entity, the tracked casts left
+    local function swing(rolled)
+        local s = castEntity(HOST, "Target_MainHandAttack", rolled and { { Target = ent(GOB), Casts = { { Hit = {
+            ConditionRolls = { condRoll("MeleeWeaponAttack", rolled[1], rolled[2], 18) } } } } } } or {})
+        postUpdate.ServerRoll()
+        return s
+    end
+    local function totals(entity)
+        local out = {}
+        for _, d in pairs(L.castDice(entity)) do out[#out + 1] = d.total end
+        return out
+    end
+    L.casts = {}
+    local older = swing({ 5, 16 })
+    local low = totals(older)
+    check("castDice: its own die", #low == 1 and low[1] == 16, low[1])
+    check("castDice: leaves the tracked casts", #L.casts == 1 and next(L.casts[1].rolls) ~= nil, #L.casts)
+    check("castDice: an untracked cast with no rolls has no dice, not the older one's", #totals({}) == 0)
+    local newer = swing(nil) -- no dice of its own
+    check("castDice: a newer cast with no dice doesn't read the older low die", #totals(newer) == 0, totals(newer)[1])
+    local own = swing({ 13, 24 })
+    local mine = totals(own)
+    check("castDice: a cast's own die, not the carried one", #mine == 1 and mine[1] == 24, mine[1])
+    L.casts = {}
+
     -- a save: Sacred Flame on GOB; GOB's RollResult came 1.5 s before the CastedSpell
     local n0 = #L.ring
     castEntity(HOST, "Target_SacredFlame", { { Target = ent(GOB), Casts = { { Hit = { ConditionRolls = {

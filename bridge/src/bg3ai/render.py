@@ -460,7 +460,7 @@ def render_actions(r: Any, H: Handles) -> str:
         bits = [f"{a.get('name')} ({a.get('spell')})" if show_id else str(a.get("name"))]
         c = _cost_text(a.get("cost"))
         if a.get("extra_attack"):
-            bits.append("[Extra Attack: free]")  # the EXTRA_ATTACK status: no action cost now (Guard.lua)
+            bits.append("[Extra Attack: free]")  # a free attack's status: no action cost now (GuardCast.lua)
         elif c:
             bits.append(f"[{c}]")
         if isinstance(a.get("range"), (int, float)) and a["range"]:  # the mod sends a range only as metres

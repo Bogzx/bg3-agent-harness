@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.9.0 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.12.0 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -111,8 +111,28 @@ game unless it says so.
   finish even past that page's intro; it won't finish without the plan's skills, expertise and passives even when the
   game calls the page complete; `plan.skills` reaches the expertise group; a held name no later group can take comes
   back as `already_held`; `set.<group>_off` names picks that left the page; a refusal names a skill group short of its
-  max, where it said nothing was open. Neither refusal has a live read yet. Tool definitions and the bench prompts don't
-  change. bench-v0.11's release cites it.
+  max, where it said nothing was open. The read-back's refusal has no live read yet. Tool definitions and the bench
+  prompts don't change. bench-v0.11's release cited it until 0.10.0.
+- 0.10.0 (2026-11-07): what the agent sees changed: a raw id of a container spell the character doesn't hold reads
+  `the character does not have that action`, where it read `choose a variant:` with variants that were then refused.
+  So does a raw id of a call-allies container not held. For an order behind a held cast, a hit or status before its own
+  CastSpell no longer counts in its result: a held arrow's late hit had read `damage=[6; 6]` where the order's own was
+  6; read live, part 5a. An Osiris-ordered cast that is countered pays every cost but the four turn resources, on a
+  prompt or with none, as a hotbar cast did for its slot; it had paid the action alone (a30-read). Read live for a
+  spell slot only. A swing a Riposte answered reads as a miss, `done ... no_damage`, when every die on its own cast
+  read below its dc and none is a natural 20; otherwise its text keeps the true words and drops `what came of it shows
+  in the events`. A weapon attack with no Action among its costs no longer says `extra_attack` in its result, which
+  Frenzied Strike did; not read live. Tool definitions and the bench prompts don't change. bench-v0.11's release cited it until 0.11.0.
+- 0.11.0 (2026-11-07): what the agent sees changed: every status whose boost frees an Action counts as the free attack,
+  in the guard, the action list and a Canceled swing's cost. An L12 Fighter had its second and third swings refused
+  `not enough action`, with EXTRA_ATTACK_2 on and read by nothing; it now makes its 3 attacks, read live. An unarmed
+  attack and a throw count as the game's check does. A weapon action with an Action cost takes the free attack, read
+  live on L12. A hover preview's CastSpellFailed no longer ends the order, which had read `the game refused the cast (no
+  reason given)`. Tool definitions and the bench prompts don't change. bench-v0.11's release cited it until 0.12.0.
+- 0.12.0 (2026-11-07): what the agent sees changed: words only, no order runs or stops that didn't. Until a held weapon
+  attack has landed, a weapon attack with no Action and no free status reads `not enough action yet: ...`, and the list
+  gives it `last cast still resolving`. Before, they read `not enough action` and `no action` while a free attack was coming.
+  Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
@@ -318,6 +338,7 @@ game unless it says so.
   can, nothing changes and the result's `already_held` names it. Character creation still stops at the held row. A level-up refused as not complete now names a skill group short of its max (`3 class skills (plan.skills)`), where it said the page showed nothing open. A plan's skill or passive the page doesn't offer is now a failure, no longer `done`.
 - A kit's subclass spell with no ability on its row or class reads the stats' ability, as a character's does (a Thief's
   Shout_SupremeSneak read None on a twin, Intelligence on the reference).
+- `builds-l12-4v4-v1` and its build file aren't drafts any more, so its S6 matrix plans its one match.
 - A kit gives a race's rows above level 1 up to its level, as a real character of that race has them: at level 5 a Drow
   twin holds Faerie Fire and Darkness beside Dancing Lights. Only `builds-l5-4v4-team2-v1`'s Ranger moves, and it's still
   a draft. Not read live: nothing has cast them in an arena, and whether a twin keeps their once-per-rest rule.
