@@ -336,7 +336,7 @@ test("cast start: a paused cast that lands afterwards pays what the game didn't,
     eq(res.SpellSlot[1].Amount, 3, "one landing, one payment")
 end)
 
-test("cast start: a paused cast that never lands pays nothing, and a later cast of it pays once (L5 scratch)", function()
+test("cast start: a paused cast that never lands pays nothing, and a later one pays once (L5 scratch)", function()
     local res = held_heal(4)
     tick(100)
     eq(res.SpellSlot[1].Amount, 4, "a lost cast is free")

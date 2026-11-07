@@ -167,8 +167,10 @@ class Shared(unittest.TestCase):
         got = []
         with (
             mock.patch.object(world_tools, "_inp", lambda own_prompt=False: got.append(own_prompt) or object()),
-            mock.patch("bg3ai.reactclick.click_row", lambda rpc, inp, which: {"clicked": which, "at": (0.5, 0.5),
-                                                                              "closed": True}),
+            mock.patch(
+                "bg3ai.reactclick.click_row",
+                lambda rpc, inp, which: {"clicked": which, "at": (0.5, 0.5), "closed": True},
+            ),
         ):
             self.assertIn("react: done", dialogue._react_click({"use": True}, 1, 0.0))
         self.assertEqual(got, [True])

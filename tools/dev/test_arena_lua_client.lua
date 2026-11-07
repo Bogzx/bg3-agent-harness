@@ -302,7 +302,7 @@ end)
 test("the same with the side's own next: it reads its prompt", function()
     prompt("Ana")
     pages.ReactionDecisionPopup.DataContext.Data.InterruptEvents = { {}, {} }
-    local job = rpc("ui.react", "{use=false}", "A")
+    rpc("ui.react", "{use=false}", "A")
     pages.ReactionDecisionPopup.DataContext.Data.InterruptEvents = { {} }
     local r = tickJob()
     eq(r.result.reaction.options[1].who, "Ana", "its row")

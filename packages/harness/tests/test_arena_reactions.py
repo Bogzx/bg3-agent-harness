@@ -50,8 +50,11 @@ def test_the_bound_runs_from_the_prompt_first_on_screen_not_from_the_hold():
     # pQ T2: a popup 30 s late doesn't lose those 30 s, and left open it's still declined
     held = {"key": "cast1|red:Counterspell", "side": "B", "interrupts": ["Counterspell"]}
     late = [(t, {"screen": "game", "held_reaction": held}) for t in range(0, 30, 2)]
-    up = {"screen": "reaction", "held_reaction": held,
-          "reaction": {"prompt": "Counterspell?", "options": [{"i": 1, "who": "Red Cedar"}], "owner": "B"}}
+    up = {
+        "screen": "reaction",
+        "held_reaction": held,
+        "reaction": {"prompt": "Counterspell?", "options": [{"i": 1, "who": "Red Cedar"}], "owner": "B"},
+    }
     assert _hold_reads(late + [(t, up) for t in range(30, 118, 2)]) == []  # 116 s from the hold, 86 s on screen
     assert _hold_reads(late + [(t, up) for t in range(30, 124, 2)]) == ["ui.react"]  # 90 s on screen at 120 s
 

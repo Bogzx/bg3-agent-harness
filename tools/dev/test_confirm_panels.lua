@@ -398,7 +398,8 @@ do
     ok(r.needs_click == 2 and r.confirm == true and #sent == 0, "ui.react: two interruptors, no row chosen -> click")
     shield.buttons[4].DataContext = { Decision = "Use" }
     r = ops["ui.react"]({ use = true, which = 2 })
-    ok(r.job and sent[1] and sent[1].name == "InterruptAcceptPlayerCommand", "ui.react: two interruptors, chosen -> Accept")
+    ok(r.job and sent[1] and sent[1].name == "InterruptAcceptPlayerCommand",
+        "ui.react: two interruptors, chosen -> Accept")
     -- v010 live windows 6-7: Karlach's Reckless Attack, one interruptor with one row. Its Accept button is collapsed;
     -- InterruptAcceptPlayerCommand closed the prompt without the reaction (w6), and the row's press (its
     -- CommandParameter, a PassThrough multi-binding, reads nil) left it unanswered (w7). The bridge clicks the row.
