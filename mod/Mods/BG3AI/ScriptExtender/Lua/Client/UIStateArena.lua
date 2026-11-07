@@ -35,6 +35,7 @@ function S.heldInterrupt()
         end)
     end
     if #rows == 0 then return nil end
+    table.sort(parts) -- pairs' order may flip between reads, and a new key restarts the runner's clocks
     return { key = table.concat(parts, "|"), rows = rows }
 end
 

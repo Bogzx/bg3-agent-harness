@@ -9,6 +9,7 @@ Run: cd bridge && uv run python -m unittest tests.test_reactclick
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
@@ -167,6 +168,40 @@ class ReactTool(Base):
         self.assertTrue(out.startswith("react: done — clicked reaction row 3"), out)
         self.assertEqual(self.p.clicked, [3])
         self.assertEqual(self.jobs, [("ui.react", {"use": True, "which": "3"})])
+
+    def test_two_interruptors_click_the_row_then_confirm(self):
+        # live 02:00: Cutting Words + Shield: the mod's press chose nothing, and its accept closed the prompt unused
+        seq = [JobResult("done", {"needs_click": 2, "rows": 4, "confirm": True}), JobResult("done", {})]
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            self.jobs.append((op, dict(args)))
+            return seq.pop(0)
+        self.g.run_job = run_job
+        self.p.answers = False
+        out = dialogue.react(True, "2")  # the click chooses the row, so the prompt stays up (answers=False)
+        self.assertEqual([a for _, a in self.jobs], [{"use": True, "which": "2"}, {"use": True, "which": 2}])
+        self.assertIn("react: done", out)
+
+    def test_two_interruptors_a_click_that_chooses_nothing_says_so(self):
+        seq = [JobResult("done", {"needs_click": 2, "rows": 4, "confirm": True}),
+               JobResult("done", {"needs_click": 2, "rows": 4, "confirm": True})]
+        self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: seq.pop(0)
+        self.p.answers = False
+        self.assertIn("react: FAILED — the click chose no row", dialogue.react(True, "2"))
+
+    def test_done_with_nothing_spent_is_failed(self):
+        saved = self.g.rpc
+        totals = [{"uuids": ["u"], "total": 5}]
+        self.g.rpc = lambda op, args=None, context="server", **kw: (
+            totals[0] if op == "ui.react_spent" else saved(op, args, context, **kw))
+        self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult("done", {})
+        with mock.patch.object(dialogue, "REACT_SPENT_S", 0.0):
+            out = dialogue.react(True, "1")
+            self.assertTrue(out.startswith("react: FAILED — the prompt closed and nothing was spent"), out)
+            seq = [{"uuids": ["u"], "total": 5}, {"uuids": ["u"], "total": 4}]
+            self.g.rpc = lambda op, args=None, context="server", **kw: (
+                seq.pop(0) if op == "ui.react_spent" else saved(op, args, context, **kw))
+            self.assertIn("react: done", dialogue.react(True, "1"))
 
     def test_a_single_row_prompt_is_untouched(self):
         self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult("done", {})

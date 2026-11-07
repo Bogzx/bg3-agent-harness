@@ -244,6 +244,48 @@ test("held_reaction: the harness reads a hold with no popup; a side never does",
     eq(rpc("ui.state", "{}").result.held_reaction, nil, "nothing held")
 end)
 
+-- L5 reads (live.md 02:00:05): Cutting Words + Shield: use=true read done, nobody reacted, Confirm stayed grey.
+test("two interruptors: use=true hands the row to the bridge; only a row that reads chosen is accepted", function()
+    prompt("Bo", "Bo")
+    held(B1)
+    local r = rpc("ui.react", "{use=true,which=2}", "B")
+    eq(r.result.needs_click, 2, "the row")
+    eq(r.result.confirm, true, "and a confirm after")
+    eq(#UI.commands, 0, "nothing accepted")
+    pages.ReactionDecisionPopup.children[2].children[1].IsChecked = true
+    rpc("ui.react", "{use=true,which=2}", "B")
+    eq(UI.commands[1], "InterruptAcceptPlayerCommand", "accepted")
+    local bad = rpc("ui.react", "{use=true,which=9}", "B").error
+    assert(tostring(bad):find("no reaction option 9 (2 shown)", 1, true), bad)
+end)
+
+test("ui.react_spent: the observers' total, a side's own only; ui.react_probe hides the other side's prompt", function()
+    nameless_prompt()
+    held(B1)
+    local ent = { ActionResources = { Resources = { a = { { Amount = 1 } }, b = { { Amount = 2 }, { Amount = 3 } } } } }
+    local get = Ext.Entity.Get
+    Ext.Entity.Get = function(u) return u == B1 and ent or nil end
+    local m = rpc("ui.react_spent", "{}", "B").result
+    eq(m.total, 6, "summed")
+    eq(m.uuids[1], B1, "the observer")
+    eq(#rpc("ui.react_spent", "{}", "A").result.uuids, 0, "A gets nobody")
+    eq(rpc("ui.react_spent", '{uuids={"' .. B1 .. '"}}', "A").result.total, 0, "nor by asking for it")
+    ent.ActionResources.Resources.a[1].Amount = 0
+    eq(rpc("ui.react_spent", '{uuids={"' .. B1 .. '"}}', "B").result.total, 5, "after the spend")
+    Ext.Entity.Get = get
+    eq(rpc("ui.react_probe", "{}", "A").result.open, false, "A: no prompt")
+    eq(rpc("ui.react_probe", "{}", "B").result.open, true, "B: its own")
+end)
+
+test("the hold's key doesn't follow the order of the game's list", function()
+    held(B1)
+    entities[1].InterruptActionState.SpellCastGuid = "z"
+    held(B1)
+    local one = rpc("ui.state", "{}").result.held_reaction.key
+    entities[1], entities[2] = entities[2], entities[1]
+    eq(rpc("ui.state", "{}").result.held_reaction.key, one, "same key")
+end)
+
 test("a prompt naming both sides, or someone of neither, is nobody's", function()
     prompt("Ana", "Bo")
     eq(S.reactionSide(S.reactionRows(pages.ReactionDecisionPopup)), nil, "both")

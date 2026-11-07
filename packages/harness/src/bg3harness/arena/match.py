@@ -99,9 +99,10 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    detail}`. Both ops are the mod's client context's, as the bridge sends them. It reads `ui.state` for one only
    once a turn (or the wait for the first) is UNOWNED_CHECK_S old, then at most every UNOWNED_CHECK_S: a turn that
    moves on costs no read; while the game holds for a reaction, every REACTION_POLL_S. A prompt its owner leaves open
-   for the arena's turn_cap_s from that first read (what a turn gets: a shorter bound would take reactions from slow
-   models only) is declined the same way (`arena_reaction_declined {round, side, detail}`). A hold with no prompt on
-   screen for REACTION_STUCK_S, or still there that long after a decline, is one nobody can clear: the match ends
+   for the arena's turn_cap_s from its first read on screen (what a turn gets: a shorter bound would take reactions
+   from slow models only) is declined the same way (`arena_reaction_declined {round, side, detail}`). A hold
+   REACTION_STUCK_S past its prompt's last read on screen (or its first read, if none showed), or past a decline, is
+   one nobody can clear: the match ends
    `fault`, so it can't hang. The same read finds a prompt one side owns (the
    mod's `owner`, from the game's own observer) while the other side's phase is on: until the next read or the next
    phase, that side's model time counts as the
@@ -156,7 +157,7 @@ STALL_MIN_S = 300.0  # ... and at least this long has stalled
 STALL_CALLS = 3  # the tool calls of each side an arena_stall record shows
 UNOWNED_CHECK_S = 15.0  # a turn this old: ui.state is read for a prompt no team owns, then at most this often
 REACTION_POLL_S = 2.0  # while the game holds for a reaction: ui.state this often
-REACTION_STUCK_S = 60.0  # a hold with no prompt to answer this long, or this long after its decline, ends the match
+REACTION_STUCK_S = 60.0  # a hold this long with no prompt on screen, or after its decline, ends the match
 END_FIELDS = ("winner", "reason", "rounds", "hp_left_A", "hp_left_B")
 # the runner's ends that make the match invalid (rerun, never graded): the game failed, our client side failed past
 # its resume (client_fault), an operator's abort, the money cap
@@ -462,10 +463,13 @@ def _prompt_owner(rx: Mapping[str, Any], ref: Referee) -> str | None:
 
 @dataclass
 class _Hold:
-    """The hold the last read found: the game's key for it, when it was first read, when it was declined."""
+    """The hold the last read found: the game's key for it, when it was first read, when its prompt was first and
+    last on screen, when it was declined."""
 
     key: str | None = None
     since: float = 0.0
+    opened: float | None = None
+    shown: float | None = None
     declined: float | None = None
 
 
@@ -488,16 +492,19 @@ def _reaction_check(
         return None
     key = str((held or {}).get("key") or (rx or {}).get("prompt") or "")
     if key != hold.key:
-        hold.key, hold.since, hold.declined = key, now, None
-    age = now - hold.since
+        hold.key, hold.since, hold.opened, hold.shown, hold.declined = key, now, None, None, None
+    if rx is not None:
+        hold.opened, hold.shown = hold.opened or now, now
     owner = (held or {}).get("side") if rx is None else None
     if rx is None or hold.declined is not None:
-        if now - (hold.since if hold.declined is None else hold.declined) >= REACTION_STUCK_S:
+        last = hold.declined or hold.shown or hold.since  # time with a prompt on screen doesn't count
+        if now - last >= REACTION_STUCK_S:
+            age = now - hold.since
             raise _Ended("fault", detail=f"a reaction held the game {age:.0f} s with no answer left to give ({key})")
         return owner
     unowned = bool(rx.get("unowned"))
     owner = None if unowned else rx.get("owner") or _prompt_owner(rx, ref)
-    if not unowned and age < spec.turn_cap_s:
+    if not unowned and now - (hold.opened or now) < spec.turn_cap_s:
         return owner
     try:
         job = game.rpc("ui.react", {"use": False}, context="client") or {}

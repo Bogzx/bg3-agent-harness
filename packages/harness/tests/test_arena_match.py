@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import types
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -558,6 +559,27 @@ def test_a_hold_with_no_prompt_on_screen_ends_the_match_as_a_fault(tmp_path):
     out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
     assert out.invalid is not None and "reaction held the game" in out.invalid
     assert ("ui.react", None) not in game.calls  # no popup: nothing to send
+
+
+def test_an_answer_after_the_stuck_time_with_the_hold_lingering_is_no_fault(tmp_path):
+    """REVIEW-reactions M1: an owner answers at 65 s and the hold outlives the popup by one read. Time with the prompt
+    on screen isn't stuck time: it read fault at 66, an invalid end for the slow models the bound is there for."""
+    read = {"reaction": {"prompt": "x", "owner": "B", "options": []}, "screen": "reaction"}
+    key = {"held_reaction": {"key": "k", "side": "B", "interrupts": ["x"]}}
+    replies = [{**read, **key}] * 2 + [key]
+
+    class Reads:
+        def rpc(self, op, args=None, context="server"):
+            assert op == "ui.state"
+            return replies.pop(0)
+
+    spec = types.SimpleNamespace(name="a", turn_cap_s=90.0)
+    hold = am._Hold()
+    for now in (0.0, 64.0, 66.0):
+        assert am._reaction_check(spec, Reads(), None, print, hold, now) == "B"  # type: ignore[arg-type]
+    replies.append(key)
+    with pytest.raises(am._Ended):  # still stuck 60 s after the prompt's last read
+        am._reaction_check(spec, Reads(), None, print, hold, 124.0)  # type: ignore[arg-type]
 
 
 def test_a_prompt_a_decline_doesnt_close_ends_the_match_as_a_fault(tmp_path):

@@ -182,8 +182,8 @@ def _shared_screen() -> bool:
 
 
 def _inp(own_prompt: bool = False):
-    """own_prompt: for a click on this side's own reaction prompt, the one click a match makes: the mod has said the
-    prompt is this side's, and the game holds everyone until it is answered, so no other click can meet it."""
+    """own_prompt: for a click on this side's own reaction prompt, the one click a match makes: ui.react has said the
+    prompt is this side's, and ui.react_probe, which every such click walks by, reads another side's as none."""
     from ..input import InputClient
     if _shared_screen() and not own_prompt:
         return None
