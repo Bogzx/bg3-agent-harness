@@ -14,7 +14,6 @@
  "name": "builds-l12-4v4-v1",
  "title": "Level 12: Fighter (Battle Master), Bard (Lore), Wizard (Evocation), Rogue (Thief); each its hireling's race and background",
  "about": "The build file l12_4v4_v1 (tools/dev/make_arena_save.py builds-arena), each pair's twins made per match, on crash-mirror-v1's save.",
- "draft": "no reference for the Rogue: its L12 reference held Sleight of Hand where the plan has Acrobatics (live.md 'L12 launches 2c-4'), to be read again (2026-11-07)",
  "location": {
   "level": "WLD_Main_A",
   "spawns": {
@@ -2846,6 +2845,291 @@
      "spell_abilities": {
       "Shout_SupremeSneak": "Intelligence"
      }
+    },
+    "reference": {
+     "profile": {
+      "race": "0eb594cb-8820-4be6-a58d-8be7a1a98fba",
+      "level": 12,
+      "classes": [
+       "e8b1eab0-ef11-40a2-8a0b-cee8d062bf2a/32c7b8df-a6ec-4848-a9db-c0dce781beb9/12"
+      ],
+      "abilities": [
+       8,
+       20,
+       16,
+       12,
+       13,
+       10
+      ],
+      "max_hp": 123,
+      "ac": 16,
+      "equipment": {
+       "Boots": "ARM_Boots_Leather_969bab00-b269-46a5-a7e9-dd4887814719",
+       "RangedMainHand": "WPN_HUM_Shortbow_A_2_NOT_APPROVED_d9a98dce-1027-4324-939c-3c9cfe776731",
+       "Breast": "ARM_Leather_Rogue_4c4396db-fa4a-4541-9b2a-23e43211dde7",
+       "MeleeMainHand": "WPN_HUM_Shortsword_A_2_0839fb15-24ab-4c3a-b168-413a47ed710a"
+      },
+      "inventory": [
+       "CONS_Potion_Healing_A_Greater_e3b95c96-dc26-40fe-bfc0-baa05e1abd20",
+       "CONS_Potion_Healing_A_Superior_df4f3495-abaf-4732-b82f-55bcccd561db",
+       "CONS_Potion_Healing_A_d47006e9-8a51-453d-b200-9e0d42e9bbab",
+       "TOOL_GEN_ThievesTools_A_Open_A_e32a200c-5b63-414d-ae57-00e7b38f125b"
+      ],
+      "spells": [
+       "Projectile_HamstringShot",
+       "Projectile_Jump",
+       "Projectile_MainHandAttack",
+       "Projectile_SneakAttack",
+       "Shout_Dash",
+       "Shout_Dash_CunningAction",
+       "Shout_Disengage",
+       "Shout_Disengage_CunningAction",
+       "Shout_Hide",
+       "Shout_Hide_BonusAction",
+       "Shout_SupremeSneak",
+       "Target_Dip",
+       "Target_Help",
+       "Target_MainHandAttack",
+       "Target_OpeningAttack",
+       "Target_PiercingThrust",
+       "Target_Shove",
+       "Target_SneakAttack",
+       "Throw_ImprovisedWeapon",
+       "Throw_Throw"
+      ],
+      "prepared": [
+       "Projectile_HamstringShot",
+       "Projectile_Jump",
+       "Projectile_MainHandAttack",
+       "Projectile_SneakAttack",
+       "Shout_Dash",
+       "Shout_Dash_CunningAction",
+       "Shout_Disengage",
+       "Shout_Disengage_CunningAction",
+       "Shout_Hide",
+       "Shout_Hide_BonusAction",
+       "Shout_SupremeSneak",
+       "Target_Dip",
+       "Target_Help",
+       "Target_MainHandAttack",
+       "Target_OpeningAttack",
+       "Target_PiercingThrust",
+       "Target_Shove",
+       "Target_SneakAttack",
+       "Throw_ImprovisedWeapon",
+       "Throw_Throw"
+      ],
+      "passives": [
+       "AttackOfOpportunity",
+       "Background_Urchin",
+       "CombatStartAttack",
+       "DarknessRules",
+       "DeathSavingThrows",
+       "Evasion",
+       "FastHands",
+       "HumanMilitia",
+       "HumanVersatility",
+       "Mobile_CounterAttackOfOpportunity",
+       "Mobile_DashAcrossDifficultTerrain",
+       "Mobile_PassiveBonuses",
+       "NonLethal",
+       "Perform",
+       "ReliableTalent",
+       "SecondStoryWork",
+       "ShortResting",
+       "SneakAttack_Unlock",
+       "Tough",
+       "UncannyDodge",
+       "WeaponThrow"
+      ],
+      "statuses": [
+       "INSURFACE"
+      ],
+      "resources": {
+       "Movement": {
+        "0": 12.0
+       },
+       "ActionPoint": {
+        "0": 1.0
+       },
+       "BonusActionPoint": {
+        "0": 2.0
+       },
+       "SneakAttack_Charge": {
+        "0": 1.0
+       },
+       "ReactionActionPoint": {
+        "0": 1.0
+       }
+      },
+      "proficiencies": [
+       "Glaives",
+       "Halberds",
+       "HandCrossbows",
+       "LightArmor",
+       "Longswords",
+       "Pikes",
+       "Rapiers",
+       "Shields",
+       "Shortswords",
+       "SimpleWeapons",
+       "Spears"
+      ],
+      "skills": {
+       "Nature": 1,
+       "Insight": 1,
+       "Intimidation": 0,
+       "Arcana": 1,
+       "Persuasion": 0,
+       "Acrobatics": 13,
+       "Athletics": 7,
+       "Deception": 4,
+       "Stealth": 13,
+       "Perception": 9,
+       "History": 1,
+       "Medicine": 1,
+       "Religion": 1,
+       "Survival": 1,
+       "AnimalHandling": 1,
+       "Investigation": 5,
+       "Performance": 0,
+       "SleightOfHand": 9
+      },
+      "boosts": [
+       "Ability|Ability|Charisma,10|",
+       "Ability|Ability|Constitution,14|",
+       "Ability|Ability|Constitution,1|",
+       "Ability|Ability|Constitution,1|",
+       "Ability|Ability|Dexterity,15|",
+       "Ability|Ability|Dexterity,1|",
+       "Ability|Ability|Dexterity,2|",
+       "Ability|Ability|Dexterity,2|",
+       "Ability|Ability|Intelligence,12|",
+       "Ability|Ability|Strength,8|",
+       "Ability|Ability|Wisdom,13|",
+       "ActionResource|||",
+       "ActionResource|||",
+       "ActionResource|||",
+       "ActionResource|||",
+       "AreaDamageEvade|||",
+       "BlockRegainHP|BlockRegainHP|Undead;Construct|",
+       "CarryCapacityMultiplier|||",
+       "DamageReduction|||",
+       "DownedStatus|||",
+       "ExpertiseBonus|ExpertiseBonus|Acrobatics|",
+       "ExpertiseBonus|ExpertiseBonus|Athletics|",
+       "ExpertiseBonus|ExpertiseBonus|Perception|",
+       "ExpertiseBonus|ExpertiseBonus|Stealth|",
+       "FallDamageMultiplier|||",
+       "IncreaseMaxHP|||",
+       "MinimumRollResult|||",
+       "MinimumRollResult|||",
+       "MinimumRollResult|||",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Acrobatics|",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Athletics|",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Deception|",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Investigation|",
+       "ProficiencyBonus|ProficiencyBonus|Skill,Perception|",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "ProficiencyBonus|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "Proficiency|||",
+       "UnlockInterrupt|||",
+       "UnlockInterrupt|||",
+       "UnlockInterrupt|||",
+       "UnlockSpell|UnlockSpell|Projectile_HamstringShot|",
+       "UnlockSpell|UnlockSpell|Target_OpeningAttack|",
+       "UnlockSpell|UnlockSpell|Target_PiercingThrust|",
+       "UnlockSpell|||",
+       "UnlockSpell|||"
+      ],
+      "spellcast": [
+       "Projectile_HamstringShot|Intelligence|AlwaysPrepared|13|5",
+       "Projectile_Jump|Intelligence|AlwaysPrepared|13|5",
+       "Projectile_MainHandAttack|None|AlwaysPrepared|-|-",
+       "Projectile_SneakAttack|Intelligence|AlwaysPrepared|13|5",
+       "Shout_Dash_CunningAction|Intelligence|AlwaysPrepared|13|5",
+       "Shout_Dash|Intelligence|AlwaysPrepared|13|5",
+       "Shout_Disengage_CunningAction|Intelligence|AlwaysPrepared|13|5",
+       "Shout_Disengage|Intelligence|AlwaysPrepared|13|5",
+       "Shout_Hide_BonusAction|Intelligence|AlwaysPrepared|13|5",
+       "Shout_Hide|Intelligence|AlwaysPrepared|13|5",
+       "Shout_SupremeSneak|Intelligence|AlwaysPrepared|13|5",
+       "Target_Dip|Intelligence|AlwaysPrepared|13|5",
+       "Target_Help|Intelligence|AlwaysPrepared|13|5",
+       "Target_MainHandAttack|None|AlwaysPrepared|-|-",
+       "Target_OpeningAttack|Intelligence|AlwaysPrepared|13|5",
+       "Target_PiercingThrust|Intelligence|AlwaysPrepared|13|5",
+       "Target_Shove|Intelligence|AlwaysPrepared|13|5",
+       "Target_SneakAttack|Intelligence|AlwaysPrepared|13|5",
+       "Throw_ImprovisedWeapon|Intelligence|AlwaysPrepared|13|5",
+       "Throw_Throw|Intelligence|AlwaysPrepared|13|5"
+      ],
+      "derived": {
+       "initiative_bonus": 5,
+       "movement": 12.0,
+       "proficiency_bonus": 4,
+       "spell_save_dc_boost": 0,
+       "melee_main_hand": "none",
+       "ranged_main_hand": "none",
+       "weapon_action_dc": 4,
+       "spell_casting_ability": "Intelligence"
+      },
+      "resource_max": [
+       "ActionPoint|0|1.0|Default",
+       "BonusActionPoint|0|2.0|Default",
+       "Movement|0|12.0|Default",
+       "ReactionActionPoint|0|1.0|Default",
+       "SneakAttack_Charge|0|1.0|Default"
+      ],
+      "passive_state": [
+       "AttackOfOpportunity|false|true",
+       "Background_Urchin|false|true",
+       "CombatStartAttack|false|true",
+       "DarknessRules|false|true",
+       "DeathSavingThrows|false|true",
+       "Evasion|false|true",
+       "FastHands|false|true",
+       "HumanMilitia|false|true",
+       "HumanVersatility|false|true",
+       "Mobile_CounterAttackOfOpportunity|false|true",
+       "Mobile_DashAcrossDifficultTerrain|false|true",
+       "Mobile_PassiveBonuses|false|true",
+       "NonLethal|false|true",
+       "Perform|false|true",
+       "ReliableTalent|false|true",
+       "SecondStoryWork|false|true",
+       "ShortResting|false|true",
+       "SneakAttack_Unlock|false|true",
+       "Tough|false|true",
+       "UncannyDodge|true|true",
+       "WeaponThrow|false|true"
+      ]
+     },
+     "accepted": [
+      {
+       "field": "derived",
+       "only_twin": [
+        "weapon_action_dc=8"
+       ],
+       "only_reference": [
+        "weapon_action_dc=4"
+       ],
+       "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 4 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same. Row from L12's S4 (live.md 'L12 launches 2c-4')."
+      }
+     ]
     }
    }
   ]
