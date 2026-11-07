@@ -83,8 +83,8 @@ Lines a result may end with:
 
 ### Combat facts
 - After the first weapon attack (a Main Hand Attack, Divine Smite, Reckless Attack) the next one costs no action
-  with Extra Attack, as in the game; get_actions shows it as `[Extra Attack: free]`. Weapon actions (Lacerate,
-  Cleave) and spells don't.
+  with Extra Attack, as in the game; get_actions shows it as `[Extra Attack: free]`. A weapon action can take it too.
+  Spells don't.
 - `targets` with 3+ names (Bless): the cast takes 2, so it goes on the first two and says who was left out.
   Spells with no higher-level form here (Guiding Bolt) ignore `upcast` and say so.
 
