@@ -140,11 +140,14 @@ local function openPage(spec)
     p.ClassProgressionDetails = obj("VMProgressionDetails", cpd)
     -- Skill groups (spec.expertise, spec.class_skills = {names, held = {name = true}, preset = {name = true},
     -- disabled = {name = true}, max, unread = true}): held are earlier picks (Enabled false); preset the page's own;
-    -- disabled can't be toggled; a full group ignores ToggleSkill and says nothing (live). unread: every row but a
-    -- disabled one reads Enabled nil, and a held row comes off if toggled.
+    -- disabled can't be toggled. full: a toggle on a full group. Live, Rogue L6: from Deception, Sleight of Hand,
+    -- toggling Acrobatics then Athletics left Sleight of Hand, Athletics; how isn't read. "replaces" and "clears" (the
+    -- first own row goes, the toggled row on or not) each end there. Left out: nothing happens, as ProgressionCC reads
+    -- on a respec page, so the room stage's guards get work. unread: rows read Enabled nil, not seen live; a held one
+    -- comes off if toggled.
     local function skillGroup(e)
         local items = {}
-        local g = { items = items, max = e.max }
+        local g = { items = items, max = e.max, full = e.full }
         for i, n in ipairs(e.names) do
             items[i] = obj("ls.VM", { Name = n, Selected = (e.held or {})[n] or (e.preset or {})[n] or false,
                 Enabled = not ((e.held or {})[n] or (e.disabled or {})[n]), _g = g, _held = (e.held or {})[n] })
@@ -327,12 +330,13 @@ BG3AI.UI = {
             return true
         elseif name == "ToggleSkill" then
             if page.expertiseStuck or arg._p.Enabled == false then return true end
-            local own = 0
-            for _, it in ipairs(arg._p._g.items) do
-                if it._p.Selected == true and not it._p._held then own = own + 1 end
+            local own, first, g = 0, nil, arg._p._g
+            for _, it in ipairs(g.items) do
+                if it._p.Selected == true and not it._p._held then own, first = own + 1, first or it end
             end
             if arg._p.Selected == true then arg._p.Selected = false
-            elseif own < arg._p._g.max then arg._p.Selected = true end
+            elseif own < g.max then arg._p.Selected = true
+            elseif first and g.full then first._p.Selected, arg._p.Selected = false, g.full == "replaces" end
             return true
         elseif name == "TogglePassive" then
             arg._p.Value = arg._p.Value > 0 and 0.0 or 1.0
@@ -827,11 +831,12 @@ check(j.status == "failed" and not page.finished and tostring(j.error):find("Fei
       "a stale page short of the plan's selector: stopped, not finished (" .. tostring(j.status) .. ", "
       .. tostring(j.error) .. ")")
 
--- 33j. live 2026-11-07, Rogue L6: the group opens full of the page's own picks, ToggleSkill is ignored, the game calls
---      the page complete. The plan's picks land, an earlier level's stay
-local ROGUE6 = { class = "Rogue", expertise = { max = 2,
+-- 33j. live 2026-11-07, Rogue L6's rows as read: the group opens full of the page's own picks, the game calls the page
+--      complete. The plan's picks land, an earlier level's stay, and both of the page's own are said to have come off,
+--      the one the game took as well as the one the room stage turned off
+local function rogue6(full) return { class = "Rogue", expertise = { max = 2, full = full,
     names = { "Deception", "Acrobatics", "SleightOfHand", "Stealth", "Athletics", "Perception" },
-    held = { Stealth = true, Perception = true }, preset = { SleightOfHand = true, Athletics = true } } }
+    held = { Stealth = true, Perception = true }, preset = { Deception = true, SleightOfHand = true } } } end
 local function expertiseOn()
     local on = {}
     for _, it in ipairs(page.expertiseItems) do
@@ -839,13 +844,19 @@ local function expertiseOn()
     end
     return table.concat(on, ",")
 end
-openPage(ROGUE6)
-j = run({ uuid = "claude", plan = { expertise = { "Acrobatics", "Athletics" } } })
-check(j.status == "done" and page.finished == true and expertiseOn() == "Acrobatics,Stealth,Athletics,Perception",
-      "a group full of the page's picks: the plan's land, held stay (" .. tostring(j.status) .. ", " .. expertiseOn()
-      .. ", " .. tostring(j.error) .. ")")
-check(j.result.set.expertise_off and j.result.set.expertise_off[1] == "SleightOfHand"
-      and #j.result.set.expertise_off == 1, "the one turned off is said")
+for _, full in ipairs({ "replaces", "clears" }) do
+    openPage(rogue6(full))
+    j = run({ uuid = "claude", plan = { expertise = { "Acrobatics", "Athletics" } } })
+    check(j.status == "done" and page.finished == true and expertiseOn() == "Acrobatics,Stealth,Athletics,Perception"
+          and table.concat(j.result.set.expertise_off or {}, ",") == "Deception,SleightOfHand",
+          "the plan's land, held stay, all that left is said (" .. full .. ", " .. expertiseOn() .. ")")
+    -- a named preset a toggle took and the room stage put back is on the page: not said
+    openPage(rogue6(full))
+    j = run({ uuid = "claude", plan = { expertise = { "Deception", "Acrobatics" } } })
+    check(j.status == "done" and expertiseOn() == "Deception,Acrobatics,Stealth,Perception"
+          and table.concat(j.result.set.expertise_off or {}, ",") == "SleightOfHand",
+          "a named preset back on the page isn't said (" .. full .. ", " .. expertiseOn() .. ")")
+end
 -- 33k. Bard L10's shape: nothing preset, both land by their own toggles, nothing turned off
 openPage({ class = "Bard", expertise = { max = 2, names = { "Performance", "Persuasion", "Insight", "Medicine" },
     held = { Performance = true, Persuasion = true } } })
@@ -853,14 +864,14 @@ j = run({ uuid = "claude", plan = { expertise = { "Medicine", "Insight" } } })
 check(j.status == "done" and expertiseOn() == "Performance,Persuasion,Insight,Medicine"
       and j.result.set.expertise_off == nil, "a free group: toggled, nothing turned off")
 -- 33l. a plan's pick that can't land (the toggle does nothing): not finished, and the pick is named
-openPage(ROGUE6)
+openPage(rogue6())
 page.expertiseStuck = true
 j = run({ uuid = "claude", plan = { expertise = { "Acrobatics", "Athletics" } } })
 check(j.status == "failed" and not page.finished
       and tostring(j.error):find("skill Acrobatics: not on the page", 1, true),
       "a pick that doesn't land: not finished (" .. tostring(j.status) .. ", " .. tostring(j.error) .. ")")
 -- 33m. a pick the group doesn't list: the same
-openPage(ROGUE6)
+openPage(rogue6())
 j = run({ uuid = "claude", plan = { expertise = { "History" } } })
 check(j.status == "failed" and not page.finished and tostring(j.error):find("skill History", 1, true),
       "a pick not offered: not finished (" .. tostring(j.status) .. ", " .. tostring(j.error) .. ")")
@@ -888,10 +899,10 @@ check(j.status == "done" and expertiseOn() == "Athletics,Acrobatics"
       and table.concat(j.result.set.expertise_off or {}, ",") == "SleightOfHand",
       "a named preset ahead: kept (" .. expertiseOn() .. ", " .. tostring(j.error) .. ")")
 -- 33q. F2: the tool's documented key on the same page: plan.skills lands too (its definition names only skills)
-openPage(ROGUE6)
+openPage(rogue6("replaces"))
 j = run({ uuid = "claude", plan = { skills = { "Acrobatics", "Athletics" } } })
 check(j.status == "done" and page.finished == true and expertiseOn() == "Acrobatics,Stealth,Athletics,Perception"
-      and table.concat(j.result.set.expertise_off or {}, ",") == "SleightOfHand",
+      and table.concat(j.result.set.expertise_off or {}, ",") == "Deception,SleightOfHand",
       "plan.skills on a full group: lands (" .. tostring(j.status) .. ", " .. expertiseOn() .. ", "
       .. tostring(j.error) .. ")")
 -- 33r. F2: the group skillsStage toggled it in, the first holding the name: the class group; expertise is left alone
@@ -913,8 +924,8 @@ check(j.status == "failed" and not page.finished and expertiseOn() == "SleightOf
       and j.result.set.expertise_off == nil and tostring(j.error):find("skill Acrobatics", 1, true) ~= nil,
       "a disabled name: nothing turned off, named (" .. expertiseOn() .. ", " .. tostring(j.error) .. ")")
 
--- 33t. Enabled on a level-up page is unread: rows reading nil, held ones first. Nothing comes off, no earlier pick is
---      lost, and the named pick that can't land is refused, not finished
+-- 33t. Rows reading Enabled nil, not seen live, held ones first. Nothing comes off, no earlier pick is lost, and the
+--      named pick that can't land is refused, not finished
 openPage({ class = "Rogue", expertise = { max = 2, unread = true,
     names = { "Stealth", "Perception", "SleightOfHand", "Acrobatics", "Athletics" },
     held = { Stealth = true, Perception = true }, preset = { SleightOfHand = true, Athletics = true } } })

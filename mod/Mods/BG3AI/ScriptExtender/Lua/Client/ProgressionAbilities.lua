@@ -173,13 +173,14 @@ local function picksStage(getDC, ctx, plan)
     end
 end
 
--- A level's skill group can open full of the game's own picks, and a full group ignores ToggleSkill and says nothing
--- (live 2026-11-07, Rogue L6: plan Acrobatics, Athletics; the page finished Sleight of Hand, Athletics). Only for a
--- named pick that didn't land: off with as many of its group's unnamed picks as it lacks, then on with it. Its group is
--- the one skillsStage toggled it in: `only`, else the first holding the name. Only a row reading Enabled true comes
--- off: false is an earlier level's or another source's, and a level-up page's rows are unread, so one reading nil may
--- be an earlier pick too and stays; the named pick then doesn't land and the read-back refuses. A name the game shows
--- disabled can't land, so it costs nothing and the read-back names it. Turned off: result.set.<group>_off.
+-- A level's skill group can open full of the game's own picks (live 2026-11-07, Rogue L6: Deception, Sleight of Hand).
+-- Toggling the plan's Acrobatics then Athletics left Sleight of Hand, Athletics with no error: Deception gone,
+-- Acrobatics not on; how the game did that isn't read. Only for a named pick that didn't land: off with as many of its
+-- group's unnamed picks as it lacks, then on with it. Its group is the one skillsStage toggled it in: `only`, else the
+-- first holding the name. Only a row reading Enabled true comes off, as the page's own read on Rogue L6 and Bard L3:
+-- false is an earlier level's or another source's (read on Rogue L6, Bard L10), and one reading anything else may be
+-- one too and stays; the named pick then doesn't land and the read-back refuses. A name the game shows disabled can't
+-- land, so it costs nothing and the read-back names it.
 local function skillRoomStage(getDC, ctx, wanted, only)
     local lacking
     return function()
@@ -205,17 +206,14 @@ local function skillRoomStage(getDC, ctx, wanted, only)
             end
         end
         for _, g in ipairs(groups) do
-            local off = {}
+            local off = 0
             for _, it in ipairs(list(g.skills)) do
-                if #off < g.lacks and UI.prop(it, "Selected") == true and UI.prop(it, "Enabled") == true
+                if off < g.lacks and UI.prop(it, "Selected") == true and UI.prop(it, "Enabled") == true
                     and not g.keep[label(it)] then
                     UI.command(dc, "ToggleSkill", it)
-                    off[#off + 1] = label(it)
+                    off = off + 1
+                    turned = true
                 end
-            end
-            if #off > 0 then
-                ctx.result.set[g.key .. "_off"] = off
-                turned = true
             end
         end
         if #lacking == 0 then return "next", 0 end
@@ -223,6 +221,38 @@ local function skillRoomStage(getDC, ctx, wanted, only)
     end
 end
 P.inner.skillRoomStage = skillRoomStage
+
+-- What a level's toggles took off, whoever took it: the game can take a row too (above). skillsOpenStage reads every
+-- group's selected rows before them, skillsOffStage names in result.set.<group>_off those on the page and no longer
+-- selected after them.
+local function skillsOpenStage(getDC, ctx)
+    return function()
+        ctx.skillsOpen = {}
+        for _, g in ipairs(skillGroups(getDC())) do
+            local on = {}
+            for _, it in ipairs(list(g.skills)) do
+                if UI.prop(it, "Selected") == true then on[label(it)] = true end
+            end
+            ctx.skillsOpen[g.key] = on
+        end
+        return "next", 0
+    end
+end
+P.inner.skillsOpenStage = skillsOpenStage
+
+local function skillsOffStage(getDC, ctx)
+    return function()
+        for _, g in ipairs(skillGroups(getDC())) do
+            local open, off = ctx.skillsOpen[g.key] or {}, {}
+            for _, it in ipairs(list(g.skills)) do
+                if open[label(it)] and UI.prop(it, "Selected") ~= true then off[#off + 1] = label(it) end
+            end
+            if #off > 0 then ctx.result.set[g.key .. "_off"] = off end
+        end
+        return "next", 0
+    end
+end
+P.inner.skillsOffStage = skillsOffStage
 
 -- The plan's skills and passives read back on a level's page: the ones missing are also ctx.unlanded, and the finish
 -- won't go on without them, since the game can call that page complete (live 2026-11-07, Rogue L6).

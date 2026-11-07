@@ -578,10 +578,12 @@ RPC.register("ui.level_up", function(args)
             end
             return "next", 0
         end },
+        { "skills_open", I.skillsOpenStage(get, ctx) },
         { "skills", skillsStage(get, ctx, plan.skills) },
         { "skills_room", I.skillRoomStage(get, ctx, plan.skills) },
         { "expertise", skillsStage(get, ctx, plan.expertise, "expertise") },
         { "expertise_room", I.skillRoomStage(get, ctx, plan.expertise, "expertise") },
+        { "skills_off", I.skillsOffStage(get, ctx) },
         { "skills?", skillsReport(get, ctx) },
         { "passive_lists", I.passiveListsStage(get, ctx, plan.passive_lists) },
         { "passives", passivesStage(get, ctx, plan.passives, plan.allow_defaults) },
