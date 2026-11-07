@@ -855,3 +855,31 @@ test("held cast: one failed ends every matching entry with a readable outcome", 
     A.held_cast_failed(P1, "Target_MainHandAttack")
     eq(a.countered, true, "h.failed only ends the words: what a cast pays reads as it did before")
 end)
+
+-- extra-attack-read.md (4) and its L12 S6 rerun (7 free attacks unused after the paid swing; orchestrator D331): an
+-- order's after= states the free attack while the game's status is on at that read; in the landing gap it says what
+-- the list says; otherwise nothing, never a guess.
+test("summary: the free status on reads extra_attack_ready, the landing gap cast_unlanded, else neither", function()
+    combat_setup(9)
+    local s = A.summary(P1)
+    eq(s.extra_attack_ready, nil, "no status: nothing claimed")
+    eq(s.cast_unlanded, nil, "no held cast")
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK_2")] = 1
+    eq(A.summary(P1).extra_attack_ready, true, "the game's status on at this read (any of the list's)")
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK_2")] = nil
+    held_swing_charged()
+    s = A.summary(P1)
+    eq(s.cast_unlanded, true, "the gap, Action 0: the list's words")
+    eq(s.extra_attack_ready, nil, "no free attack claimed in the gap")
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
+    s = A.summary(P1)
+    eq(s.extra_attack_ready, true, "the status on in the gap: it reads, as the list's tag")
+    eq(s.cast_unlanded, nil, "and not the gap's words")
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    eq(A.summary(P1).cast_unlanded, nil, "an Action left: the list's gap words don't apply")
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0
+    osiv[key("IsInCombat", P1)] = nil
+    s = A.summary(P1)
+    eq(s.cast_unlanded == nil and s.extra_attack_ready == nil, true, "out of combat: neither")
+end)

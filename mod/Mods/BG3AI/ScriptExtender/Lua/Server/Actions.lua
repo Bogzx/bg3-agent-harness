@@ -642,6 +642,14 @@ function A.summary(char)
     if G.in_combat(char) then
         out.in_combat = true
         out.my_turn = G.is_my_turn(char)
+        -- The game's free-attack status as it reads now, as the list tags the attack (State.actions); with none, in a
+        -- held swing's landing gap at Action 0, the list's words for that; else nothing, never a guess (orchestrator
+        -- D331: the L12 S6 rerun left 7 free attacks unused after a result that read action=0 alone)
+        if G.extra_attack_status(char) then
+            out.extra_attack_ready = true
+        elseif (out.action or 0) < 1 and A.cast_unlanded(char) then
+            out.cast_unlanded = true
+        end
     end
     if G.b(G.q("HasActiveStatus", char, "SNEAKING")) then out.sneaking = true end
     return out
