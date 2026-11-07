@@ -11,7 +11,7 @@
   "game_build": "25605617",
   "bg3le_sha256": "d21546c06f5f307e6c8bd1f68ca3bf70bf95fb23ca54b809405ce4e8d1c16de9",
   "mod_sha1": "a454dc90e0a51ce8bd7cc4c159aba27662bfb3f9",
-  "code_sha1": "d2e0b5f5a286e7305cef0a1525a584075dbb857b"
+  "code_sha1": "d7dfd65302c1ba6ca9ae84958c579d4c5b014eba"
  },
  "scenarios": {
   "act1_goblin_camp_no_fight": {
@@ -980,7 +980,7 @@
      "walk_toward",
      "zoom"
     ],
-    "defs_sha256": "167df3e1f4d9a9912743580fccdc8d12450ed0b9969e6e13bc5e439655c63e7c"
+    "defs_sha256": "c108efc33565ad5cc78fbc87b6e9b81977918e19b3cde7a143a6ebdd48be9394"
    },
    "prompts": {
     "claude": {
@@ -1078,7 +1078,7 @@
        "wait_for",
        "walk_toward"
       ],
-      "defs_sha256": "4bf32916b52440de646690770ca4ef49af19d15af077600a69ba79e4b9b2be11"
+      "defs_sha256": "0f381f8bdc75d908b0bd0a50eda2923bb1d05de39d3438cb0a728e489dc8c5d1"
      },
      "prompts": {
       "pi": {
