@@ -19,6 +19,9 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   or over its dc, or a natural 20, those words stay, without `what came of it shows in the events`: none of the 8
   results on record had any. A melee spell Riposted keeps its slot, as a Canceled pays what the game took; 0 rows on
   record, and what a player pays there is unread.
+- A weapon attack with no Action among its costs no longer says `extra_attack` in its result. Before, b1-act3b seq 199:
+  `cast=Target_PommelStrike extra_attack ... bonus=0`. The action list and what a cast pays don't change. By the stats
+  that cast leaves the free attack unspent; not read live yet.
 - A raw id of a call-allies container the character doesn't hold reads `the character does not have that action`. Before,
   by reading: `casts nothing by itself: its variants (which=) are ...`, with the groups from the game data.
 

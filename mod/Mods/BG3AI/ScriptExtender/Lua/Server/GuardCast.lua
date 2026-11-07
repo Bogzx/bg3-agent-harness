@@ -492,6 +492,10 @@ function G.extra_attack_free(char, st, flags)
     local roll = ""
     pcall(function() roll = tostring(st.SpellRoll and st.SpellRoll.Default or "") end)
     if not roll:find("WeaponAttack") or flags.IsDefaultWeaponAction then return false end
+    -- The status only frees an Action: b1-act3b seq 199 read a bonus-cost Pommel Strike as `extra_attack`.
+    local action = false
+    for _, c in ipairs(G.parse_costs(st.UseCosts)) do action = action or c.name == "ActionPoint" end
+    if not action then return false end
     return b(G.q("HasActiveStatus", char, G.EXTRA_ATTACK_STATUS))
 end
 

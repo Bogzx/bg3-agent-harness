@@ -447,6 +447,27 @@ test("Riposted miss: a free attack's says so, done and no_damage", function()
     eq(k.result.extra_attack, true, "the free attack")
 end)
 
+test("extra attack: a bonus-cost weapon attack isn't the free attack: its result doesn't say so", function()
+    combat_setup(9)
+    world[NPC].pos = { 1.5, 0, 0 }
+    local flags = { "IsMelee", "IsHarmful" }
+    local roll = { Default = "Attack(AttackType.MeleeWeaponAttack)" }
+    spell("Target_PommelStrike", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "BonusActionPoint:1",
+        Level = 0, SpellFlags = flags, SpellRoll = roll })
+    spell("Target_Both", { UseCosts = "ActionPoint:1;BonusActionPoint:1", SpellFlags = flags, SpellRoll = roll })
+    local res = world[P1].comps.ActionResources.Resources
+    res.ActionPoint[1].Amount, res.BonusActionPoint = 0, { { Level = 0, Amount = 1 } }
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
+    local j = job(op("cast", { char = P1, spell = "Target_PommelStrike", target = NPC }))
+    eq(j.status, "running", "started " .. tostring(j.error))
+    A.dispatch("CastedSpell", { P1, "Target_PommelStrike" })
+    tick(10)
+    eq(j.status, "done", "done " .. tostring(j.error))
+    eq(j.result.extra_attack, nil, "not the free attack")
+    eq(G.extra_attack_free(P1, Ext.Stats.Get("Target_Both"), {}), true, "an Action among its costs is")
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
+end)
+
 -- GuardCast's linked box branch: a call-allies box reads every group in the game data when nothing of it is in the
 -- character's own book or containers, which is also so for one who doesn't hold it. Same flaw as Shout_FireShield's.
 local BOX = "Shout_END_AllyAbilities_MultipleSummon"
