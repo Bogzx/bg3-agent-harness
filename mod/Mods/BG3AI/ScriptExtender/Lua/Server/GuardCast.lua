@@ -485,7 +485,7 @@ end
 -- and which goes on the next cast (RemoveEvents OnSpellCast): the next weapon attack costs no action. We
 -- checked the raw UseCosts (ActionPoint:1), so every Extra Attack was refused "not enough action" (S023-S028:
 -- 0 of 7). A weapon attack here = what the game's ExtraAttackSpellCheck takes, with an Action to free, and not a
--- weapon action (Lacerate, Cleave...): the main-hand attacks, Divine Smite, Reckless Attack, an unarmed attack, a throw.
+-- weapon action (Lacerate, Cleave...): main-hand attacks, Divine Smite, Reckless Attack, an unarmed attack, a throw.
 -- Every status with that boost at no cost, in the game's own order (HasHigherPriorityExtraAttackQueued). Fighter 11+
 -- has EXTRA_ATTACK_2 first and EXTRA_ATTACK after it. Not here: EXTRA_ATTACK_WAR_MAGIC and _WAR_PRIEST make the attack
 -- cost a bonus action, not nothing; MIND_MASTERY's holder can't cast.
@@ -509,7 +509,7 @@ function G.extra_attack_spell(spell, st, flags)
     pcall(function() roll = tostring(st.SpellRoll and st.SpellRoll.Default or "") end)
     for _, kind in ipairs(EXTRA_ATTACK_ROLLS) do taken = taken or roll:find(kind, 1, true) end
     if not taken then return false end
-    -- The status only frees an Action: v010-pilot act3 r2 c2 seq 55 read a bonus-cost Frenzied Strike as `extra_attack`.
+    -- The status only frees an Action: v010-pilot act3 r2 c2 seq 55 read a bonus-cost Frenzied Strike as extra_attack.
     for _, c in ipairs(G.parse_costs(st.UseCosts)) do
         if c.name == "ActionPoint" then return true end
     end
