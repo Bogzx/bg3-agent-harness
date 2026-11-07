@@ -342,6 +342,9 @@ game unless it says so.
 - A kit gives a race's rows above level 1 up to its level, as a real character of that race has them: at level 5 a Drow
   twin holds Faerie Fire and Darkness beside Dancing Lights. Only `builds-l5-4v4-team2-v1`'s Ranger moves, and it's still
   a draft. Not read live: nothing has cast them in an arena, and whether a twin keeps their once-per-rest rule.
+- `builds-l5-4v4-team2-v1`'s Barbarian (Wildheart) and Bard (Valor) become a Fighter (Champion) and a Bard (Lore): a
+  twin can't lose a passive its class rows gave (`RemovePassive` does nothing to one, live 2026-11-07), and every
+  Barbarian subclass and Valor remove one at level 3. Swords and Glamour fail the knock-down scan. Still a draft.
 
 ### Benchmark (`packages/bench`)
 

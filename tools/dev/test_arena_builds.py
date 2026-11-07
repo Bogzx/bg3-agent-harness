@@ -673,21 +673,23 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
         self.assertNotIn("Target_Bane_4", plan(tier(5), "bard")["spell_abilities"])
         self.assertIn("Target_Bane_6", plan(tier(12), "bard")["spell_abilities"])
 
-    def test_the_second_team_is_valid_and_a_subclass_rows_removed_passive_is_in_the_kits_grants(self):
+    def test_the_second_team_is_valid_and_no_build_of_it_removes_a_passive(self):
         d = ab.load_builds(REPO / "packages/bench/builds/l5_4v4_team2_v1.json")
         self.assertIn("draft", d)
-        self.assertEqual([b["class"] for b in d["builds"]], ["Barbarian", "Bard", "Wizard", "Ranger"])
+        self.assertEqual([b["class"] for b in d["builds"]], ["Fighter", "Bard", "Wizard", "Ranger"])
         __import__("jsonschema").validate(
             d, json.loads((REPO / "packages/bench/schema/arena-builds.v1.schema.json").read_text())
         )
-        k = plan(d, "barbarian")
-        self.assertEqual(k["grants"]["passives_removed"], ["RageUnlock"])
-        self.assertIn(["TotemSpirit_Bear"], [c["ids"] for c in k["choices"] if c["kind"] == "passives"])
-        self.assertNotIn("passives_removed", plan(tier(5), "fighter")["grants"])
-        v = plan(d, "bard")  # Valor: another removed passive, and proficiencies a copy gets only from the kit
-        self.assertEqual(v["grants"]["passives_removed"], ["BardicInspiration"])
-        self.assertIn("CombatInspiration", v["grants"]["passives"])
-        self.assertIn("Proficiency(MartialWeapons)", v["grants"]["boosts"])
+        k = plan(d, "fighter")  # Champion: its level 3 adds a passive and removes none
+        self.assertEqual(k["grants"]["passives"], ["ImprovedCritical"])
+        self.assertIn(
+            ["FightingStyle_GreatWeaponFighting"], [c["ids"] for c in k["choices"] if c["kind"] == "passives"]
+        )
+        v = plan(d, "bard")  # Lore, as team 1's, with its own picks
+        self.assertEqual(v["grants"]["passives"], ["CuttingWords"])
+        self.assertIn(["Insight", "Persuasion", "Stealth"], [c["ids"] for c in v["choices"] if c["kind"] == "skills"])
+        for b in d["builds"]:
+            self.assertNotIn("passives_removed", plan(d, b["id"]).get("grants", {}), b["id"])
 
     def test_a_wizards_kit_adds_only_its_prepared_picks_and_a_clerics_keeps_prepared_for_the_mod_to_name(self):
         for lv, n in ((2, 5), (5, 9), (12, 17)):

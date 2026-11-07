@@ -1,19 +1,19 @@
 {
  "schema": "arena-builds.v1",
  "name": "l5_4v4_team2_v1",
- "title": "Level 5, second team: Barbarian (Wildheart), Bard (Valor), Wizard (Abjuration), Ranger (Hunter); each its hireling's race and background",
+ "title": "Level 5, second team: Fighter (Champion), Bard (Lore), Wizard (Abjuration), Ranger (Hunter); each its hireling's race and background",
  "tier": "L5",
  "level": 5,
  "game_build": "25605617",
  "draft": "proposed second team, to try once the first team's L5 passes (website repo ops/logs/arena-4v4-tests.md); no reference profiles yet (2026-11-06)",
  "builds": [
   {
-   "id": "barbarian",
-   "class": "Barbarian",
-   "subclass": "TotemWarriorPath",
-   "race": "Dwarf_GoldHill",
-   "background": "Outlander",
-   "role": "frontline, Wildheart (Bear)",
+   "id": "fighter",
+   "class": "Fighter",
+   "subclass": "Champion",
+   "race": "HalfElf_Wood",
+   "background": "Soldier",
+   "role": "frontline: a longsword two-handed, Great Weapon Fighting, the Champion's improved critical",
    "script": {
     "cc": {
      "abilities": {
@@ -29,8 +29,13 @@
       "Constitution"
      ],
      "skills": [
-      "Intimidation",
-      "Perception"
+      "Acrobatics",
+      "Insight"
+     ],
+     "passives": [
+      [
+       "FightingStyle_GreatWeaponFighting"
+      ]
      ]
     },
     "level_ups": [
@@ -38,12 +43,7 @@
       "level": 2
      },
      {
-      "level": 3,
-      "passives": [
-       [
-        "TotemSpirit_Bear"
-       ]
-      ]
+      "level": 3
      },
      {
       "level": 4,
@@ -59,19 +59,12 @@
     ]
    },
    "gear": [
-    "WPN_Greataxe_1",
+    "WPN_Longsword_1",
+    "WPN_Shortbow_1",
+    "ARM_ScaleMail_Body_1",
+    "ARM_Boots_Leather",
     "OBJ_Potion_Healing",
     "OBJ_Potion_Healing",
-    "ARM_Shoes_Barbarian",
-    "ARM_Barbarian",
-    {
-     "item": "WPN_Handaxe_1",
-     "equip": false
-    },
-    {
-     "item": "WPN_Handaxe_1",
-     "equip": false
-    },
     "OBJ_Potion_Healing_Greater"
    ],
    "reference": null
@@ -79,10 +72,10 @@
   {
    "id": "bard",
    "class": "Bard",
-   "subclass": "ValorCollege",
+   "subclass": "LoreCollege",
    "race": "Halfling_Lightfoot",
    "background": "Entertainer",
-   "role": "healer and melee support, College of Valor",
+   "role": "healer and support, College of Lore: Cutting Words",
    "script": {
     "cc": {
      "abilities": {
@@ -135,6 +128,13 @@
        [
         "Athletics",
         "Performance"
+       ]
+      ],
+      "skills": [
+       [
+        "Insight",
+        "Persuasion",
+        "Stealth"
        ]
       ]
      },

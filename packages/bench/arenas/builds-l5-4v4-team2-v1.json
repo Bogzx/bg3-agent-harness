@@ -12,7 +12,7 @@
  "condition": "rules",
  "tools_off": "arena-v1",
  "name": "builds-l5-4v4-team2-v1",
- "title": "Level 5, second team: Barbarian (Wildheart), Bard (Valor), Wizard (Abjuration), Ranger (Hunter); each its hireling's race and background",
+ "title": "Level 5, second team: Fighter (Champion), Bard (Lore), Wizard (Abjuration), Ranger (Hunter); each its hireling's race and background",
  "about": "The build file l5_4v4_team2_v1 (tools/dev/make_arena_save.py builds-arena), each pair's twins made per match, on crash-mirror-v1's save.",
  "draft": "proposed second team, to try once the first team's L5 passes (website repo ops/logs/arena-4v4-tests.md); no reference profiles yet (2026-11-06)",
  "location": {
@@ -69,29 +69,29 @@
   },
   "pairs": [
    {
-    "class": "Barbarian",
-    "build": "barbarian",
-    "template": "aa621720-3722-43e2-98ca-4feb12c238fc",
-    "race": "78f5e3e8-a9f8-4249-8007-84dc922640b2",
-    "stats": "BG3AI_Arena_Barbarian_L1",
+    "class": "Fighter",
+    "build": "fighter",
+    "template": "d9401d40-453b-4512-84ee-d1c6ab29afea",
+    "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
+    "stats": "BG3AI_Arena_Fighter_L1",
     "names": {
      "A": "Red Ash",
      "B": "Blue Ash"
     },
     "kit": {
      "race": {
-      "race": "78f5e3e8-a9f8-4249-8007-84dc922640b2",
-      "boosts": "ActionResource(Movement,7.5,0);IncreaseMaxHP(Level)",
+      "race": "76057327-da03-4398-aaf0-c59345ef3a8b",
+      "boosts": "ActionResource(Movement,9,0);ActionResource(Movement,1.5,0);ProficiencyBonus(Skill,Stealth)",
       "passives": [
-       "Dwarf_DwarvenCombatTraining",
+       "HumanMilitia",
        "Darkvision",
-       "Dwarf_DwarvenResilience"
+       "FeyAncestry"
       ]
      },
      "player": {
       "passives": [
        "DeathSavingThrows",
-       "Background_Outlander"
+       "Background_Soldier"
       ]
      },
      "ability_bonus": [
@@ -101,28 +101,46 @@
      "choices": [
       {
        "kind": "skills",
-       "list": "233793b3-838a-4d4e-9d68-1e0a1089aba5",
+       "list": "6a4f8598-3a17-42d1-beac-d7ced582bafa",
        "n": 2,
        "exact": true,
        "ids": [
-        "Intimidation",
-        "Perception"
+        "Acrobatics",
+        "Insight"
        ]
       },
       {
        "kind": "passives",
-       "list": "7f7340a0-faf3-4122-bd3f-37a5434dd6cf",
+       "list": "da3203d8-750a-4de1-b8eb-1eccfccddf46",
        "n": 1,
        "exact": true,
        "ids": [
-        "TotemSpirit_Bear"
+        "FightingStyle_GreatWeaponFighting"
        ]
       }
      ],
      "items": [
       {
-       "item": "WPN_Greataxe_1",
-       "root": "afbfaee7-e2cd-48e7-8c46-d2377c7320e3",
+       "item": "WPN_Longsword_1",
+       "root": "3fc2ba50-3070-4caa-abe8-3bf885969bde",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "WPN_Shortbow_1",
+       "root": "a46173b7-afd6-48e0-9c76-817acd027574",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "ARM_ScaleMail_Body_1",
+       "root": "dc748177-8590-4a99-a446-feccbd8d8eb4",
+       "count": 1,
+       "equip": true
+      },
+      {
+       "item": "ARM_Boots_Leather",
+       "root": "969bab00-b269-46a5-a7e9-dd4887814719",
        "count": 1,
        "equip": true
       },
@@ -133,43 +151,19 @@
        "equip": false
       },
       {
-       "item": "ARM_Shoes_Barbarian",
-       "root": "2577a332-8ad2-4e54-b52b-f4f7cc5823a1",
-       "count": 1,
-       "equip": true
-      },
-      {
-       "item": "ARM_Barbarian",
-       "root": "f6599c3f-cfcd-4721-9cc2-1df5d8ff0154",
-       "count": 1,
-       "equip": true
-      },
-      {
-       "item": "WPN_Handaxe_1",
-       "root": "7a05135d-b285-4186-8a32-a870f1684b60",
-       "count": 2,
-       "equip": false
-      },
-      {
        "item": "OBJ_Potion_Healing_Greater",
        "root": "e3b95c96-dc26-40fe-bfc0-baa05e1abd20",
        "count": 1,
        "equip": false
       }
      ],
-     "subclass": "2e585948-d775-451d-b58b-15b75321d11e",
+     "subclass": "0a01dc6b-ab1a-4c0e-8a5e-4787fe1f2caf",
      "grants": {
       "boosts": "Ability(Strength,2)",
-      "passives": [],
-      "spells": [
-       "Shout_SpeakWithAnimals_Barbarian"
+      "passives": [
+       "ImprovedCritical"
       ],
-      "passives_removed": [
-       "RageUnlock"
-      ]
-     },
-     "spell_abilities": {
-      "Shout_SpeakWithAnimals_Barbarian": "Charisma"
+      "spells": []
      }
     }
    },
@@ -266,6 +260,17 @@
        ]
       },
       {
+       "kind": "skills",
+       "list": "ed664663-93b9-4070-a54b-3c7b19c0e7b4",
+       "n": 3,
+       "exact": true,
+       "ids": [
+        "Insight",
+        "Persuasion",
+        "Stealth"
+       ]
+      },
+      {
        "kind": "spells",
        "list": "61f79a30-2cac-4a7a-b5fe-50c89d307dd6",
        "n": 1,
@@ -331,16 +336,13 @@
        "equip": false
       }
      ],
-     "subclass": "2b46330d-0ada-4eb5-a131-3d250a41ca6a",
+     "subclass": "d21368ac-c776-465c-9dcf-6123dd52734f",
      "grants": {
-      "boosts": "Proficiency(MediumArmor);Proficiency(Shields);Proficiency(MartialWeapons);Ability(Charisma,2)",
+      "boosts": "Ability(Charisma,2)",
       "passives": [
-       "CombatInspiration"
+       "CuttingWords"
       ],
-      "spells": [],
-      "passives_removed": [
-       "BardicInspiration"
-      ]
+      "spells": []
      },
      "spell_abilities": {
       "Target_ViciousMockery": "Charisma",
