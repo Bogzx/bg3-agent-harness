@@ -144,6 +144,26 @@ check(j.status == "done" and expertiseOn() == "Performance,Persuasion" and offOf
       and table.concat(j.result.already_held or {}, ",") == "Acrobatics",
       "plan.skills, no group can take a held name: nothing moves, said (" .. tostring(j.status) .. ", "
       .. table.concat(j.result.already_held or {}, ",") .. ")")
+-- 33k4. The bridge's rerun after spell clicks, keep_page on the same page: its result is the one the player reads, and
+--       it says what the first run took off. A rerun without keep_page starts from the page as it stands.
+openPage(bard3("replaces"))
+j = run({ uuid = "claude", plan = { skills = { "Acrobatics" } }, finish = false })
+check(offOf("expertise") == "Performance", "first run: what left is said (" .. offOf("expertise") .. ")")
+j = run({ uuid = "claude", plan = { skills = { "Acrobatics" } }, keep_page = true })
+check(j.status == "done" and page.finished == true and offOf("expertise") == "Performance",
+      "keep_page's rerun: what the first run took off is still said (" .. tostring(j.status) .. ", "
+      .. offOf("expertise") .. ", " .. tostring(j.error) .. ")")
+openPage(bard3("replaces"))
+j = run({ uuid = "claude", plan = { skills = { "Acrobatics" } }, finish = false })
+j = run({ uuid = "claude", plan = { skills = { "Acrobatics" } } })
+check(j.status == "done" and offOf("expertise") == "", "a rerun without keep_page: from the page as it stands")
+-- a row a first run took and a rerun put back reads on the page: not said
+openPage(bard3("replaces"))
+j = run({ uuid = "claude", plan = { skills = { "Acrobatics" } }, finish = false })
+j = run({ uuid = "claude", plan = { skills = { "Acrobatics", "Performance" } }, keep_page = true })
+check(j.status == "done" and expertiseOn() == "Performance,Acrobatics" and offOf("expertise") == "Persuasion",
+      "keep_page's rerun reads the page now, not the first run's list (" .. expertiseOn() .. ", " .. offOf("expertise")
+      .. ", " .. tostring(j.error) .. ")")
 -- 33l. a plan's pick that can't land (the toggle does nothing): not finished, and the pick is named
 openPage(rogue6())
 page.expertiseStuck = true

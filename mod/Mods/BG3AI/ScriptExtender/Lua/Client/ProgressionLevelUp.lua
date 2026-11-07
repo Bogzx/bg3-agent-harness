@@ -578,7 +578,7 @@ RPC.register("ui.level_up", function(args)
             end
             return "next", 0
         end },
-        { "skills_open", I.skillsOpenStage(get, ctx) },
+        { "skills_open", I.skillsOpenStage(get, ctx, args.keep_page) },
         { "skills", skillsStage(get, ctx, plan.skills, nil, nil, true) },
         { "skills_room", I.skillRoomStage(get, ctx, plan.skills) },
         { "expertise", skillsStage(get, ctx, plan.expertise, "expertise") },

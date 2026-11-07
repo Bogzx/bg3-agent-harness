@@ -233,9 +233,14 @@ P.inner.skillRoomStage = skillRoomStage
 
 -- What a level's toggles took off, whoever took it: the game can take a row too (above). skillsOpenStage reads every
 -- group's selected rows before them, skillsOffStage names in result.set.<group>_off those still listed and no longer
--- selected after them.
-local function skillsOpenStage(getDC, ctx)
+-- selected after them. keepPage: the bridge's rerun after spell clicks is the same page and its result is the one read,
+-- so the first run's read stays the before.
+local function skillsOpenStage(getDC, ctx, keepPage)
     return function()
+        if keepPage and P.skillsOpenKept then
+            ctx.skillsOpen = P.skillsOpenKept
+            return "next", 0
+        end
         ctx.skillsOpen = {}
         for _, g in ipairs(skillGroups(getDC())) do
             local on = {}
@@ -244,6 +249,7 @@ local function skillsOpenStage(getDC, ctx)
             end
             ctx.skillsOpen[g.key] = on
         end
+        P.skillsOpenKept = ctx.skillsOpen
         return "next", 0
     end
 end

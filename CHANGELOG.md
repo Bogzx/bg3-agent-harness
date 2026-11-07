@@ -301,7 +301,7 @@ game unless it says so.
   Athletics, with `done` and `complete`, where the plan said Acrobatics. How the game moved them isn't read. Now, only for a
   pick that didn't land, the group's unnamed picks come off as far as the picks lacking exceed its free room, never one the
   game shows as locked. `set.<group>_off` names the rows still listed that were selected before the toggles and aren't after
-  them, including one the game took. `plan.skills` now reaches the expertise group: a row the game shows disabled and
+  them, including one the game took, and it's still there on the bridge's rerun after spell clicks. `plan.skills` now reaches the expertise group: a row the game shows disabled and
   unselected no longer stops the search for a name, so a name no group offers is reported as `not offered`. That search is
   shared with character creation's `plan.skills`. On a level-up, a `plan.skills` name a group holds as an earlier pick moves
   on to a later group that can take it, so naming a proficient skill at a Bard's level 3 takes an expertise pick; if none
