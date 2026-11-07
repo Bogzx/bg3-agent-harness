@@ -26,6 +26,33 @@ def open_at_round_2(model: ArenaModel, who: str) -> Callable[[], None]:
     return hook
 
 
+def _hold_reads(reads: list[tuple[int, dict]]) -> list[str]:
+    """The real _reaction_check on (seconds, ui.state) reads with a 90 s cap; the ops it sent."""
+    calls: list[str] = []
+
+    def rpc(op, args=None, context=None):
+        calls.append(op)
+        return {"status": "running"} if op == "ui.react" else game.ui
+
+    game, hold = types.SimpleNamespace(ui={}, rpc=rpc), am._Hold()
+    ref = types.SimpleNamespace(round=1, event=lambda *a, **k: None)
+    spec = types.SimpleNamespace(name="t", turn_cap_s=90)
+    for t, ui in reads:
+        game.ui = ui
+        am._reaction_check(spec, game, ref, lambda m: None, hold, 1000.0 + t)
+    return [c for c in calls if c == "ui.react"]
+
+
+def test_the_bound_runs_from_the_prompt_first_on_screen_not_from_the_hold():
+    # pQ T2: a popup 30 s late doesn't lose those 30 s, and left open it's still declined
+    held = {"key": "cast1|red:Counterspell", "side": "B", "interrupts": ["Counterspell"]}
+    late = [(t, {"screen": "game", "held_reaction": held}) for t in range(0, 30, 2)]
+    up = {"screen": "reaction", "held_reaction": held,
+          "reaction": {"prompt": "Counterspell?", "options": [{"i": 1, "who": "Red Cedar"}], "owner": "B"}}
+    assert _hold_reads(late + [(t, up) for t in range(30, 118, 2)]) == []  # 116 s from the hold, 86 s on screen
+    assert _hold_reads(late + [(t, up) for t in range(30, 124, 2)]) == ["ui.react"]  # 90 s on screen at 120 s
+
+
 def test_an_unowned_reaction_prompt_is_declined_once_and_recorded(tmp_path):
     """A prompt for someone on neither team holds the game: neither side may answer it, so the runner declines it
     (with no side) and records it. Turns that move on cost no ui.state read."""

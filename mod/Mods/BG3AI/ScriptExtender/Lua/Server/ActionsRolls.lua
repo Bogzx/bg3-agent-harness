@@ -283,6 +283,8 @@ A.CAST_PAUSED_COMP = "ls::anubis::PausedComponent"
 A.CAST_PAUSED_MS = 1000
 A.CAST_PAUSED = "the cast started and the game paused it for a reaction decision (a reaction prompt is open):"
     .. " answer it (react) if it is yours; the cast goes on after it and its outcome shows in the events"
+A.ORDER_PAUSED = "the game paused for a reaction decision before this order started (a reaction prompt is open):"
+    .. " answer it (react) if it is yours; the order wasn't cancelled, and whether it runs after shows in the events"
 
 function A.cast_paused(char)
     local ok, names = pcall(function() return Ext.Entity.Get(char):GetAllComponentNames() end)

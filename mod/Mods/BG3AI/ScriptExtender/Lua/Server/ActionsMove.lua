@@ -384,7 +384,8 @@ local function combat_walk_stop(job)
     local w = job.walk
     local function stop(why)
         w.done = true
-        pcall(G.osi, "PurgeOsirisQueue", job.char)
+        -- a walk that never started while the game is paused: the purge would cancel the mover's own paused cast
+        if not A.cast_paused(job.char) then pcall(G.osi, "PurgeOsirisQueue", job.char) end
         local blk = G.blocking_status(job.char, true)
         RPC.finish_job(job, "failed", job.partial, why .. (blk and ("; the character is " .. tostring(blk.name))
             or ""))
@@ -470,7 +471,7 @@ local function walk_tick(job)
             walk_arrived(job)
         else
             w.done = true
-            pcall(G.osi, "PurgeOsirisQueue", job.char)
+            if not A.cast_paused(job.char) then pcall(G.osi, "PurgeOsirisQueue", job.char) end
             RPC.finish_job(job, "failed", job.partial, "no path to the destination" .. A.held_text(job.char))
         end
     end

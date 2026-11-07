@@ -206,6 +206,39 @@ class ReactTool(Base):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+    def _click_spend_reads(self, seq):
+        """The click routes through the spend check: nothing drops, and after the last job the prompt reads closed."""
+        saved, seq = self.g.rpc, list(seq)
+        last = {"done": False}
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            last["done"] = len(seq) == 1
+            return seq.pop(0)
+
+        def rpc(op, args=None, context="server", **kw):
+            if op == "ui.react_spent":
+                return {"uuids": ["u"], "total": 5}
+            if op == "ui.react_probe" and (args or {}).get("watch") and last["done"]:
+                return {"open": False, "events": 0}
+            return saved(op, args, context, **kw)
+        self.g.run_job, self.g.rpc = run_job, rpc
+        patcher = mock.patch.object(dialogue, "REACT_SPENT_S", 0.0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_confirm_route_goes_through_the_spend_check(self):
+        # pQ T1: the combined prompt's route, where the 02:00 false done came from
+        self._click_spend_reads([JobResult("done", {"needs_click": 2, "rows": 4, "confirm": True}),
+                                 JobResult("done", {})])
+        self.p.answers = False
+        self.assertEqual(dialogue.react(True, "2").split("\n")[0],
+                         "react: done — the prompt closed; 0 s later its observers' resources, summed, had not dropped")
+
+    def test_the_lone_click_route_goes_through_the_spend_check(self):
+        self._click_spend_reads([JobResult("done", {"needs_click": 2, "rows": 6})])
+        self.assertEqual(dialogue.react(True, "2").split("\n")[0],
+                         "react: done — the prompt closed; 0 s later its observers' resources, summed, had not dropped")
+
     def test_done_with_nothing_spent_says_what_was_read_and_not_failed(self):
         # pQ N1: 5 interrupts have no cost, and a spend can land after the window: the note says only what it read
         self._spend_reads([{"uuids": ["u"], "total": 5}])
