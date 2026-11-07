@@ -274,6 +274,12 @@ function P.luMissing(dc)
     for _, v in ipairs(passivesView(dc)) do
         if v.complete == false then out[#out + 1] = "'" .. (v.title or "passives") .. "' (plan.passives)" end
     end
+    for _, g in ipairs(I.skillGroups(dc)) do
+        local short = (tonumber(g.max) or 0) - (tonumber(g.selected) or tonumber(g.max) or 0)
+        if short > 0 then
+            out[#out + 1] = short .. " " .. g.key .. " skill" .. (short == 1 and "" or "s") .. " (plan.skills)"
+        end
+    end
     if #out == 0 then return "the page shows nothing open (see get_level_up_options)" end
     return "still to choose: " .. table.concat(out, ", ")
 end
@@ -578,12 +584,17 @@ RPC.register("ui.level_up", function(args)
             end
             return "next", 0
         end },
-        { "skills", skillsStage(get, ctx, plan.skills) },
+        { "skills_open", I.skillsOpenStage(get, ctx, args.keep_page) },
+        { "skills", skillsStage(get, ctx, plan.skills, nil, nil, true) },
+        { "skills_room", I.skillRoomStage(get, ctx, plan.skills) },
         { "expertise", skillsStage(get, ctx, plan.expertise, "expertise") },
+        { "expertise_room", I.skillRoomStage(get, ctx, plan.expertise, "expertise") },
+        { "skills_off", I.skillsOffStage(get, ctx) },
         { "skills?", skillsReport(get, ctx) },
         { "passive_lists", I.passiveListsStage(get, ctx, plan.passive_lists) },
         { "passives", passivesStage(get, ctx, plan.passives, plan.allow_defaults) },
         { "passives?", passivesReport(get, ctx) },
+        { "picks?", I.levelPicksStage(get, ctx, plan) },
         { "levelup_tab", function()
             -- Back to the level-up overview (its spell sub-tabs) after the other tabs, as a player would.
             if offOverview() and selectTab(ctx.widget, "levelupTab") then return "next", 450 end
@@ -619,6 +630,10 @@ RPC.register("ui.level_up", function(args)
                 return "fail", "spell picks pending (" .. table.concat(names, ", ")
                     .. "): the level_up tool clicks these itself; nothing to click by hand"
             end
+            if ctx.unlanded then
+                return "fail", "the plan's picks aren't on the page, not finishing: "
+                    .. table.concat(ctx.unlanded, "; ")
+            end
             if UI.prop(dc, "IsLevelUpComplete") == false then
                 local why = #ctx.result.problems > 0 and table.concat(ctx.result.problems, "; ") or P.luMissing(dc)
                 return "fail", "level up is not complete, not finishing: " .. why
@@ -639,12 +654,16 @@ RPC.register("ui.level_up", function(args)
             -- Still in its Finishing template (closing animation): keep waiting up to 9 s, so a following level_up
             -- doesn't work on this page (live 12:4x: Wyll L5 right after L4 read L4's feat panel: "the ability +/-
             -- buttons did nothing").
-            -- A page in its intro after the finish is a new page the game opened by itself (the next level, or the
-            -- next party member with a level up: S029 Claude → Karlach → Gale), during the finish fade: frozen, so
-            -- the next level_up would read or click it in vain. Close it now (that character keeps its level up).
-            local owner = step == "Started" and args.uuid and P.pageOwner(get(), args.uuid)
+            -- Any other step is a new page the game opened by itself (the next level, or the next party member with a
+            -- level up: S029 Claude → Karlach → Gale), during the finish fade. In its intro it's frozen, so the next
+            -- level_up would read or click it in vain. Past its intro it can lack that level's selectors for good, and
+            -- only a page opened afresh offers them (live 2026-11-07, Fighter L7: an intro short enough to end inside
+            -- the 4 s kept the page, 0 selectors 15 min on; reopened, Battlemaster Maneuvers, max 2). Close it now
+            -- (that character keeps its level up); its intro's end is no sign it's usable.
+            local next_page = step ~= "Finishing"
             local late = RPC.now_ms() - ctx.closeWait > (step == "Finishing" and 9000 or 4000)
-            if step == "Started" and (owner == "other" or late) and not ctx.closedNext then
+            local owner = next_page and (step == "Started" or late) and args.uuid and P.pageOwner(get(), args.uuid)
+            if next_page and (owner == "other" or late) and not ctx.closedNext then
                 ctx.closedNext = true
                 -- what was closed and what is still pending, no call to make (REVIEW-17b G2)
                 ctx.result.next_page_closed = owner == "other"
@@ -665,7 +684,7 @@ RPC.register("ui.level_up", function(args)
                 return "done"
             end
             return "wait", 300
-        end, 10000 },
+        end, 12000 }, -- Finishing's 9 s, then a next page's close and its ESCAPE
     }
     return runJob("ui.level_up", stages, ctx, 90000)
 end)

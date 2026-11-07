@@ -17,7 +17,7 @@
   "mod/Mods/BG3AI/ScriptExtender/Lua/Client/ProgressionCC.lua": {
    "W211": 1,
    "W212": 1,
-   "W631": 12
+   "W631": 11
   },
   "mod/Mods/BG3AI/ScriptExtender/Lua/Client/ProgressionLevelUp.lua": {
    "W431": 1,
@@ -228,7 +228,7 @@
   },
   "tools/dev/test_level_up.lua": {
    "W311": 1,
-   "W631": 41
+   "W631": 40
   },
   "tools/dev/test_mem.lua": {
    "W631": 2

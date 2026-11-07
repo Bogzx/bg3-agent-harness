@@ -84,6 +84,10 @@ class RaceTest(unittest.TestCase):
         r = mas.kit_plan(kit("Fighter", "HalfElf_Wood"), "Fighter", 2, STATIC)
         self.assertNotIn("spell_abilities", r["kit"])
 
+    def test_a_subclass_rows_spell_with_no_ability_anywhere_reads_the_stats(self):
+        """S4, live 2026-11-07: a Thief's 9th level, AddSpells with no ability, a class with none."""
+        self.assertEqual(plan(tier(12), "rogue")["spell_abilities"], {"Shout_SupremeSneak": mas.STATS_CASTING})
+
     def test_a_row_that_names_no_ability_and_a_class_with_none_writes_nothing(self):
         part = mas.race_plan(kit("Fighter", "Drow_Seldarine"), STATIC, "x")[1]
         self.assertEqual(part["spell_abilities"], {"Target_DancingLights": "Charisma"}, "the row's own")
@@ -597,6 +601,29 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
             sorted(r for r in cast["only_reference"] if r.split("|")[0] not in out + ups),
         )
         self.assertEqual(len(cast["only_reference"]) - len(cast["only_twin"]), len(out + ups))
+
+    def test_the_l12_wizards_accepted_spells_are_its_unprepared_spells_upcasts_and_fire_shields_variants(self):
+        wizard = next(b for b in tier(12)["builds"] if b["id"] == "wizard")
+        accepted = {a["field"]: a for a in wizard["reference"]["accepted"]}
+        self.assertEqual(set(accepted), {"derived", "spells", "spellcast", "prepared"})
+        self.assertEqual(accepted["prepared"]["only_twin"], [f"Shout_ArcaneRecovery_{n}" for n in (2, 3, 4, 5)])
+        learned = [x for ids in wizard["script"]["cc"].get("spells", []) for x in ids]
+        learned += [x for u in wizard["script"]["level_ups"] for ids in u.get("spells", []) for x in ids]
+        held = [x for c in plan(tier(12), "wizard")["choices"] if c["kind"] == "spells" for x in c["ids"]]
+        out = [x for x in learned if x not in held]
+        self.assertEqual(len(out), 11)
+        self.assertIn("Shout_FireShield", out, "so its rows are D152's, not a kit bug (D170)")
+        roots = [*out, "Shout_FireShield_Chill", "Shout_FireShield_Warm"]
+        slots = {"2", "3", "4", "5", "6"}  # a level-12 Wizard's upcast slots
+        ups = [x for s in roots for p, ids in STATIC["upcasts"].get(s, {}).items() if p in slots for x in ids]
+        self.assertEqual(sorted(accepted["spells"]["only_reference"]), sorted(roots + ups))
+        self.assertEqual(accepted["spells"]["only_twin"], [])
+        cast = accepted["spellcast"]
+        self.assertEqual(
+            sorted(r.replace("|AlwaysPrepared|", "|RequiresPreparation|") for r in cast["only_twin"]),
+            sorted(r for r in cast["only_reference"] if r.split("|")[0] not in roots + ups),
+        )
+        self.assertEqual(len(cast["only_reference"]) - len(cast["only_twin"]), len(roots + ups))
 
     def test_a_kits_own_spell_with_upcasts_is_unlocked_and_a_class_rows_keeps_its_upcasts_added(self):
         ups = {x for v in STATIC["upcasts"].values() for ids in v.values() for x in ids}

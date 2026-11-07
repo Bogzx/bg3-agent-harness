@@ -371,12 +371,13 @@ local function wantList(v)
     return v
 end
 
--- Skills: toggle each wanted skill on (searching class, race, expertise and feat groups in that order; `only` names
--- one group: expertise's skills are proficient ones, so the class group lists them too and would stop the search).
+-- Skills: toggle each wanted skill on (searching class, race, expertise and feat groups in that order, by skillTarget;
+-- `only` names one group: expertise's skills are proficient ones, so the class group lists them too and would stop the
+-- search). pastHeld: see skillTarget; a name only held is said in result.already_held.
 -- moves (a plan that is the group's whole pick list, on a page that opens with someone's picks in it): first turn off
 -- the group's own picks the plan doesn't name, since a full group ignores ToggleSkill (live 2026-11-06: a hireling's
 -- Rogue kept every pick, no error). Selected with Enabled false is a pick of another source (background, race).
-local function skillsStage(getDC, ctx, wanted, only, moves)
+local function skillsStage(getDC, ctx, wanted, only, moves, pastHeld)
     local cleared = false
     return function()
         local dc = getDC()
@@ -407,21 +408,18 @@ local function skillsStage(getDC, ctx, wanted, only, moves)
         end
         if want then
             for _, name in ipairs(want) do
-                local done = false
-                for _, g in ipairs(groups) do
-                    local item = (only == nil or g.key == only) and pick(g.skills, name) or nil
-                    if item then
-                        if UI.prop(item, "Selected") ~= true then
-                            local ok, err = UI.command(dc, "ToggleSkill", item)
-                            if not ok then
-                                ctx.result.problems[#ctx.result.problems + 1] = "skill " .. name .. ": " .. tostring(err)
-                            end
-                        end
-                        done = true
-                        break
+                local _, item, held = I.skillTarget(groups, name, only, pastHeld)
+                if not item then
+                    ctx.result.problems[#ctx.result.problems + 1] = "skill " .. name .. ": not offered"
+                elseif held then
+                    ctx.result.already_held = ctx.result.already_held or {}
+                    table.insert(ctx.result.already_held, name)
+                elseif UI.prop(item, "Selected") ~= true then
+                    local ok, err = UI.command(dc, "ToggleSkill", item)
+                    if not ok then
+                        ctx.result.problems[#ctx.result.problems + 1] = "skill " .. name .. ": " .. tostring(err)
                     end
                 end
-                if not done then ctx.result.problems[#ctx.result.problems + 1] = "skill " .. name .. ": not offered" end
             end
         end
         return "next", ctx.fast and P.CC_SETTLE_MS or 300

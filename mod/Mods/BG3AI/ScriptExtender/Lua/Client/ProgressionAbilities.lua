@@ -6,7 +6,7 @@ local UI = BG3AI.UI
 local I = P.inner
 local list, pick, skillGroups, selectTab = I.list, I.pick, I.skillGroups, I.selectTab
 local abilityName, abilityOf, passiveSelectors = I.abilityName, I.abilityOf, I.passiveSelectors
-local wantList, passiveOn = I.wantList, I.passiveOn
+local wantList, passiveOn, label = I.wantList, I.passiveOn, I.label
 
 -- What `name` holds from the bonus columns (the page's +2/+1). Value includes it; RaceBonus reads 0 for it on the
 -- respec page (live 2026-11-06: a hireling's picks stay through ResetAbilities, so 15 Value was 13 bought, 6 left).
@@ -126,9 +126,10 @@ local function abilityBonusStage(ctx, plan)
     end
 end
 
--- Every pick the plan names, read back from the page at the end: a command that returns ok proves nothing (a full
--- group ignores it). Spells waiting for the bridge's clicks are in needs_clicks.
-local function picksStage(getDC, ctx, plan)
+-- Every pick the plan names, read back from the page at the end: a command that returns ok proves nothing (a toggle
+-- can do nothing and say so nowhere). Spells waiting for the bridge's clicks are in needs_clicks. pastHeld: plan.skills
+-- reads the row the skills stage took (skillTarget), so a held row in another group can't stand in for it.
+local function picksStage(getDC, ctx, plan, pastHeld)
     return function()
         local dc = getDC()
         local function missing(what, name, where)
@@ -151,7 +152,14 @@ local function picksStage(getDC, ctx, plan)
             end
         end
         for _, name in ipairs(wantList(plan.skills) or {}) do
-            if not on(nil, name) then missing("skill", name) end
+            local landed
+            if pastHeld then
+                local _, item = I.skillTarget(skillGroups(dc), name, nil, true)
+                landed = item ~= nil and UI.prop(item, "Selected") == true
+            else
+                landed = on(nil, name)
+            end
+            if not landed then missing("skill", name) end
         end
         for _, name in ipairs(wantList(plan.passives) or {}) do
             local has = false
@@ -172,6 +180,114 @@ local function picksStage(getDC, ctx, plan)
         return "next", 0
     end
 end
+
+-- A level's skill group can open full of the game's own picks (live 2026-11-07, Rogue L6: Deception, Sleight of Hand).
+-- Toggling the plan's Acrobatics then Athletics left Sleight of Hand, Athletics with no error: Deception gone,
+-- Acrobatics not on; how the game did that isn't read. Only for a named pick that didn't land: its group's unnamed
+-- picks come off as far as the picks lacking exceed the group's free room, then the picks go on. A pick's group is the
+-- one skillsStage toggled it in, by skillTarget. Only a row reading Enabled true comes off, as the page's own read on
+-- Rogue L6 and Bard L3: false is an earlier level's or another source's (read on Rogue L6, Bard L10), and one reading
+-- anything else may be one too and stays; the named pick then doesn't land and the read-back refuses. A name the game
+-- shows disabled can't land, so it costs nothing and the read-back names it.
+local function skillRoomStage(getDC, ctx, wanted, only)
+    local lacking
+    return function()
+        local dc = getDC()
+        if lacking then
+            for _, it in ipairs(lacking) do UI.command(dc, "ToggleSkill", it) end
+            return "next", ctx.fast and P.CC_SETTLE_MS or 300
+        end
+        lacking = {}
+        local groups, turned = skillGroups(dc), false
+        for _, g in ipairs(groups) do g.keep, g.lacks = {}, 0 end
+        for _, name in ipairs(wantList(wanted) or {}) do
+            local g, item = I.skillTarget(groups, name, only, true)
+            if item then
+                g.keep[label(item)] = true
+                if UI.prop(item, "Selected") ~= true and UI.prop(item, "Enabled") ~= false then
+                    lacking[#lacking + 1] = item
+                    g.lacks = g.lacks + 1
+                end
+            end
+        end
+        for _, g in ipairs(groups) do
+            local off, own = 0, 0
+            for _, it in ipairs(list(g.skills)) do
+                if UI.prop(it, "Selected") == true and UI.prop(it, "Enabled") == true then own = own + 1 end
+            end
+            local need = g.lacks - math.max(0, (tonumber(g.max) or own) - own)
+            for _, it in ipairs(list(g.skills)) do
+                if off < need and UI.prop(it, "Selected") == true and UI.prop(it, "Enabled") == true
+                    and not g.keep[label(it)] then
+                    UI.command(dc, "ToggleSkill", it)
+                    off = off + 1
+                    turned = true
+                end
+            end
+        end
+        if #lacking == 0 then return "next", 0 end
+        return "wait", turned and (ctx.fast and P.CC_SETTLE_MS or 300) or 0
+    end
+end
+P.inner.skillRoomStage = skillRoomStage
+
+-- What a level's toggles took off, whoever took it: the game can take a row too (above). skillsOpenStage reads every
+-- group's selected rows before them, skillsOffStage names in result.set.<group>_off those still listed and no longer
+-- selected after them. keepPage: the bridge's rerun after spell clicks is the same page and its result is the one read,
+-- so the first run's read stays the before.
+local function skillsOpenStage(getDC, ctx, keepPage)
+    return function()
+        if keepPage and P.skillsOpenKept then
+            ctx.skillsOpen = P.skillsOpenKept
+            return "next", 0
+        end
+        ctx.skillsOpen = {}
+        for _, g in ipairs(skillGroups(getDC())) do
+            local on = {}
+            for _, it in ipairs(list(g.skills)) do
+                if UI.prop(it, "Selected") == true then on[label(it)] = true end
+            end
+            ctx.skillsOpen[g.key] = on
+        end
+        P.skillsOpenKept = ctx.skillsOpen
+        return "next", 0
+    end
+end
+P.inner.skillsOpenStage = skillsOpenStage
+
+local function skillsOffStage(getDC, ctx)
+    return function()
+        for _, g in ipairs(skillGroups(getDC())) do
+            local open, off = ctx.skillsOpen[g.key] or {}, {}
+            for _, it in ipairs(list(g.skills)) do
+                if open[label(it)] and UI.prop(it, "Selected") ~= true then off[#off + 1] = label(it) end
+            end
+            if #off > 0 then ctx.result.set[g.key .. "_off"] = off end
+        end
+        return "next", 0
+    end
+end
+P.inner.skillsOffStage = skillsOffStage
+
+-- The plan's skills and passives read back on a level's page: the ones missing are also ctx.unlanded, and the finish
+-- won't go on without them, since the game can call that page complete (live 2026-11-07, Rogue L6).
+local function levelPicksStage(getDC, ctx, plan)
+    local read = picksStage(getDC, ctx, { skills = plan.skills, expertise = plan.expertise, passives = plan.passives },
+        true)
+    return function()
+        local problems = ctx.result.problems
+        local before = #problems
+        local to, wait = read()
+        for i = before + 1, #problems do
+            ctx.unlanded = ctx.unlanded or {}
+            ctx.unlanded[#ctx.unlanded + 1] = problems[i]
+            ctx.missing = ctx.missing or {}
+            ctx.missing[#ctx.missing + 1] = problems[i]
+        end
+        return to, wait
+    end
+end
+P.inner.levelPicksStage = levelPicksStage
 
 -- The row's PassiveLists, in the row's order: the page's selectors are in it. A list's length can't always name them:
 -- a Ranger's two have 5 entries each, and at a subclass's own level the character has no subclass yet to look it up by
