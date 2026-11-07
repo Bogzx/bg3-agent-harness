@@ -192,11 +192,10 @@ P.inner.passiveListsStage = passiveListsStage
 
 -- A class's equipment choice, a Bard's instrument: Validity.ClassSelectors.EquipmentSelectors marks the class page, and
 -- ToggleEquipment takes the entry (CCLib_k.xaml). A plan names none: a reference's dress removes the item and a twin
--- has none, so an open selector takes its first entry. Respec only (`moves`), and each selector here takes one (the
+-- has none, so an open selector takes its first entry. Respec only, and each selector here takes one (the
 -- row's SelectEquipment(list, 1, ...)), so a toggle can't take off one already held.
-local function equipmentStage(getDC, ctx, moves)
+local function equipmentStage(getDC, ctx)
     return function()
-        if not moves then return "next", 0 end
         local dc = getDC()
         for _, s in ipairs(list(UI.path(dc, "ClassProgressionDetails.NotSubEquipmentSelectors"))) do
             local had = tonumber(UI.prop(s, "SelectedEquipmentCount"))
