@@ -4,14 +4,14 @@
  "about": "A released bg3bench suite (schema release.v1, written by python -m bg3bench.submission.release). versions and pins: what a run's manifest must cite. scenarios: every non-holdout scenario's digest, start save folder, .lsv sha1 and start-state fingerprint (null: none recorded yet). saves: the start save zips, their storage key, size and sha256 (null until published). conditions: per condition id the bg3 tools a play process is served (names, count, allowlist_sha256, and defs_sha256: the sha256 of their served definitions) and per client the sha256 of the prompt it is served; its variants: the same under a client profile's tool groups off (keyed by those groups), which a run naming those tools is checked against.",
  "suite": "bench-v0.11",
  "versions": {
-  "harness": "0.5.0",
+  "harness": "0.6.0",
   "bench": "0.11.0"
  },
  "pins": {
   "game_build": "25605617",
   "bg3le_sha256": "d21546c06f5f307e6c8bd1f68ca3bf70bf95fb23ca54b809405ce4e8d1c16de9",
-  "mod_sha1": "5fd46543522c7e08b98e19e0be5698b20794e1bb",
-  "code_sha1": "c61d2a79b0043609e2823ea934fbf4538d030d65"
+  "mod_sha1": "aed35e2a94cb15fed9c1da002226b9f829cc640f",
+  "code_sha1": "d2e0b5f5a286e7305cef0a1525a584075dbb857b"
  },
  "scenarios": {
   "act1_goblin_camp_no_fight": {
@@ -980,7 +980,7 @@
      "walk_toward",
      "zoom"
     ],
-    "defs_sha256": "a2d25c0a9464ca85f8c96599d7d6382cf6b3837fe6bc73ddd681c6b92adc06b9"
+    "defs_sha256": "167df3e1f4d9a9912743580fccdc8d12450ed0b9969e6e13bc5e439655c63e7c"
    },
    "prompts": {
     "claude": {
@@ -1078,7 +1078,7 @@
        "wait_for",
        "walk_toward"
       ],
-      "defs_sha256": "eafe50e7b147ee46c8ddcd99cd7980a69287f0d7f5fa07180d9072a9e8a19ded"
+      "defs_sha256": "4bf32916b52440de646690770ca4ef49af19d15af077600a69ba79e4b9b2be11"
      },
      "prompts": {
       "pi": {
