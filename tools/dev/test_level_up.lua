@@ -779,6 +779,17 @@ j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "C
 check(j.status == "done" and j.result.page_still_open == "another level up may be pending"
       and j.result.close_step == "IntroComplete",
       "own page past its intro that stays: pending, with its step (" .. tostring(j.result.close_step) .. ")")
+-- 33g2. R3: the same stale page, but the game calls it complete: the level's selector is gone and the finish would take
+--       the level without its picks. Stopped by the read-back, not by the game's flag
+openPage(PAL)
+dc._p.LevelUpCharacter = portrait
+dc._p.LevelUpStep = "IntroComplete"
+j = run({ uuid = "claude", plan = { passives = { "Feinting Attack" } } })
+check(j.status == "failed" and not page.finished
+      and tostring(j.error):find("the plan's picks aren't on the page", 1, true) ~= nil
+      and tostring(j.error):find("passive Feinting Attack", 1, true) ~= nil,
+      "a complete page short of the plan's passive: not finished (" .. tostring(j.status) .. ", " .. tostring(j.error)
+      .. ")")
 -- 33h. a page that stays in its Finishing template is the finished page closing, however long: never closed (T1)
 openPage(PAL)
 page.chain, page.chain_step = portrait, "Finishing"

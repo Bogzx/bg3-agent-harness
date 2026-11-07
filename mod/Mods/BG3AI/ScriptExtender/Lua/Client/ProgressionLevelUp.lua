@@ -582,10 +582,10 @@ RPC.register("ui.level_up", function(args)
         { "expertise", skillsStage(get, ctx, plan.expertise, "expertise") },
         { "expertise_room", I.skillRoomStage(get, ctx, plan.expertise, "expertise") },
         { "skills?", skillsReport(get, ctx) },
-        { "picks?", I.levelPicksStage(get, ctx, plan) },
         { "passive_lists", I.passiveListsStage(get, ctx, plan.passive_lists) },
         { "passives", passivesStage(get, ctx, plan.passives, plan.allow_defaults) },
         { "passives?", passivesReport(get, ctx) },
+        { "picks?", I.levelPicksStage(get, ctx, plan) },
         { "levelup_tab", function()
             -- Back to the level-up overview (its spell sub-tabs) after the other tabs, as a player would.
             if offOverview() and selectTab(ctx.widget, "levelupTab") then return "next", 450 end

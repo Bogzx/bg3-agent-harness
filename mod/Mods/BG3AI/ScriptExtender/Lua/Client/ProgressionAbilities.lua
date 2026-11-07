@@ -212,10 +212,10 @@ local function skillRoomStage(getDC, ctx, wanted, key)
 end
 P.inner.skillRoomStage = skillRoomStage
 
--- The plan's skills read back on a level's page: the ones missing are also ctx.unlanded, and the finish won't go on
--- without them, since the game calls that page complete (live 2026-11-07, Rogue L6).
+-- The plan's skills and passives read back on a level's page: the ones missing are also ctx.unlanded, and the finish
+-- won't go on without them, since the game can call that page complete (live 2026-11-07, Rogue L6).
 local function levelPicksStage(getDC, ctx, plan)
-    local read = picksStage(getDC, ctx, { skills = plan.skills, expertise = plan.expertise })
+    local read = picksStage(getDC, ctx, { skills = plan.skills, expertise = plan.expertise, passives = plan.passives })
     return function()
         local problems = ctx.result.problems
         local before = #problems
