@@ -272,8 +272,7 @@ end
 -- Riposte, and the swing's cast ended CastSpellFailed, outcome Canceled, with the action gone. "The game refused the
 -- cast" was false. What of its cost the game took before a Canceled, or nil. A free Extra Attack has no cost to read:
 -- the status it spends goes on the cast.
-A.CAST_CANCELED_SPENT = "the game took the %s, then cancelled the cast (the game's Canceled); it wasn't refused:"
-    .. " what came of it shows in the events"
+A.CAST_CANCELED_SPENT = "the game took the %s, then cancelled the cast (the game's Canceled); it wasn't refused"
 function A.cost_taken(char, check)
     local spent = A.cost_spent(char, check)
     if spent then return spent end
@@ -623,12 +622,10 @@ reg("cast", function(args)
                 -- the HP the jump verdict compares with, read as the cast starts: a hit taken after the order (or
                 -- before a re-order) is not the fall's
                 if matches(a) and not job.began then job.began, job.hp0 = true, hp_of(char) end
+                if matches(a) then job.spell_begun = true end
             end,
             CastedSpell = function(job, a)
-                if matches(a) and A.held_landing(job) then
-                    job.hits, job.statuses, job.last_hit = {}, {}, nil -- what came so far was the held cast's
-                    return
-                end
+                if matches(a) and A.held_landing(job) then return end
                 if matches(a) and not job.casted and A.roll_checked(job) then
                     -- Hits usually land before CastedSpell; give stragglers a
                     -- short settle window (see on_tick), then report.
@@ -663,17 +660,22 @@ reg("cast", function(args)
                 local spent = A.canceled_cost(job, char, check)
                 if spent then
                     job.stopping = true -- it went, so as with a finished cast its task may still be resolving
+                    if A.cast_missed(job) then
+                        RPC.finish_job(job, "done", { cast = spell, extra_attack = check.extra_attack, no_damage = true,
+                            target = targets[1] and { uuid = targets[1] } or nil })
+                        return
+                    end
                     RPC.finish_job(job, "failed", nil, string.format(A.CAST_CANCELED_SPENT, spent))
                     return
                 end
                 if not job.ui and select(2, A.engine_refusal(job)) == "Countered" then
-                    A.hold_countered(job, char, check)
+                    job.countered = A.hold_countered(job, char, check)
                 end
                 RPC.finish_job(job, "failed", nil, why)
             end,
             -- AttackedBy(defender, attackerOwner, attacker, damageType, amount, cause, storyActionId)
             AttackedBy = function(job, a)
-                if G.same(a[3], char) or G.same(a[2], char) then
+                if not A.order_unstarted(job) and (G.same(a[3], char) or G.same(a[2], char)) then
                     local tgt = G.guid(a[1])
                     if tgt and G.visible(tgt) then
                         job.hits[#job.hits + 1] = { target = tgt, name = name_of(tgt),
@@ -684,7 +686,7 @@ reg("cast", function(args)
             end,
             -- StatusApplied(target, status, causee, storyActionId): visible statuses only.
             StatusApplied = function(job, a)
-                if G.same(a[3], char) then
+                if not A.order_unstarted(job) and G.same(a[3], char) then
                     local tgt = G.guid(a[1])
                     local V = BG3AI.Visibility
                     local info = V and V.statusInfo and V.statusInfo(tostring(a[2]))
@@ -925,7 +927,7 @@ reg("cast", function(args)
             end
         end,
         start = function(job)
-            job.hits, job.statuses = {}, {}
+            job.hits, job.statuses, job.behind_held = {}, {}, A.held_for(char)
             if walk then
                 return begin_approach(job, targets[1], walk.plan, walk.reach, function(j)
                     local ok2, c = pcall(prepare)
@@ -964,14 +966,14 @@ reg("cast", function(args)
             -- A hotbar cast is the player's own: the game charged it (nothing extra from us).
             if job.ui then return end
             -- Resource audit: charge whatever the engine did not.
-            local function audit()
+            local function audit(leave)
                 local after = G.resources(char)
                 local charged = {}
                 for _, p in ipairs(check.payers) do
                     local before = (check.snapshot[p.name] or {})[p.level] or 0
                     local now = (after[p.name] or {})[p.level] or 0
                     local owed = p.amount - (before - now)
-                    if owed > 0.01 and G.deduct(char, p.name, p.level, owed) then
+                    if owed > 0.01 and not (leave and leave[p.name]) and G.deduct(char, p.name, p.level, owed) then
                         charged[#charged + 1] = { resource = G.friendly(p.name),
                             level = p.level > 0 and p.level or nil, amount = owed }
                     end
@@ -981,6 +983,8 @@ reg("cast", function(args)
             if not job.casted then
                 if type(job.result) == "table" and job.result.paused then
                     A.hold_audit(job, char, matches, audit, check)
+                elseif job.countered then
+                    job.countered.audit = audit
                 end
                 return
             end

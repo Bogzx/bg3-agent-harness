@@ -481,6 +481,8 @@ test("held cast: a cast countered with no prompt holds its caster's next order t
     failed_with(next_order(), "still resolving")
     eq(#called("UseSpell"), orders, "no second order reached the game")
     res.ActionPoint[1].Amount = 0 -- the game's charge
+    failed_with(next_order(), "still resolving") -- its audit hasn't run: an order here would read its deduction as paid
+    tick(10)
     failed_with(next_order(), "not enough")
 end)
 
@@ -488,6 +490,13 @@ test("held cast: a cast countered with no prompt can't wedge its caster either",
     countered_no_prompt()
     tick(math.ceil(A.HELD_RESOLVE_MS / 60) + 5)
     eq(job(next_order()).status, "running", "past the bound")
+end)
+
+test("held cast: a paused cast whose cost went, with no landing or Countered read, pays no more (D15)", function()
+    local res = held_heal(4)
+    res.BonusActionPoint[1].Amount = 0 -- the game's, as a Canceled's
+    tick(math.ceil(A.HELD_RESOLVE_MS / 60) + 5)
+    eq(res.SpellSlot[1].Amount, 4, "not read as countered, so not charged")
 end)
 
 test("held cast: another refusal holds nothing back", function()
@@ -561,75 +570,6 @@ test("held cast: a hotbar cast countered with no prompt holds nothing: the game'
     eq(j.status, "failed", "ended " .. tostring(j.error))
     assert(j.error:find("a reaction countered it", 1, true), j.error)
     eq(#A.held_audits, 0, "no entry")
-end)
-
--- s5-rx-3 312.12 and 467.14: Action 0/1 and the Extra Attack status read before the held attack's CastedSpell, about
--- 0.5 s ahead. An order in that gap passes the gate, and took the held attack's landing as its own.
-local function extra_in_the_gap(seen)
-    combat_setup(9)
-    world[NPC].pos = { 1.5, 0, 0 }
-    spell("Target_MainHandAttack", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1",
-        Level = 0, SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" },
-        SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } })
-    local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = NPC }))
-    tick(15)
-    world[P1].comp_names = { PAUSED }
-    tick(20)
-    eq(j.status, "interrupted", "held " .. tostring(j.error))
-    world[P1].comp_names = nil
-    tick(2)
-    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0
-    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
-    cast_seen = seen
-    local k = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = NPC }))
-    eq(k.status, "running", "free, and the charge lifted the gate " .. tostring(k.error))
-    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
-    return k
-end
-local function attack_event(event) A.dispatch(event, { P1, "Target_MainHandAttack", "Target", "None", 0 }) end
-local function hit(amount) A.dispatch("AttackedBy", { NPC, P1, P1, "Slashing", amount, "Attack", 0 }) end
-
-test("held cast: its landing isn't the order queued behind it: that one reads its own swing, rolled", function()
-    local k = extra_in_the_gap("none")
-    hit(7) -- the held attack's damage
-    k.statuses[#k.statuses + 1] = { name = "the held attack's status" }
-    attack_event("CastedSpell")
-    eq(k.last_hit, nil, "the wait for its own arrow isn't cut short by the held hit's time")
-    eq(#k.statuses, 0, "the held attack's status isn't this order's")
-    tick(10)
-    eq(k.status, "running", "still waiting for its own swing")
-    create_hooks.SpellCastState({ SpellCastState = last_cast })
-    attack_event("CastSpell")
-    hit(9)
-    attack_event("CastedSpell")
-    tick(10)
-    eq(k.status, "done", "own landing " .. tostring(k.error))
-    eq(k.result.unrolled, nil, "it rolled")
-    eq(k.result.no_damage, nil, "it hit")
-    eq(#k.result.damage, 1, "only its own hit")
-    eq(k.result.damage[1].amount, 9, "its own amount")
-    eq(k.result.extra_attack, true, "the free attack")
-end)
-
-test("held cast: a queued order that never shows a state still reports its own landing, unrolled", function()
-    local k = extra_in_the_gap("none")
-    attack_event("CastedSpell") -- the held attack's
-    tick(10)
-    attack_event("CastedSpell") -- its own, no state seen: truly no roll
-    tick(10)
-    eq(k.status, "done", "reported " .. tostring(k.error))
-    assert(tostring(k.result.unrolled):find("no cast state", 1, true), tostring(k.result.unrolled))
-end)
-
-test("held cast: a held cast that never lands can't take the next order's landing from it", function()
-    local k = extra_in_the_gap("state") -- the held swing was lost: the next order's state comes at once
-    attack_event("CastSpell")
-    hit(9)
-    attack_event("CastedSpell")
-    tick(10)
-    eq(k.status, "done", "its own state, so its own landing " .. tostring(k.error))
-    eq(k.result.unrolled, nil, "it rolled")
-    eq(k.result.damage[1].amount, 9, "its hit")
 end)
 
 test("held cast: an order that never began holds nothing back: read live, it doesn't run later", function()

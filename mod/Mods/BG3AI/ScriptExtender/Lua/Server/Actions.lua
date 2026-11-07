@@ -536,6 +536,8 @@ function A.dispatch(event, args)
         if event == "CastedSpell" then A.held_cast_landed(args[1], args[2]) end
         A.scroll_cast(event, args[1])
         A.note_cast(args[1]) -- the idle teleport watch: a jump right after it is the caster's spell (ActionsMove)
+    elseif event == "CastSpellFailed" and args[1] then
+        A.held_cast_failed(args[1], args[2])
     elseif event == "ReactionInterruptUsed" and args[1] then
         A.note_interrupt(args[1])
     elseif (event == "Unlocked" or event == "Opened") and args[1] then

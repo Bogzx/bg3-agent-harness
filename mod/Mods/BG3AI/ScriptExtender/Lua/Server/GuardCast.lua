@@ -492,6 +492,10 @@ function G.extra_attack_free(char, st, flags)
     local roll = ""
     pcall(function() roll = tostring(st.SpellRoll and st.SpellRoll.Default or "") end)
     if not roll:find("WeaponAttack") or flags.IsDefaultWeaponAction then return false end
+    -- The status only frees an Action: b1-act3b seq 199 read a bonus-cost Pommel Strike as `extra_attack`.
+    local action = false
+    for _, c in ipairs(G.parse_costs(st.UseCosts)) do action = action or c.name == "ActionPoint" end
+    if not action then return false end
     return b(G.q("HasActiveStatus", char, G.EXTRA_ATTACK_STATUS))
 end
 
@@ -708,6 +712,8 @@ function G.check_cast(char, spell, target, pos, upcast, force)
     if not st then G.refuse("unknown action") end
     local variants, bad = container_spells(spell)
     if bad and bad > 0 then variants, bad = container_spells(spell) end -- one more read before giving up
+    -- live.md, L12 read 5: a twin without Fire Shield was told to choose between its variants, each then refused.
+    if variants and not G.holds_any(char, spell, variants) then G.refuse("the character does not have that action") end
     if variants and #variants == 0 then
         G.refuse("choose a variant (this action's variant list did not read as spell names)")
     elseif variants then
@@ -717,6 +723,8 @@ function G.check_cast(char, spell, target, pos, upcast, force)
     end
     if G.linked_box(st) then
         local ids, from = G.box_variants(char, spell)
+        -- from = game data: nothing of this box read in char's own book or containers, so it may not hold the box
+        if from and not G.holds_any(char, spell, ids) then G.refuse("the character does not have that action") end
         local free = {}
         for _, id in ipairs(ids) do if not G.variant_used(char, id) then free[#free + 1] = id end end
         local shown = G.spell_facts(spell)

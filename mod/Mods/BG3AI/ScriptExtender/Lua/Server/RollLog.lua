@@ -329,6 +329,14 @@ local function readCast(c)
     return true
 end
 
+-- The dice on this cast's entity now, leaving the tracked casts alone: those can hold a cast's that never reached a
+-- CastedSpell, whose dice carry. Read live at a Canceled's CastSpellFailed, 10 of 10 (countered-read part 4).
+function L.castDice(entity)
+    local c = { entity = entity, rolls = {} }
+    readCast(c)
+    return c.rolls
+end
+
 function L.pollCasts()
     for _, c in ipairs(L.casts) do
         if not c.gone and not readCast(c) then c.gone = true end

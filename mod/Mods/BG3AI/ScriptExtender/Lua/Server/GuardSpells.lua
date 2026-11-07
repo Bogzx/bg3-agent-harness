@@ -341,6 +341,17 @@ end
 
 -- Is the spell on the character's hotbar/spellbook and usable (prepared if it
 -- needs preparing)? Returns the matching SpellBook entry or refuses.
+-- Is spell, or one of ids, a row of char's spellbook? Only that: G.known_spell has the prepared and cooldown refusals.
+function G.holds_any(char, spell, ids)
+    local want = { [spell] = true }
+    for _, id in ipairs(ids) do want[id] = true end
+    for _, s in ipairs(spell_entries(char)) do
+        local ok, proto = pcall(function() return s.Id.Prototype end)
+        if ok and want[proto] then return true end
+    end
+    return false
+end
+
 function G.known_spell(char, spell)
     local entries, e = spell_entries(char)
     local function find(name)
