@@ -464,8 +464,78 @@ test("extra attack: a bonus-cost weapon attack isn't the free attack: its result
     tick(10)
     eq(j.status, "done", "done " .. tostring(j.error))
     eq(j.result.extra_attack, nil, "not the free attack")
-    eq(G.extra_attack_free(P1, Ext.Stats.Get("Target_Both"), {}), true, "an Action among its costs is")
+    eq(G.extra_attack_spell("Target_Both", Ext.Stats.Get("Target_Both"), {}), true, "an Action among its costs is")
     osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
+end)
+
+-- The game's statuses with ExtraAttackCheck's free boost (Status_BOOST.txt). The L12 Fighter has EXTRA_ATTACK_2 first.
+local function free_attack_setup()
+    combat_setup(9)
+    world[NPC].pos = { 1.5, 0, 0 }
+    local melee = { Default = "Attack(AttackType.MeleeWeaponAttack)" }
+    spell("Target_MainHandAttack", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1",
+        Level = 0, SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" }, SpellRoll = melee })
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0
+end
+local function swing() return job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = NPC })) end
+
+test("extra attack: every free status of the game's frees the swing, and the result says so", function()
+    for _, status in ipairs({ "EXTRA_ATTACK_2", "EXTRA_ATTACK", "MAG_MARTIAL_EXERTION", "WILDSTRIKE_EXTRA_ATTACK",
+        "STALKERS_FLURRY", "EXTRA_ATTACK_THIRSTING_BLADE", "WILDSTRIKE_2_EXTRA_ATTACK" }) do
+        reset()
+        free_attack_setup()
+        osiv[key("HasActiveStatus", P1, status)] = 1
+        local j = swing()
+        eq(j.status, "running", status .. " " .. tostring(j.error))
+        A.dispatch("CastedSpell", { P1, "Target_MainHandAttack" })
+        tick(10)
+        eq(j.result.extra_attack, true, status)
+        eq(j.result.charged_by_guard, nil, status .. ": no action charged")
+        osiv[key("HasActiveStatus", P1, status)] = nil
+    end
+end)
+
+test("extra attack: a status that makes the attack cost a bonus action isn't free", function()
+    for _, status in ipairs({ "EXTRA_ATTACK_WAR_MAGIC", "EXTRA_ATTACK_WAR_PRIEST" }) do
+        reset()
+        free_attack_setup()
+        osiv[key("HasActiveStatus", P1, status)] = 1
+        local j = swing()
+        eq(j.status, "failed", status)
+        assert(j.error:find("not enough action", 1, true), j.error)
+        osiv[key("HasActiveStatus", P1, status)] = nil
+    end
+end)
+
+test("extra attack: EXTRA_ATTACK_2's Canceled swing spends that status, though EXTRA_ATTACK follows it", function()
+    cast_outcome = "Canceled"
+    free_attack_setup()
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK_2")] = 1
+    local j = swing()
+    eq(j.status, "running", "ordered " .. tostring(j.error))
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK_2")] = nil
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1 -- its OnRemoveFunctors, the third attack
+    attack_event("CastSpellFailed")
+    cast_outcome = nil
+    eq(j.error, string.format(A.CAST_CANCELED_SPENT, "extra attack"), "the status it spent")
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
+end)
+
+test("extra attack: what the game's check takes is free: an unarmed attack, a throw, its named spells", function()
+    free_attack_setup()
+    local flags = {}
+    local function spell_of(name, roll, costs)
+        spell(name, { UseCosts = costs or "ActionPoint:1", SpellFlags = {}, SpellRoll = roll and { Default = roll } })
+        return G.extra_attack_spell(name, Ext.Stats.Get(name), flags)
+    end
+    eq(spell_of("Target_UnarmedAttack", "Attack(AttackType.MeleeUnarmedAttack)"), true, "unarmed")
+    eq(spell_of("Throw_Throw", "Attack(AttackType.RangedUnarmedAttack)"), true, "a throw")
+    eq(spell_of("Projectile_ArrowOfSmokepowder", nil), true, "named")
+    eq(spell_of("Projectile_FireBolt", "Attack(AttackType.RangedSpellAttack)"), false, "a spell attack")
+    eq(spell_of("Target_Offhand", "Attack(AttackType.MeleeWeaponAttack)", "BonusActionPoint:1"), false, "no Action")
+    eq(G.extra_attack_spell("Target_Slash", { UseCosts = "ActionPoint:1",
+        SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } }, { IsDefaultWeaponAction = true }), false,
+        "a weapon action, as before")
 end)
 
 -- GuardCast's linked box branch: a call-allies box reads every group in the game data when nothing of it is in the

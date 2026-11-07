@@ -484,19 +484,36 @@ end
 -- whose boost is UnlockSpellVariant(ExtraAttackCheck(), ModifyUseCosts(Replace,ActionPoint,0,0,ActionPoint))
 -- and which goes on the next cast (RemoveEvents OnSpellCast): the next weapon attack costs no action. We
 -- checked the raw UseCosts (ActionPoint:1), so every Extra Attack was refused "not enough action" (S023-S028:
--- 0 of 7). A weapon attack here = a Melee/RangedWeaponAttack roll that is not a weapon action (Lacerate,
--- Cleave...): the main-hand attacks, Divine Smite, Reckless Attack.
-G.EXTRA_ATTACK_STATUS = "EXTRA_ATTACK"
+-- 0 of 7). A weapon attack here = what the game's ExtraAttackSpellCheck takes, with an Action to free, and not a
+-- weapon action (Lacerate, Cleave...): the main-hand attacks, Divine Smite, Reckless Attack, an unarmed attack, a throw.
+-- Every status with that boost at no cost, in the game's own order (HasHigherPriorityExtraAttackQueued). Fighter 11+
+-- has EXTRA_ATTACK_2 first and EXTRA_ATTACK after it. Not here: EXTRA_ATTACK_WAR_MAGIC and _WAR_PRIEST make the attack
+-- cost a bonus action, not nothing; MIND_MASTERY's holder can't cast.
+G.EXTRA_ATTACK_STATUSES = { "EXTRA_ATTACK_2", "EXTRA_ATTACK", "MAG_MARTIAL_EXERTION", "WILDSTRIKE_EXTRA_ATTACK",
+    "STALKERS_FLURRY", "EXTRA_ATTACK_THIRSTING_BLADE", "WILDSTRIKE_2_EXTRA_ATTACK" }
+local EXTRA_ATTACK_ROLLS = { "WeaponAttack", "UnarmedAttack", "ThrowAttack" }
+local EXTRA_ATTACK_SPELLS = { Target_CommandersStrike = true, Target_Bufotoxin_Frog_Summon = true,
+    Projectile_ArrowOfSmokepowder = true, Projectile_ArcaneShot_SeekingArrow = true,
+    Zone_ArcaneShot_PiercingArrow = true }
 
-function G.extra_attack_free(char, st, flags)
-    local roll = ""
+function G.extra_attack_status(char)
+    for _, status in ipairs(G.EXTRA_ATTACK_STATUSES) do
+        if b(G.q("HasActiveStatus", char, status)) then return status end
+    end
+    return nil
+end
+
+function G.extra_attack_spell(spell, st, flags)
+    if flags.IsDefaultWeaponAction then return false end
+    local roll, taken = "", EXTRA_ATTACK_SPELLS[spell]
     pcall(function() roll = tostring(st.SpellRoll and st.SpellRoll.Default or "") end)
-    if not roll:find("WeaponAttack") or flags.IsDefaultWeaponAction then return false end
-    -- The status only frees an Action: b1-act3b seq 199 read a bonus-cost Pommel Strike as `extra_attack`.
-    local action = false
-    for _, c in ipairs(G.parse_costs(st.UseCosts)) do action = action or c.name == "ActionPoint" end
-    if not action then return false end
-    return b(G.q("HasActiveStatus", char, G.EXTRA_ATTACK_STATUS))
+    for _, kind in ipairs(EXTRA_ATTACK_ROLLS) do taken = taken or roll:find(kind, 1, true) end
+    if not taken then return false end
+    -- The status only frees an Action: v010-pilot act3 r2 c2 seq 55 read a bonus-cost Frenzied Strike as `extra_attack`.
+    for _, c in ipairs(G.parse_costs(st.UseCosts)) do
+        if c.name == "ActionPoint" then return true end
+    end
+    return false
 end
 
 -- Full pre-validation for an Osiris-originated cast. Returns
@@ -775,8 +792,8 @@ function G.check_cast(char, spell, target, pos, upcast, force)
     local costs = G.parse_costs(st.UseCosts, upcast)
     local payers = {}
     local in_combat = G.in_combat(char)
-    local extra_attack = in_combat and G.extra_attack_free(char, st, flags)
-    if extra_attack then
+    local extra_status = in_combat and G.extra_attack_spell(spell, st, flags) and G.extra_attack_status(char)
+    if extra_status then
         for i = #costs, 1, -1 do
             if costs[i].name == "ActionPoint" then table.remove(costs, i) end
         end
@@ -843,5 +860,5 @@ function G.check_cast(char, spell, target, pos, upcast, force)
         if not force and spell ~= G.JUMP_SPELL then G.blast_risk(char, st, flags, spell, nil, pos) end
     end
     return { stats = st, costs = costs, payers = payers, snapshot = snap, level = level, range = range,
-        extra_attack = extra_attack or nil }
+        extra_attack = extra_status and true or nil, extra_status = extra_status or nil }
 end

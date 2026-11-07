@@ -276,7 +276,7 @@ A.CAST_CANCELED_SPENT = "the game took the %s, then cancelled the cast (the game
 function A.cost_taken(char, check)
     local spent = A.cost_spent(char, check)
     if spent then return spent end
-    if check and check.extra_attack and not G.b(G.q("HasActiveStatus", char, G.EXTRA_ATTACK_STATUS)) then
+    if check and check.extra_status and not G.b(G.q("HasActiveStatus", char, check.extra_status)) then
         return "extra attack"
     end
     return nil

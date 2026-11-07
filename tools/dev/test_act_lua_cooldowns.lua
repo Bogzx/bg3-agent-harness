@@ -112,3 +112,29 @@ test("state.actions lists a spell UNAVAILABLE when its cooldown rows don't read,
     world[P1].comps.SpellBook, world[P1].comps.SpellBookCooldowns = nil, nil
     stats.Target_PommelStrike, stats.Target_Trip = nil, nil
 end)
+
+-- The list reads the free attack as the guard does: the L12 Fighter's first free attack is EXTRA_ATTACK_2's.
+test("state.actions: EXTRA_ATTACK_2 lists the swing as the free attack, as the guard takes it", function()
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ entity = entity, osi = function(f, ...)
+        local okf, v = pcall(f, ...)
+        if okf then return v end
+    end }, { __index = savedV })
+    combat_setup(9)
+    stats.Target_MainHandAttack = { SpellType = "Target", UseCosts = "ActionPoint:1", SpellFlags = { "IsMelee" },
+        SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } }
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0
+    world[P1].comps.SpellBook = { Spells = { { PrepareType = "Unknown",
+        Id = { Prototype = "Target_MainHandAttack", OriginatorPrototype = "Target_MainHandAttack" } } } }
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK_2")] = 1
+    BG3AI.State.spellCache = {}
+    local ok, list = pcall(BG3AI.State.actions, P1)
+    BG3AI.Visibility = savedV
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK_2")] = nil
+    world[P1].comps.SpellBook = nil
+    eq(ok, true, "actions read: " .. tostring(list))
+    local swing
+    for _, a in ipairs(list) do if a.spell == "Target_MainHandAttack" then swing = a end end
+    eq(swing.extra_attack, true, "tagged")
+    eq(swing.available, true, "no action needed")
+end)

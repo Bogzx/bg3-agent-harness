@@ -577,7 +577,7 @@ function S.actions(uuid)
         end
     end)
     local out = {}
-    local extra -- EXTRA_ATTACK on uuid (read once, on the first action-cost entry)
+    local extra -- a free attack's status on uuid (read once, on the first action-cost entry)
     for _, id in ipairs(order) do
         local info = byId[id].info
         local cost = parseCosts(info.use_costs)
@@ -607,14 +607,13 @@ function S.actions(uuid)
         local pay = cost
         if cost.action and extra == nil then
             local Gd = BG3AI.Guard
-            extra = (Gd and Gd.extra_attack_free and Gd.in_combat(uuid)
-                and U.truthy(Gd.q("HasActiveStatus", uuid, Gd.EXTRA_ATTACK_STATUS))) or false
+            extra = (Gd and Gd.extra_attack_status and Gd.in_combat(uuid) and Gd.extra_attack_status(uuid)) or false
         end
         if cost.action and extra then
-            -- Extra Attack: the next weapon attack costs no action (Guard.extra_attack_free), as on the hotbar
+            -- Extra Attack: the next weapon attack costs no action (Guard.extra_attack_spell), as on the hotbar
             local flags, st = {}, Ext.Stats.Get(id)
             pcall(function() for _, x in ipairs(st.SpellFlags) do flags[x] = true end end)
-            if st and BG3AI.Guard.extra_attack_free(uuid, st, flags) then
+            if st and BG3AI.Guard.extra_attack_spell(id, st, flags) then
                 pay = {}
                 for k, v in pairs(cost) do if k ~= "action" then pay[k] = v end end
                 a.extra_attack = true

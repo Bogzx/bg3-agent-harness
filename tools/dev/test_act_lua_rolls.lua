@@ -512,7 +512,7 @@ end)
 
 test("held cast: an Extra Attack whose status went has resolved: no cost to read, no wait", function()
     osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
-    local h = { began = true, char = P1, check = { extra_attack = true } }
+    local h = { began = true, char = P1, check = { extra_attack = true, extra_status = "EXTRA_ATTACK" } }
     A.held_audits = { h }
     eq(A.cast_unresolved(P1), true, "status still on")
     osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
