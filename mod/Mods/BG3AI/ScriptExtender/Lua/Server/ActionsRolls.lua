@@ -211,7 +211,7 @@ A.FAIL_REASONS = {
     EqualTargets = "the same target was picked twice", CantFindCastPosition = "no spot to cast it from",
     BlockedRequiredMove = "the move it needs is blocked", InvalidCastPosition = "the cast position isn't valid",
     CantMove = "the caster can't move", MovementFailed = "the move to cast it failed",
-    ServerTimeout = "the game timed out",
+    ServerTimeout = "the game timed out", Countered = "a reaction countered it",
 }
 A.SPOT_REASONS = { MissingTarget = true, TooFewTargets = true, InvalidTarget = true }
 function A.engine_refusal(job)
@@ -304,17 +304,58 @@ end
 A.HELD_LANDS_MS = 5000
 A.held_audits = A.held_audits or {}
 
-function A.hold_audit(job, char, matches, audit)
-    A.held_audits[#A.held_audits + 1] = { char = char, matches = matches, audit = audit, side = job.side }
+-- Section 16 read A (live.md 08:01:41, 08:03:05): a countered Magic Missile read Action 1/1 until between +4 s and +6 s
+-- after the answer, when the game charged it. An order sent at +1 s passed everything: the pause component had gone
+-- with the answer, the job had ended, and the guard read the action as there. It ran after the hold, and one action
+-- bought the countered cast and a full Scorching Ray. A player can't order there: the game's UI is busy with the cast.
+-- So a cast that began and was paused holds its character's orders until it has resolved: it landed, the game took its
+-- cost (a countered cast never lands), or it stood unpaused for HELD_RESOLVE_MS, so no read can wedge the character.
+A.HELD_RESOLVE_MS = 10000
+A.CAST_UNRESOLVED = "this character's last cast is still resolving after a reaction: its cost may not show yet, and no"
+    .. " order but end_turn starts for this character until it has (at most 10 s after any prompt closes)"
+
+function A.hold_audit(job, char, matches, audit, check)
+    A.held_audits[#A.held_audits + 1] = { char = char, matches = matches, audit = audit, side = job.side,
+        began = job.began and true or nil, check = check }
 end
 
 function A.held_cast_landed(caster, spell)
+    local now = RPC.now_ms()
     for _, h in ipairs(A.held_audits) do
-        if not h.landed_ms and h.matches({ caster, spell }) then
-            h.landed_ms = RPC.now_ms()
+        local lost = h.free_ms and now - h.free_ms >= A.HELD_LANDS_MS
+        if not lost and not h.landed_ms and h.matches({ caster, spell }) then
+            h.landed_ms = now
             return
         end
     end
+end
+
+-- live.md 01:11:51: a Counterspell set to always raises no prompt and no pause, and the cast ends failed, reason
+-- Countered, with action 1 after. An enemy's reaction has no prompt either. The cost comes later here too, so the same
+-- hold: never lands, so nothing to audit.
+function A.hold_countered(job, char, check)
+    local function never() return false end
+    A.hold_audit({ side = job.side, began = true }, char, never, nil, check)
+    A.held_audits[#A.held_audits].free_ms = RPC.now_ms()
+end
+
+-- A held cast that still holds its character's orders.
+local function held_open(h, now)
+    if not h.began or h.resolved then return false end
+    if A.cast_paused(h.char) then return true end
+    if A.cost_taken(h.char, h.check) or (h.free_ms and now - h.free_ms >= A.HELD_RESOLVE_MS) then
+        h.resolved = true
+        return false
+    end
+    return true
+end
+
+function A.cast_unresolved(char)
+    local now = RPC.now_ms()
+    for _, h in ipairs(A.held_audits) do
+        if G.same(h.char, char) and held_open(h, now) then return true end
+    end
+    return false
 end
 
 function A.held_audit_tick()
@@ -328,8 +369,9 @@ function A.held_audit_tick()
         elseif A.cast_paused(h.char) then
             h.free_ms = nil
         else
-            h.free_ms = h.free_ms or RPC.now_ms()
-            if RPC.now_ms() - h.free_ms >= A.HELD_LANDS_MS then table.remove(A.held_audits, i) end
+            local now = RPC.now_ms()
+            h.free_ms = h.free_ms or now
+            if now - h.free_ms >= A.HELD_LANDS_MS and not held_open(h, now) then table.remove(A.held_audits, i) end
         end
     end
 end

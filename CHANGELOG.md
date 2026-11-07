@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.6.0 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.7.0 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -98,7 +98,11 @@ game unless it says so.
   closed a prompt with one row per level (it closes one in a match; outside one it's unread), and a cast paused for a reaction no
   longer promises that it goes on or that its outcome shows in the events (a Counterspell stops it). An order the pause
   caught before it started says what 4 live reads showed, that it didn't run after the answer and its action stayed,
-  with no promise. The bench prompts don't change. bench-v0.11's release cites it.
+  with no promise. The bench prompts don't change. bench-v0.11's release cited it until 0.7.0.
+- 0.7.0 (2026-11-07): what the agent can do changed: an order for a character whose last cast is still resolving after
+  a reaction is refused, as one sent 1 s after a Counterspell ran and got two casts for one action. It lifts when the
+  cast lands, the game takes its cost, or 10 s after any prompt closes. A cast countered with no prompt holds the same
+  way and says so. Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
