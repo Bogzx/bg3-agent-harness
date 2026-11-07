@@ -404,3 +404,36 @@ test("audit #18: loot_corpse/pickpocket on an out-of-sight character say 'not vi
         assert(j.error:find("target is not visible", 1, true), "pickpocket, dead=" .. dead .. ": " .. j.error)
     end
 end)
+
+-- live.md, L12 read 5, 10:00: Red Cedar has no Fire Shield. Shout_FireShield answered `choose a variant: ...Chill,
+-- ...Warm`, and each of those `the character does not have that action`.
+test("cast: a container the character doesn't hold isn't offered as a choice", function()
+    local LOH = "Target_LayOnHands"
+    local ids = { "Target_LayOnHands_SmallHeal", "Target_LayOnHands_BigHeal" }
+    local plain = { ModifierList = "SpellData", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 }
+    for _, id in ipairs(ids) do stats[id] = plain end
+    stats[LOH] = { ModifierList = "SpellData", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0,
+        ContainerSpells = table.concat(ids, ";") }
+    local function cast_error(book)
+        local rows = {}
+        for _, id in ipairs(book) do rows[#rows + 1] = { Id = { Prototype = id } } end
+        world[P1].comps.SpellBook = { Spells = rows }
+        local j = job(op("cast", { char = P1, spell = LOH, target = P1 }))
+        eq(j.status, "failed", "refused")
+        return j.error
+    end
+    local err = cast_error({})
+    assert(err:find("the character does not have that action", 1, true), err)
+    assert(not err:find("variant", 1, true), err)
+    err = cast_error({ "Target_Other" })
+    assert(err:find("the character does not have that action", 1, true), "another spell: " .. err)
+    err = cast_error({ LOH })
+    assert(err:find("choose a variant: Target_LayOnHands_SmallHeal, Target_LayOnHands_BigHeal", 1, true), err)
+    err = cast_error({ "Target_LayOnHands_BigHeal" }) -- Lay On Hands' variants are rows of their own
+    assert(err:find("choose a variant: ", 1, true), "a variant's row alone: " .. err)
+    stats[LOH].ContainerSpells = "BLD_GEN_Crane_Elevator_B.BLD_GEN_Crane_Elevator_B_Mesh.0"
+    err = cast_error({})
+    assert(err:find("the character does not have that action", 1, true), "an unread list: " .. err)
+    err = cast_error({ LOH })
+    assert(err:find("variant list did not read as spell names", 1, true), "held, list unread: " .. err)
+end)

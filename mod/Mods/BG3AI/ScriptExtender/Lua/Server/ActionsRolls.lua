@@ -227,6 +227,25 @@ function A.engine_refusal(job)
     return (A.FAIL_REASONS[r] or "reason " .. r) .. " (the game's " .. r .. ")", r
 end
 
+-- live.md Stray row read: an order starting cancels the caster's live hover preview, and that CastSpellFailed names the
+-- preview's spell, with nothing to tell it from the order's. Its own cast alive with no outcome, and not yet begun, the
+-- job didn't fail (every real failure on record reads an outcome): with this ended, our purge took a live swing, read
+-- on p4a-6 and b1; dropped, the swing landed 2 of 2. A real one with no outcome ends at the bound, in the same words.
+function A.failed_not_own(job, why)
+    if not job.cast_entity or job.spell_begun then return false end
+    local ok, outcome = pcall(function() return job.cast_entity.SpellCastOutcome end)
+    if not ok or outcome ~= nil then return false end
+    job.not_own_failed = job.not_own_failed or { t = RPC.now_ms(), why = why }
+    return true
+end
+
+function A.not_own_bound(job, ms)
+    local f = job.not_own_failed
+    if not f or job.spell_begun or job.casted or job.paused_ms or RPC.now_ms() - f.t < ms then return false end
+    RPC.finish_job(job, "failed", nil, f.why)
+    return true
+end
+
 -- SpellCastState OnCreate of a stamped caster.
 function A.roll_cast_state(entity)
     if not next(A.roll_wait) then return end
@@ -240,6 +259,8 @@ function A.roll_cast_state(entity)
         return
     end
     local job, names = w.job, flag_names(st.CastOptions)
+    -- live.md Stray row read: the client's hover preview is a cast state on the caster, of any spell it hovers
+    if names and has(names, "IsPreview") then return end
     local p, o = state_spell(st)
     local same = (p == nil and o == nil) or p == w.spell or o == w.spell
     if same and job.status == "running" and job.roll.state == "pending" then -- the awaited cast
@@ -316,7 +337,7 @@ A.CAST_UNRESOLVED = "this character's last cast is still resolving after a react
 
 function A.hold_audit(job, char, matches, audit, check)
     A.held_audits[#A.held_audits + 1] = { char = char, matches = matches, audit = audit, side = job.side,
-        began = job.began and true or nil, check = check }
+        began = job.began and true or nil, check = check, entity = job.cast_entity }
 end
 
 -- Before the jobs in A.dispatch, so A.held_landing can tell them this CastedSpell is a held cast's.
@@ -341,19 +362,71 @@ function A.held_landing(job)
     return A.held_claimed and job.roll and job.roll.state == "pending"
 end
 
+-- Live, held-claim read gapranged3: a held arrow's hit at +351 ms, after its CastedSpell at +150, counted in the order
+-- queued behind it, whose own CastSpell came at +1081. AttackedBy has no cast id, but an order behind a held cast
+-- hasn't swung before its own CastSpell. Not its cast state: that comes about 930 ms earlier (a30-read c1-1..3), so by
+-- these reads before the held hit. Only behind a held entry: 33 of 33 own hits read came after a CastSpell, but
+-- elsewhere it isn't needed, and a cast with none would lose its hit. A held hit after that CastSpell counts as own.
+function A.order_unstarted(job)
+    return job.behind_held and job.roll and not job.spell_begun and not job.casted
+end
+
+function A.held_for(char)
+    for _, h in ipairs(A.held_audits) do
+        if G.same(h.char, char) then return true end
+    end
+    return false
+end
+
 -- live.md 01:11:51: a Counterspell set to always raises no prompt and no pause, and the cast ends failed, reason
 -- Countered, with action 1 after. An enemy's reaction has no prompt either. The cost comes later here too, so the same
--- hold: never lands, so nothing to audit.
+-- hold. It never lands, so its audit (set by on_finish) waits for the game's charge instead: a30-read, by hotbar a
+-- countered Haste paid Action and L3, by Osiris Action alone, as the game doesn't charge an Osiris cast's slot.
+-- Outcome Countered only: a Canceled is unread on the player's route. With no cost read by the bound: nothing.
 function A.hold_countered(job, char, check)
     local function never() return false end
     A.hold_audit({ side = job.side, began = true }, char, never, nil, check)
-    A.held_audits[#A.held_audits].free_ms = RPC.now_ms()
+    local h = A.held_audits[#A.held_audits]
+    h.free_ms, h.countered = RPC.now_ms(), true
+    return h
+end
+
+-- What the game itself charges an Osiris cast (bonus at +1.2 s on a landed Divine Favour, charged_by_guard the slot),
+-- so a countered cast's audit leaves it, whenever it comes.
+A.TURN_RESOURCES = { ActionPoint = true, BonusActionPoint = true, ReactionActionPoint = true, Movement = true }
+
+-- live.md 05:50, countered-read part 4: a Riposte's Canceled comes on a swing that rolled and missed: 10 of 10 dice
+-- read in the handler were below the dc. As a player sees: a miss. No die read, one at or over its dc, or a natural 20:
+-- not called a miss.
+function A.cast_missed(job)
+    local L = BG3AI.RollLog
+    local any = false
+    for _, d in pairs(job.cast_entity and L and L.castDice and L.castDice(job.cast_entity) or {}) do
+        if not (d.type:find("Attack") and d.total and d.dc and d.total < d.dc and d.natural ~= 20) then return false end
+        any = true
+    end
+    return any
+end
+
+-- countered-read part 1 (live.md, 2 of 2): countered on a prompt, the cast's CastSpellFailed comes after its job has
+-- ended, about +4.9 s from the answer, and its outcome reads Countered at that moment only: nil before and after. A
+-- decline has no such failed. From here the entry goes as hold_countered's does: its audit waits for the game's charge.
+function A.held_cast_failed(caster, spell)
+    for _, h in ipairs(A.held_audits) do
+        if h.entity and not h.landed_ms and not h.countered and h.matches({ caster, spell })
+            and select(2, A.engine_refusal({ cast_entity = h.entity })) == "Countered" then
+            h.countered = true
+            return
+        end
+    end
 end
 
 -- A held cast that still holds its character's orders.
 local function held_open(h, now)
     if not h.began or h.resolved then return false end
     if A.cast_paused(h.char) then return true end
+    -- until its audit has run: an order here would read the audit's deduction as its own, and pay nothing itself
+    if h.countered and A.cost_taken(h.char, h.check) then return true end
     if A.cost_taken(h.char, h.check) or (h.free_ms and now - h.free_ms >= A.HELD_RESOLVE_MS) then
         h.resolved = true
         return false
@@ -375,14 +448,18 @@ function A.held_audit_tick()
         if h.landed_ms then
             if RPC.now_ms() - h.landed_ms >= A.CAST_SETTLE_MS then
                 table.remove(A.held_audits, i)
-                U.with_side(h.side, h.audit)
+                U.with_side(h.side, h.audit, h.countered and A.TURN_RESOURCES or nil)
             end
         elseif A.cast_paused(h.char) then
             h.free_ms = nil
         else
             local now = RPC.now_ms()
             h.free_ms = h.free_ms or now
-            if now - h.free_ms >= A.HELD_LANDS_MS and not held_open(h, now) then table.remove(A.held_audits, i) end
+            if h.countered and A.cost_taken(h.char, h.check) then
+                h.landed_ms = now -- settles as a landing does, so a charge of the game's own comes first
+            elseif now - h.free_ms >= A.HELD_LANDS_MS and not held_open(h, now) then
+                table.remove(A.held_audits, i)
+            end
         end
     end
 end

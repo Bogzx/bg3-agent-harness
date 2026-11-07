@@ -5,6 +5,63 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-07: every free attack the game gives
+
+- The guard, the action list and a Canceled swing's cost read one list of statuses, every one whose boost frees an
+  Action: EXTRA_ATTACK_2, EXTRA_ATTACK, MAG_MARTIAL_EXERTION, WILDSTRIKE_EXTRA_ATTACK and its _2, STALKERS_FLURRY,
+  EXTRA_ATTACK_THIRSTING_BLADE. Before, live.md L12 extra attack read: an L12 Fighter with EXTRA_ATTACK_2 on had its
+  second and third swings refused `not enough action`, 3 of 3 turns, and get_actions showed no `[Extra Attack: free]`.
+  Read live on the fix, live.md L12 three attacks: three attacks in a turn, ranged and by the switch, with the status
+  going EXTRA_ATTACK_2, EXTRA_ATTACK_Q, EXTRA_ATTACK inside the second swing. An unarmed attack, a throw and the game's
+  named spells now count as its ExtraAttackSpellCheck does; by reading, not live. EXTRA_ATTACK_WAR_MAGIC and
+  _WAR_PRIEST make the attack cost a bonus action, so they stay refused `not enough action`.
+- A weapon action with an Action cost takes the free attack, in the guard and the list. Before, it read `not enough
+  action` and UNAVAILABLE, a rule from 2026-10-10 with no read behind it and no match in the game's check. Read live on
+  L12 with no wrap, live.md Final head L12: Hamstring Shot listed `[Extra Attack: free]`, then `done ... extra_attack`,
+  Action stayed 0, the status stepped down and its cooldown went; on a hit, Hamstrung and Movement 10.5 -> 5.25. Rush
+  Attack is unread: the game refused it at both points tried, nothing charged, with no control.
+- A CastSpellFailed no longer ends a job whose own cast is alive with no outcome and hasn't reached its CastSpell.
+  Before, live.md Stray row read: an order starting cancels the caster's hover preview, whose failed names the preview's
+  spell. With the same id the job read `the game refused the cast (no reason given)` and our purge followed: 2 of 12
+  melee swings by the switch lost their attack, the first swing's id differing and so harmless. With the failed
+  dropped the swing landed, 2 of 2, through a test-only wrap; the fix itself has no live stray yet. A real failure with
+  no outcome now ends at the no-start bound, in the same words: 3 s in combat; 8 s out of combat or for a jump. An order
+  behind a held swing, with its own cast state and no outcome, now stays up through the held swing's CastSpellFailed,
+  which ended it before (the held-cast entry below); by the fake, unread live. A hover
+  preview's cast state is no longer taken as the order's; by reading, nothing seen.
+
+## 2026-11-07: a countered cast pays as a player's does, and a swing a Riposte answered reads as a miss
+
+- An Osiris-ordered cast that is countered, on a prompt or with none (an enemy's Counterspell, or one set to always),
+  pays every cost but the four turn resources (action, bonus action, reaction, movement: the game takes those) once the
+  game has taken its own charge. Read live for a spell slot only. Before, live.md a30-read: Gale's Haste read L3 3
+  through +15 s by this route, and 3 -> 2 by hotbar. The FAILED result's text doesn't change, and its `after=` still
+  reads from before the charge. No order but `end_turn` starts until it has been paid. Only the outcome Countered: no
+  cost read by 10 s charges nothing, and a Canceled pays what the game took.
+- A swing a Riposte answered reads as a miss, `use_ability: done — cast=... target=... no_damage`, when every die on
+  its own cast read below its dc and none is a natural 20. Before: `FAILED — the game took the action, then cancelled
+  the cast (the game's Canceled); it wasn't refused: what came of it shows in the events`. With no die read, a die at
+  or over its dc, or a natural 20, those words stay, without `what came of it shows in the events`: none of the 8
+  results on record had any. A melee spell Riposted keeps its slot, as a Canceled pays what the game took; 0 rows on
+  record, and what a player pays there is unread.
+- A weapon attack with no Action among its costs no longer says `extra_attack` in its result. Before, v010-pilot
+  act3_gold_max r2 c2 seq 55: `cast=Target_FrenziedStrike ... extra_attack ... bonus=0`. The action list and what a cast
+  pays don't change. Not read live: Pommel Strike has IsDefaultWeaponAction, so the old code doesn't tag it either. It
+  did read live that a bonus-cost attack leaves the free attack: Pommel Strike, then a free swing with `extra_attack`.
+- A raw id of a call-allies container the character doesn't hold reads `the character does not have that action`. Before,
+  by reading: `casts nothing by itself: its variants (which=) are ...`, with the groups from the game data.
+
+## 2026-11-07: a container nobody holds, and hits before an order has started
+
+- A raw id of a container spell the character doesn't hold (neither the container nor a variant in its book) reads `the
+  character does not have that action`. Before, live.md L12 read 5: `Shout_FireShield` answered `choose a variant:
+  Shout_FireShield_Chill, Shout_FireShield_Warm`, each then refused. A holder's `choose a variant` is unchanged.
+- For an order behind a held cast, a hit or status before the order's own CastSpell isn't in its result. Before, live.md
+  gapranged3: a held arrow's hit, 201 ms after its CastedSpell and 730 ms before the queued order's CastSpell, read
+  `damage=[6; 6]`, total 12, where its own was 6. Read live, part 5a of the countered read: `damage=` 4 beside hits 3
+  and 4, 7 beside hits 6 and 7. AttackedBy has no cast id, so a held hit that comes after that CastSpell still counts as
+  the order's. A held swing's CastSpellFailed still ends the order queued behind it.
+
 ## 2026-11-07: an order queued behind a held attack reads its own swing
 
 - An Extra Attack ordered after the game charged a held attack and before it landed (s5-rx-3 312.7 s, 467.7 s, about
