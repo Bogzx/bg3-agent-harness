@@ -821,15 +821,14 @@ def run_arena(
                 continue
             mark_turn()
             assert turn_mark is not None
+            cap = spec.turn_cap_s  # one character a phase (the mod's turn order, D643): turn_cap_s x 1
+            if not hold.key and model(turn.side) - turn_mark[1] >= cap:
+                ui_read = now  # the mod refuses an end during a pause: read for one before capping
+                prompt_side = _reaction_check(spec, game, ref, log, hold, now)
             if hold.key:  # waiting on the game's pause isn't the phase's thinking, slow as the other side may be
                 turn_mark = (turn_mark[0], turn_mark[1] + gained[turn.side])
                 continue
-            cap = spec.turn_cap_s  # one character a phase (the mod's turn order, D643): turn_cap_s x 1
             if model(turn.side) - turn_mark[1] < cap:
-                continue
-            ui_read = now  # an end sent during a pause is refused by the mod: read for one before capping
-            prompt_side = _reaction_check(spec, game, ref, log, hold, now)
-            if hold.key:
                 continue
             cap_phase(turn, f"{cap:g} s cap", f"the per-turn time cap ({cap:g} s of model time)")
         if ref.mod_end is None:  # the mod ended it but its record didn't reach the ring: the status's end
