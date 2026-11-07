@@ -242,3 +242,123 @@ test("countered: a Canceled cast stays uncharged: only the outcome Countered pay
     eq(res.SpellSlot[1].Amount, 3, "unread on the player's route, so not charged")
     eq(#A.held_audits, 0, "no entry")
 end)
+
+test("countered: an order inside the settle is refused, so the countered cast and its own each pay a slot", function()
+    local res, j = countered_slot("Countered")
+    fail_cast(j)
+    res.ActionPoint[1].Amount = 1 -- the game's charge; a second action is left
+    tick(1) -- the cost read, the audit not run yet
+    eq(res.SpellSlot[1].Amount, 3, "still settling")
+    local k = job(op("cast", { char = P1, spell = "Target_SlotBolt", target = NPC }))
+    eq(k.status, "failed", "refused " .. tostring(k.error))
+    assert(k.error:find("still resolving", 1, true), k.error)
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 2, "the countered cast's")
+    eq(#A.held_audits, 0, "can't wedge: the entry has gone")
+    local l = job(op("cast", { char = P1, spell = "Target_SlotBolt", target = NPC }))
+    eq(l.status, "running", "free now " .. tostring(l.error))
+    A.dispatch("CastedSpell", { P1, "Target_SlotBolt", "Target", "None", 0 })
+    tick(10)
+    eq(l.status, "done", "landed " .. tostring(l.error))
+    eq(res.SpellSlot[1].Amount, 1, "its own too")
+end)
+
+test("countered: a bonus-action spell leaves the bonus action to the game when the slot reads first", function()
+    combat_setup(9)
+    spell("Target_BonusBolt", { TargetRadius = "18", SpellType = "Target", Level = 3,
+        UseCosts = "BonusActionPoint:1;SpellSlotsGroup:1:1:3" })
+    local res = world[P1].comps.ActionResources.Resources
+    res.SpellSlot, res.BonusActionPoint = { { Level = 3, Amount = 3 } }, { { Level = 0, Amount = 2 } }
+    world[NPC].pos = { 1.5, 0, 0 }
+    cast_outcome = "Countered"
+    local j = job(op("cast", { char = P1, spell = "Target_BonusBolt", target = NPC }))
+    eq(j.status, "running", "started " .. tostring(j.error))
+    A.dispatch("CastSpellFailed", { P1, "Target_BonusBolt", "Target", "None", 0 })
+    cast_outcome = nil
+    res.SpellSlot[1].Amount = 2 -- the game's
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 2, "the slot once")
+    eq(res.BonusActionPoint[1].Amount, 2, "the bonus action is the game's")
+end)
+
+-- countered-read part 1: job `interrupted` at the prompt, the answer, then the failed: the outcome reads only at it.
+local function prompt_countered(outcome)
+    local res = countered_slot(nil)
+    tick(15)
+    world[P1].comp_names = { PAUSED }
+    tick(20)
+    world[P1].comp_names = nil
+    tick(2)
+    return res, function()
+        local e = A.held_audits[1].entity
+        e.SpellCastOutcome = { Result = outcome }
+        A.dispatch("CastSpellFailed", { P1, "Target_SlotBolt", "Target", "None", 0 })
+        e.SpellCastOutcome = nil
+    end
+end
+
+test("countered on a prompt: the slot once, after the game's charge, read only at the failed", function()
+    local res, failed = prompt_countered("Countered")
+    eq(#A.held_audits, 1, "held")
+    failed()
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 3, "nothing before the game's charge")
+    res.ActionPoint[1].Amount = 1
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 2, "the slot is paid")
+    eq(res.ActionPoint[1].Amount, 1, "the action only by the game")
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 2, "once")
+    eq(#A.held_audits, 0, "no entry left")
+end)
+
+test("countered on a prompt: no double charge if the game takes the slot first", function()
+    local res, failed = prompt_countered("Countered")
+    failed()
+    res.SpellSlot[1].Amount = 2
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 2, "the slot once")
+    eq(res.ActionPoint[1].Amount, 2, "the action is the game's")
+end)
+
+test("countered on a prompt: an order inside the settle is refused", function()
+    local res, failed = prompt_countered("Countered")
+    failed()
+    res.ActionPoint[1].Amount = 1
+    tick(1)
+    local k = job(op("cast", { char = P1, spell = "Target_SlotBolt", target = NPC }))
+    eq(k.status, "failed", "refused " .. tostring(k.error))
+    assert(k.error:find("still resolving", 1, true), k.error)
+end)
+
+test("held cast on a prompt: a Canceled failed, or the cost gone with no failed, charges nothing", function()
+    local res, failed = prompt_countered("Canceled")
+    failed()
+    res.ActionPoint[1].Amount = 1
+    tick(math.ceil(A.HELD_RESOLVE_MS / 60) + 5)
+    eq(res.SpellSlot[1].Amount, 3, "Canceled stays uncharged")
+    res = prompt_countered("Countered") -- no failed comes
+    res.ActionPoint[1].Amount = 1
+    tick(math.ceil(A.HELD_RESOLVE_MS / 60) + 5)
+    eq(res.SpellSlot[1].Amount, 3, "not read as countered")
+end)
+
+test("held cast on a prompt: a declined cast that lands still pays through its landing, with no failed", function()
+    local res = prompt_countered("Countered")
+    res.ActionPoint[1].Amount = 1
+    A.dispatch("CastedSpell", { P1, "Target_SlotBolt", "Target", "None", 0 })
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 2, "paid once")
+    eq(res.ActionPoint[1].Amount, 1, "action once")
+end)
+
+test("held cast on a prompt: another spell's failed by the caster isn't this cast's", function()
+    local res = prompt_countered("Countered")
+    local e = A.held_audits[1].entity
+    e.SpellCastOutcome = { Result = "Countered" }
+    A.dispatch("CastSpellFailed", { P1, "Target_MainHandAttack", "Target", "None", 0 })
+    e.SpellCastOutcome = nil
+    res.ActionPoint[1].Amount = 1
+    tick(math.ceil(A.HELD_RESOLVE_MS / 60) + 5)
+    eq(res.SpellSlot[1].Amount, 3, "not this cast's")
+end)

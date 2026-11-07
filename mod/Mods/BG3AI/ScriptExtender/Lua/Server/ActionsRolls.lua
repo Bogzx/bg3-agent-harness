@@ -316,7 +316,7 @@ A.CAST_UNRESOLVED = "this character's last cast is still resolving after a react
 
 function A.hold_audit(job, char, matches, audit, check)
     A.held_audits[#A.held_audits + 1] = { char = char, matches = matches, audit = audit, side = job.side,
-        began = job.began and true or nil, check = check }
+        began = job.began and true or nil, check = check, entity = job.cast_entity }
 end
 
 -- Before the jobs in A.dispatch, so A.held_landing can tell them this CastedSpell is a held cast's.
@@ -374,10 +374,25 @@ end
 -- so a countered cast's audit leaves it, whenever it comes.
 A.TURN_RESOURCES = { ActionPoint = true, BonusActionPoint = true, ReactionActionPoint = true, Movement = true }
 
+-- countered-read part 1 (live.md, 2 of 2): countered on a prompt, the cast's CastSpellFailed comes after its job has
+-- ended, about +4.9 s from the answer, and its outcome reads Countered at that moment only: nil before and after. A
+-- decline has no such failed. From here the entry goes as hold_countered's does: its audit waits for the game's charge.
+function A.held_cast_failed(caster, spell)
+    for _, h in ipairs(A.held_audits) do
+        if h.entity and not h.landed_ms and not h.countered and h.matches({ caster, spell })
+            and select(2, A.engine_refusal({ cast_entity = h.entity })) == "Countered" then
+            h.countered = true
+            return
+        end
+    end
+end
+
 -- A held cast that still holds its character's orders.
 local function held_open(h, now)
     if not h.began or h.resolved then return false end
     if A.cast_paused(h.char) then return true end
+    -- until its audit has run: an order here would read the audit's deduction as its own, and pay nothing itself
+    if h.countered and A.cost_taken(h.char, h.check) then return true end
     if A.cost_taken(h.char, h.check) or (h.free_ms and now - h.free_ms >= A.HELD_RESOLVE_MS) then
         h.resolved = true
         return false
@@ -399,7 +414,7 @@ function A.held_audit_tick()
         if h.landed_ms then
             if RPC.now_ms() - h.landed_ms >= A.CAST_SETTLE_MS then
                 table.remove(A.held_audits, i)
-                U.with_side(h.side, h.audit)
+                U.with_side(h.side, h.audit, h.countered and A.TURN_RESOURCES or nil)
             end
         elseif A.cast_paused(h.char) then
             h.free_ms = nil

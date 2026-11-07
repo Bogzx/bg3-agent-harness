@@ -481,6 +481,8 @@ test("held cast: a cast countered with no prompt holds its caster's next order t
     failed_with(next_order(), "still resolving")
     eq(#called("UseSpell"), orders, "no second order reached the game")
     res.ActionPoint[1].Amount = 0 -- the game's charge
+    failed_with(next_order(), "still resolving") -- its audit hasn't run: an order here would read its deduction as paid
+    tick(10)
     failed_with(next_order(), "not enough")
 end)
 
