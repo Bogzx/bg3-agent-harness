@@ -5,6 +5,14 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-08: a free attack shows in the order's result
+
+- An order's `after={...}` in combat read `action=0` and nothing about a free attack, which only get_actions showed
+  (`[Extra Attack: free]`); in the L12 S6 rerun 7 free attacks went unused after the turn's last paid swing, with no
+  list read in between. Now it reads `after={hp=44/44 action=0 Extra Attack: free bonus=1 ...}` while the game's
+  free-attack status is on at that read, and `last cast still resolving` (the list's reason) in a held weapon
+  attack's landing gap at Action 0 with no status on. Otherwise nothing.
+
 ## 2026-11-07: a turn the game runs itself reads so
 
 - A character whose turn the game runs (live.md "## Goaded read": Goading Attack in a match and in normal play; the
