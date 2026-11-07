@@ -695,3 +695,163 @@ test("linked box: a holder whose groups don't read still gets the game data's li
     assert(j.error:find("casts nothing by itself", 1, true), j.error)
     assert(j.error:find("from the game data", 1, true), j.error)
 end)
+
+-- live.md "L12 on main 807dce16", rows 389, 871: the held swing charged, its free status not on yet.
+local function held_swing_charged(held)
+    combat_setup(9)
+    world[NPC].pos = { 1.5, 0, 0 }
+    spell("Target_MainHandAttack", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1",
+        Level = 0, SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" },
+        SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } })
+    spell("Target_Bolt", { TargetRadius = "18", SpellType = "Target", Level = 0, UseCosts = "ActionPoint:1" })
+    spell("Target_BonusSwing", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "BonusActionPoint:1", Level = 0,
+        SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" },
+        SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } })
+    local res = world[P1].comps.ActionResources.Resources
+    res.BonusActionPoint = { { Level = 0, Amount = 1 } }
+    local j = job(op("cast", { char = P1, spell = held or "Target_MainHandAttack", target = NPC }))
+    tick(15)
+    world[P1].comp_names = { PAUSED }
+    tick(20)
+    eq(j.status, "interrupted", "held " .. tostring(j.error))
+    world[P1].comp_names = nil
+    tick(2)
+    res.ActionPoint[1].Amount, res.BonusActionPoint[1].Amount = 0, 0
+    return j
+end
+local function gap_swing() return op("cast", { char = P1, spell = "Target_MainHandAttack", target = NPC }) end
+local function refused_with(r, pat)
+    local e = r.error or (r.job and r.job.error) or ""
+    assert(e:find(pat, 1, true), tostring(e))
+end
+
+test("held cast: a weapon attack before its free status reads as still resolving, not out of action", function()
+    held_swing_charged()
+    refused_with(gap_swing(), A.CAST_UNLANDED)
+    assert(A.CAST_UNLANDED:find("not enough action yet", 1, true), A.CAST_UNLANDED)
+    local plain = op("cast", { char = P1, spell = "Target_Bolt", target = NPC })
+    eq(plain.error or (plain.job and plain.job.error), "not enough action", "no free attack pays a plain Action spell")
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
+    eq(job(gap_swing()).status, "running", "the free status on: it passes, landed or not, as #120")
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
+end)
+
+test("held cast: after its landing, no status means no free attack: the plain refusal", function()
+    held_swing_charged()
+    A.dispatch("CastedSpell", { P1, "Target_MainHandAttack", "Target", "None", 0 })
+    local r = gap_swing()
+    local e = r.error or (r.job and r.job.error) or ""
+    eq(e:find("yet", 1, true), nil, e)
+    assert(e:find("not enough action", 1, true), e)
+end)
+
+test("held cast: a failed with an outcome ends the wait; no outcome (a preview's) doesn't", function()
+    local j = held_swing_charged()
+    A.dispatch("CastSpellFailed", { P1, "Target_MainHandAttack", "Target", "None", 0 })
+    refused_with(gap_swing(), A.CAST_UNLANDED)
+    j.cast_entity.SpellCastOutcome = { Result = "Canceled" }
+    A.dispatch("CastSpellFailed", { P1, "Target_MainHandAttack", "Target", "None", 0 })
+    j.cast_entity.SpellCastOutcome = nil
+    local r = gap_swing()
+    local e = r.error or (r.job and r.job.error) or ""
+    eq(e:find("yet", 1, true), nil, e)
+end)
+
+test("state.actions: a weapon attack in that gap lists still resolving, a plain Action spell no action", function()
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ entity = entity, osi = function(f, ...)
+        local okf, v = pcall(f, ...)
+        if okf then return v end
+    end }, { __index = savedV })
+    held_swing_charged()
+    stats.Shout_Plain = { SpellType = "Shout", UseCosts = "ActionPoint:1", SpellFlags = {} }
+    stats.Target_BonusWeapon = { SpellType = "Target", UseCosts = "ActionPoint:1;BonusActionPoint:1", SpellFlags = {},
+        SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } }
+    local function book(id) return { PrepareType = "Unknown", Id = { Prototype = id, OriginatorPrototype = id } } end
+    world[P1].comps.SpellBook = { Spells = { book("Target_MainHandAttack"), book("Shout_Plain"),
+        book("Target_BonusWeapon") } }
+    local res = world[P1].comps.ActionResources.Resources
+    local function read()
+        BG3AI.State.spellCache = {}
+        local ok, list = pcall(BG3AI.State.actions, P1)
+        eq(ok, true, "actions read: " .. tostring(list))
+        local by = {}
+        for _, a in ipairs(list) do by[a.spell] = a end
+        return by
+    end
+    local by = read()
+    eq(by.Target_MainHandAttack.available, false, "not free yet")
+    eq(by.Target_MainHandAttack.reason, "last cast still resolving", "its reason")
+    eq(by.Shout_Plain.reason, "no action", "a plain Action spell")
+    res.ActionPoint[1].Amount, res.BonusActionPoint = 1, { { Level = 0, Amount = 0 } }
+    eq(read().Target_BonusWeapon.reason, "no bonus action", "another resource short isn't the gap")
+    BG3AI.Visibility = savedV
+    world[P1].comps.SpellBook = nil
+end)
+
+test("held cast: the words need a started weapon attack of this character's, unlanded, not failed", function()
+    local function counts(over)
+        local h = { char = P1, began = true, gives_free = true }
+        for k, v in pairs(over) do h[k] = v end
+        A.held_audits = { h }
+        return A.cast_unlanded(P1)
+    end
+    eq(counts({}), true, "the plain case")
+    eq(counts({ char = NPC }), false, "another character's")
+    eq(counts({ began = false }), false, "not started")
+    eq(counts({ gives_free = false }), false, "can't bring the status")
+    eq(counts({ landed_ms = 1 }), false, "landed")
+    eq(counts({ failed = true }), false, "failed")
+    eq(counts({ countered = true }), false, "countered: no free attack comes")
+    local now = RPC.now_ms()
+    eq(counts({ free_ms = now - A.HELD_LANDS_MS + 100 }), true, "inside the bound")
+    eq(counts({ free_ms = now - A.HELD_LANDS_MS }), false, "at the bound")
+end)
+
+test("held cast: a held cast that can't bring the status leaves the plain refusal", function()
+    for _, held in ipairs({ "Target_Bolt", "Target_BonusSwing" }) do
+        held_swing_charged(held)
+        local r = gap_swing()
+        eq(r.error or (r.job and r.job.error), "not enough action", held)
+    end
+end)
+
+test("held cast: in the window a weapon attack short of its bonus action says so, not 'yet'", function()
+    held_swing_charged()
+    spell("Target_BothSwing", { TargetRadius = "1.5", SpellType = "Target", Level = 0,
+        UseCosts = "BonusActionPoint:1;ActionPoint:1", SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" },
+        SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } })
+    local r = op("cast", { char = P1, spell = "Target_BothSwing", target = NPC })
+    eq(r.error or (r.job and r.job.error), "not enough bonus action", "the shortage it has")
+end)
+
+-- REVIEW-reactions.md F1: a failed reads every matching entry, as before this head: a Canceled doesn't stop the loop.
+local function failed_entries(one, two)
+    local function entry(outcome)
+        return { char = P1, began = true, matches = function() return true end,
+            entity = { SpellCastOutcome = { Result = outcome } } }
+    end
+    local a, b = entry(one), entry(two)
+    A.held_audits = { a, b }
+    return a, b
+end
+
+test("held cast: an older Canceled entry doesn't keep a newer Countered one from being countered", function()
+    combat_setup(9)
+    local a, b = failed_entries("Canceled", "Countered")
+    A.held_cast_failed(P1, "Target_MainHandAttack")
+    eq(a.failed, true, "older")
+    eq(a.countered, nil, "older isn't countered")
+    eq(b.countered, true, "newer")
+end)
+
+test("held cast: one failed ends every matching entry with a readable outcome", function()
+    combat_setup(9)
+    local a, b = failed_entries("Canceled", "Canceled")
+    A.held_cast_failed(P1, "Target_MainHandAttack")
+    eq(a.failed, true, "older")
+    eq(b.failed, true, "newer")
+    a.entity.SpellCastOutcome.Result = "Countered"
+    A.held_cast_failed(P1, "Target_MainHandAttack")
+    eq(a.countered, true, "h.failed only ends the words: what a cast pays reads as it did before")
+end)
