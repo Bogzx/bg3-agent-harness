@@ -110,6 +110,11 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    phase's progress on the stall clock (the game waits for its answer, not for the acting side; fairness audit
    S2-1). While the game holds, the mod refuses a side's orders and ends (Guard.side_gate), the phase's model-time cap
    doesn't run and the time a read shows held doesn't count toward it.
+   A phase whose character the game runs itself (arena.status's turn.lost_control: Guard.lost_control, a player has no
+   control of it either) is its side's to watch: `arena_control_lost {side, character, uuid, status, round}` once at the
+   first read, no model-time cap, no forfeit count, and the stall's model-time excuse doesn't apply. No end is sent for
+   it: live, the game's AI ends such a turn itself, also with nothing in reach; one that hangs is a stall "game", a
+   fault.
 6. An agent that exits while the fight is on is resumed in the same conversation with RESUME; exit 0 counts toward
    EXIT_RESUMES (then a forfeit), anything else (a crash, an API or MCP failure, a hang) toward FAULT_RESUMES (then
    client_fault: invalid).
@@ -234,6 +239,7 @@ class Turn:
     stalled: bool = False  # a stall "held" capped it
     cap_tries: int = 0  # the times the runner sent its cap's ends
     passed: set[str] = field(default_factory=set)  # lowercase uuids of members the mod passed (arena_turn_passed)
+    control_lost: bool = False  # arena_control_lost was written for it
 
 
 class Referee:
@@ -544,6 +550,17 @@ def _paused(game: ArenaGame, side: str) -> bool:
     return False
 
 
+def _lost_control(status: Mapping[str, Any], turn: Turn | None) -> dict[str, Any] | None:
+    """arena.status's turn.lost_control when that read is `turn`'s phase ({name?: its status}); None when not lost."""
+    read = status.get("turn") or {}
+    if turn is None or str(read.get("uuid") or "").lower() != turn.uuid.lower():
+        return None
+    lost = read.get("lost_control")
+    if lost is None:
+        return None
+    return lost if isinstance(lost, dict) else {}  # a status with no name shown reads as an empty table
+
+
 def _held(game: ArenaGame, turn: Turn) -> list[str]:
     """The phase's members its side still holds: in the side's own state.combat, current, not ended (an end of its
     own pending counts as ended), and not passed by the mod. Who can't act is the mod's call (Arena.lua cantAct:
@@ -789,10 +806,24 @@ def run_arena(
                     detail=f"A ${cost['A']:.4f} + B ${cost['B']:.4f} reached {what}",
                 )
             turn = ref.turn
+            lost = _lost_control(status, turn)
+            if lost is not None and turn is not None and not turn.control_lost:
+                turn.control_lost = True
+                ref.event(
+                    "arena_control_lost",
+                    side=turn.side,
+                    character=turn.name,
+                    uuid=turn.uuid,
+                    status=lost.get("name"),
+                    round=turn.round,
+                )
             gained = {s: model(s) - seen_model[s] for s in SIDES}
             seen_model = {s: model(s) for s in SIDES}
             # the phase's own side thinking is its progress; the other side's (planning in the other phase) is not
-            excused = list(gained.values()) if turn is None else [] if turn.capped else [gained[turn.side]]
+            if turn is None:
+                excused = list(gained.values())
+            else:
+                excused = [] if turn.capped or lost is not None else [gained[turn.side]]
             if turn is not None and prompt_side not in (None, turn.side):  # the game waits on that side's answer
                 excused.append(gained[prompt_side])
             idle += max(0.0, now - tick_at - max(excused, default=0.0))
@@ -806,7 +837,8 @@ def run_arena(
                 if turn is not None and not (turn.stalled or turn.forced):
                     try:
                         # during a pause nobody can end a turn: the game's stall (a fault, a rerun), not a forfeit
-                        held = [] if hold.key or _paused(game, turn.side) else _held(game, turn)
+                        idle_game = hold.key or lost is not None or _paused(game, turn.side)
+                        held = [] if idle_game else _held(game, turn)
                     except Exception as e:  # the game can't say: it holds the turn
                         why = f"state.combat failed: {e}"
                 phase = {"side": turn.side, "character": turn.name, "members": turn.names} if turn else {}
@@ -841,6 +873,9 @@ def run_arena(
             mark_turn()
             assert turn_mark is not None
             cap = spec.turn_cap_s  # one character a phase (the mod's turn order, D643): turn_cap_s x 1
+            if lost is not None:  # the game's turn: what its side thinks meanwhile isn't this phase's
+                turn_mark = (turn_mark[0], turn_mark[1] + gained[turn.side])
+                continue
             if not hold.key and model(turn.side) - turn_mark[1] >= cap:
                 ui_read = now  # the mod refuses an end during a pause: read for one before capping
                 prompt_side = _reaction_check(spec, game, ref, log, hold, now)

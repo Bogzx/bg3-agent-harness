@@ -131,7 +131,8 @@ def dup_fields(line: str) -> str:
 # --- combatant rows under COMBAT -------------------------------------------------------------------------------
 _ROW_KEYS = ("initiative", "hp_pct", "name", "race", "relation", "from")
 _ROW_TOK = re.compile(r"from=\{[^}]*\}|@\([^)]*\)|[a-z_]+=(?:\[[^\]]*\]|\{[^}]*\}|\S+)|\S+")
-_ROW_FLAGS = {"can_act", "is_current", "acted", "ended", "dead", "downed", "unseen", "summon", "hidden", "invisible"}
+_ROW_FLAGS = {"can_act", "is_current", "acted", "ended", "dead", "downed", "unseen", "summon", "hidden", "invisible",
+              "game_turn"}
 
 
 def combat_row(line: str) -> str:
@@ -265,8 +266,9 @@ def event_line(line: str, names: _Names) -> str:
     if kind == "damage" and keys <= {"target", "source", "type", "amount"} and "amount" in kv and not bare:
         src = names(kv["source"]) + " -> " if kv.get("source") else ""
         out = f"damage {src}{names(kv.get('target', '?'))} {kv['amount']}" + (f" {kv['type']}" if kv.get("type") else "")
-    elif kind == "cast" and keys <= {"caster", "roll", "name", "spell"} and "name" in kv and not bare:
-        out = (f"cast {names(kv.get('caster', '?'))}: {kv['name']}" + (f" ({kv['roll']})" if kv.get("roll") else ""))
+    elif kind == "cast" and keys <= {"caster", "roll", "name", "spell", "turn"} and "name" in kv and not bare:
+        by = f" ({kv['turn']} turn)" if kv.get("turn") else ""  # Events.lua: turn=game's, a cast the game ran
+        out = (f"cast {names(kv.get('caster', '?'))}{by}: {kv['name']}" + (f" ({kv['roll']})" if kv.get("roll") else ""))
     elif kind == "used" and keys <= {"item", "char"} and "item" in kv:
         out = f"used {names(kv.get('char', '?'))}: {names(kv['item'])}" + (f" {bare}" if bare else "")
     elif kind in ("status_applied", "status_removed") and keys == {"target", "name"} and not bare:

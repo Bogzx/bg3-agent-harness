@@ -60,6 +60,7 @@
         "arena_end_written",
         "arena_group_end_written",
         "arena_turn_readmitted",
+        "arena_control_lost",
         "arena_round",
         "arena_surfaces",
         "arena_stood_up"
@@ -700,6 +701,45 @@
           },
           "why": {
             "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_control_lost"
+          }
+        }
+      },
+      "then": {
+        "description": "The game runs this phase's character itself (its LoseControlComponent; a player has no control of it either), read by the runner at the phase's first arena.status: no per-turn cap and no forfeit count on the phase. status is the display name of the status that carries LoseControl, null when none is shown. uuid joins its rolls.",
+        "required": [
+          "side",
+          "character",
+          "uuid",
+          "round"
+        ],
+        "properties": {
+          "side": {
+            "$ref": "#/$defs/side"
+          },
+          "character": {
+            "$ref": "#/$defs/name"
+          },
+          "uuid": {
+            "type": "string"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }

@@ -21,7 +21,7 @@ local reg, start, holder, name_of, NULL_GUID = I.reg, I.start, I.holder, I.name_
 local function group_waiting(char)
     local out = {}
     for _, m in ipairs(G.turn_group_members()) do
-        if not G.same(m, char) and G.still_to_act(m) then out[#out + 1] = m end
+        if not G.same(m, char) and G.still_to_act(m) and not G.lost_control(m) then out[#out + 1] = m end
     end
     return out
 end
@@ -30,6 +30,7 @@ reg("end_turn", function(args)
     local char = G.actor(args.char)
     if not G.in_combat(char) then G.refuse("not in combat") end
     G.side_gate() -- a held member's end: the other side's phase, not this character's
+    G.lost_control_gate(char)
     if G.turn_requested_end(char) then
         G.refuse("this character already ended its turn (the rest of its turn group is still acting)")
     end
@@ -73,7 +74,9 @@ reg("end_turn", function(args)
             for _, m in ipairs(G.turn_group_members()) do
                 if not G.same(m, char) then
                     local a, r = G.tb_flags(m)
-                    if a and not r then
+                    -- live.md (e): an earlier end still on record for a member whose next turn the game runs: this
+                    -- route sent it an EndTurn inside the other side's end_turn job
+                    if a and not r and not G.lost_control(m) then
                         if G.end_requested[G.guid(m) or m] then stale[#stale + 1] = m else others = true end
                     end
                 end

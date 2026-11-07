@@ -745,6 +745,7 @@ reg("cast", function(args)
                 if p and job.ordered_pos and U.dist(p, job.ordered_pos) > 0.5 then
                     job.began = true -- the engine walks into range / the jump took off
                 elseif RPC.now_ms() - job.ordered_ms > no_start_ms then
+                    if A.lost_control_fail(job, char) then return end
                     local now = RPC.now_ms()
                     local rx = combat and not job.ui and U.sget(A, "react_seen")
                     if rx and rx.t < job.ordered_ms - A.CAST_HIT_WINDOW_MS then rx = nil end
