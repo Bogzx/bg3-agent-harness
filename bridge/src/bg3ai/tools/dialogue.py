@@ -236,28 +236,32 @@ def react(use: bool, which: str = "") -> str:
 
 
 def _spent_check(out: str, mark: Any) -> str:
-    """A `react: done` stands only if the prompt's observers spent something: the prompt closing proves nothing (L5
-    reads, 02:00: a confirm with no row chosen closed it, nobody reacted, the attack landed, and the side read done).
-    An unreadable mark leaves the answer as it was."""
-    if not out.startswith("react: done") or not isinstance(mark, dict) or not mark.get("uuids"):
+    """A `react: done` whose prompt closed with no resource of its observers dropped says so (L5 reads, 02:00: a confirm
+    with no row chosen closed it, nobody reacted, and the side read done). A reaction with no cost reads the same, so
+    this reports what was read and doesn't call it failed. An unreadable mark, or a total of 0 (no read of resources),
+    leaves the answer as it was; so does a prompt still up, as the next one can hold the spend."""
+    if not out.startswith("react: done") or not isinstance(mark, dict) or not mark.get("uuids") or not mark.get("total"):
         return out
     end = time.monotonic() + REACT_SPENT_S
     while True:
         now = core.game.try_rpc("ui.react_spent", {"uuids": mark["uuids"]}, context="client")
-        if not isinstance(now, dict) or now.get("total", 0) < mark.get("total", 0):
+        if not isinstance(now, dict) or now.get("total", 0) < mark["total"]:
             return out
         if time.monotonic() >= end:
             break
         time.sleep(0.1)
+    probe = core.game.try_rpc("ui.react_probe", {"watch": True}, context="client")
+    if isinstance(probe, dict) and probe.get("open"):
+        return out
     _, sep, rest = out.partition("\n")
-    return ("react: FAILED — the prompt closed and nothing was spent, so no reaction happened (a reaction that costs "
-            "nothing reads the same)") + sep + rest
+    return (f"react: done — the prompt closed and no resource of its observers dropped in {REACT_SPENT_S:g} s: a reaction "
+            "with a cost didn't happen; one with no cost may have") + sep + rest
 
 
 def _react_click(args: dict, which: int, t0: float, confirm: bool = False) -> str:
     """ui.react said this prompt answers only to a click on its row (one row per spell level): click it with the
     mouse, hover-checked (reactclick). confirm: several interruptors: the click only chooses the row, and ui.react,
-    asked again, accepts a row that reads chosen."""
+    asked again, accepts a row whose Decision reads Use."""
     from .. import reactclick
 
     inp = world_tools._inp(own_prompt=True)
@@ -269,7 +273,7 @@ def _react_click(args: dict, which: int, t0: float, confirm: bool = False) -> st
         out = plumbing._act("react", "ui.react", {"use": True, "which": which}, context="client", wait_s=15)
         res = reporting._batch.get("result")
         if isinstance(res, dict) and res.get("needs_click"):
-            return reporting._finish("react", args, "react: FAILED — the click chose no row; the prompt is still open",
+            return reporting._finish("react", args, "react: FAILED — the row doesn't read chosen after the click; the prompt is still open",
                                      t0)
         return out
     if c.get("closed") or c.get("gone"):
@@ -281,7 +285,7 @@ def _react_click(args: dict, which: int, t0: float, confirm: bool = False) -> st
     return reporting._finish("react", args, text, t0)
 
 
-REACT_SPENT_S = 4.0  # after a done: how long the observers' resources may take to show the cost (Counterspell's: < 3 s)
+REACT_SPENT_S = 4.0  # after a done: how long to watch the observers' resources for the cost (no spend has been timed live)
 _ROMAN = re.compile(r"^(?:I|II|III|IV|V|VI|VII|VIII|IX)$")
 _ROMAN_N = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9}
 

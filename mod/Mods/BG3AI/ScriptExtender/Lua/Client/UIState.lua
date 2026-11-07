@@ -646,6 +646,14 @@ end
 -- A row reads `[level] Name [slot level]` (DataTemplates.xaml InterruptToggleBtnTemplate: Roman numerals, none at
 -- level 1): Gale's Shield at levels I-VI showed `Shield | II | Shield | II | III | Shield | III …`.
 local ROMAN = { I = 1, II = 2, III = 3, IV = 4, V = 5, VI = 6, VII = 7, VIII = 8, IX = 9 }
+
+-- A row is chosen when its view model's Decision reads Use. The toggle's own IsChecked can't say: it's a Nullable<bool>,
+-- which bg3le doesn't push (live.md 02:42:47: "Don't know how to fetch properties of type 'Nullable<Bool>'" 143 times,
+-- and nil with the row ticked on screen). ReactionDecisionPopup.xaml: DataTrigger Decision = Use is what checks the row.
+function S.rowChosen(b)
+    return tostring(prop(prop(b, "DataContext"), "Decision")) == "Use"
+end
+
 function S.reactionRows(el)
     local rows = {}
     local roots = UI.findAll(el, function(e) return UI.name(e) == "InterruptorRoot" end, { prune = true })
@@ -662,7 +670,7 @@ function S.reactionRows(el)
                     r.name = s
                 end
             end
-            if prop(b, "IsChecked") == true then r.chosen = true end
+            if S.rowChosen(b) then r.chosen = true end
             rows[#rows + 1] = r
         end
     end

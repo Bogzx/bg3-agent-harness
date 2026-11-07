@@ -118,6 +118,7 @@ BG3AI = {
             if #b > 0 then p.buttons = b end
             return p
         end,
+        rowChosen = function(b) return type(b.DataContext) == "table" and b.DataContext.Decision == "Use" end,
         SCREENS = {},
     },
     Util = { comp = function() return nil end, dist = function() return 0 end },

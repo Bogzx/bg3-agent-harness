@@ -252,7 +252,12 @@ test("two interruptors: use=true hands the row to the bridge; only a row that re
     eq(r.result.needs_click, 2, "the row")
     eq(r.result.confirm, true, "and a confirm after")
     eq(#UI.commands, 0, "nothing accepted")
-    pages.ReactionDecisionPopup.children[2].children[1].IsChecked = true
+    local row = pages.ReactionDecisionPopup.children[2].children[1]
+    row.DataContext = { Decision = "Undecided" }
+    eq(rpc("ui.react", "{use=true,which=2}", "B").result.needs_click, 2, "Undecided isn't chosen")
+    -- live.md 02:42:47: the row ticked on screen and IsChecked nil, as here; Decision is what says it
+    row.DataContext.Decision = "Use"
+    eq(rpc("ui.state", "{}", "B").result.reaction.options[2].chosen, true, "ui.state shows it")
     rpc("ui.react", "{use=true,which=2}", "B")
     eq(UI.commands[1], "InterruptAcceptPlayerCommand", "accepted")
     local bad = rpc("ui.react", "{use=true,which=9}", "B").error
@@ -275,6 +280,11 @@ test("ui.react_spent: the observers' total, a side's own only; ui.react_probe hi
     Ext.Entity.Get = get
     eq(rpc("ui.react_probe", "{}", "A").result.open, false, "A: no prompt")
     eq(rpc("ui.react_probe", "{}", "B").result.open, true, "B: its own")
+    -- pQ N3: a watch runs while the game takes the popup down: it walks no rows, whoever asks
+    local rows_of = S.reactionRows
+    S.reactionRows = function() error("walked the rows on a watch") end
+    eq(rpc("ui.react_probe", "{watch=true}", "A").result.open, true, "a watch reads only that it shows")
+    S.reactionRows = rows_of
 end)
 
 test("the hold's key doesn't follow the order of the game's list", function()
