@@ -96,8 +96,9 @@ game unless it says so.
   served tool definitions and the bench prompts don't change. bench-v0.11's release cited it until 0.6.0.
 - 0.6.0 (2026-11-07): what the agent sees changed: `react`'s served definition no longer says Do Not React has never
   closed a prompt with one row per level (it closes one, read live in a match), and a cast paused for a reaction no
-  longer promises that it goes on or that its outcome shows in the events (a Counterspell stops it). The bench prompts
-  don't change. bench-v0.11's release cites it.
+  longer promises that it goes on or that its outcome shows in the events (a Counterspell stops it). An order the pause
+  caught before it started says what 4 live reads showed, that it didn't run after the answer and its action stayed,
+  with no promise. The bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at

@@ -17,9 +17,9 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   cast, and the state here is from before it`.
 - An order the pause caught before it started said `the order wasn't cancelled, and whether it runs after shows in the
   events`. It now says `read live, an order held this way didn't run after the answer and its action stayed`. Read in 4
-  held orders (live.md 05:52:45, 06:36:33, 06:38:40, 06:39:40): no roll for it, action 1 after, and in the last one nothing
-  fired that turn or the next. `act.stop` counted 1 task right after one decline and 0 about 28 s after another, without
-  naming it, so whether the order's task was cancelled isn't read, and the line no longer says.
+  held orders (live.md 05:52:45, 06:36:33, 06:38:40, 06:39:40): no roll for it, action 1 after, and in the last one
+  nothing fired that turn or the next. `act.stop` counted 1 task right after one decline and 0 about 28 s after another,
+  without naming it, so whether the order's task was cancelled isn't read, and the line no longer says.
 
 ## 2026-11-05: a potion aimed at someone else is refused
 
