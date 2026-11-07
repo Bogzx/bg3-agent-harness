@@ -228,6 +228,7 @@ end)
 test("a failed cast's leftover task isn't purged while the game is paused, and is once it isn't (s5-rx-2)", function()
     for _, held in ipairs({ true, false }) do
         reset()
+        cast_outcome = "CantCast"
         local j = swing()
         world[P1].comps.ServerCharacter = { OsirisController = { Tasks = { { Type = "Spell" } } } }
         world[P1].comp_names = held and PAUSED_NAMES or nil

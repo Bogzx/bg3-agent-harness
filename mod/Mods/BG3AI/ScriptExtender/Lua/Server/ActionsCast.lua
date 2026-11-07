@@ -642,6 +642,7 @@ reg("cast", function(args)
                     return
                 end
                 local why = A.cast_failed_why(char, targets[1], spell, job)
+                if A.failed_not_own(job, why) then return end
                 if base == "Projectile_Jump" and select(2, A.engine_refusal(job)) == "Canceled" then
                     -- maybe the engine's cancel for a drawn attack: decided in on_tick (jump_cancel_why)
                     job.jump_cancel = job.jump_cancel or { t = G.now_ms() }
@@ -725,6 +726,7 @@ reg("cast", function(args)
                 return
             end
             if job.state_ms and not job.began then job.began, job.hp0 = true, hp_of(char) end
+            if A.not_own_bound(job, no_start_ms) then return end
             -- Live s5-rx-2 at 117.9 s: Blue Ash's order went in 1 s before its own Riposte's pause, so the side gate
             -- let it through and it never started. An order still unstarted when the game pauses is reported as held
             -- too: the no-start's purge would cancel the character's paused cast (the Riposte, which had rolled 20).

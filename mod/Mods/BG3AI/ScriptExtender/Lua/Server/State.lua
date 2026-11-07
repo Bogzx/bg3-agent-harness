@@ -611,9 +611,8 @@ function S.actions(uuid)
         end
         if cost.action and extra then
             -- Extra Attack: the next weapon attack costs no action (Guard.extra_attack_spell), as on the hotbar
-            local flags, st = {}, Ext.Stats.Get(id)
-            pcall(function() for _, x in ipairs(st.SpellFlags) do flags[x] = true end end)
-            if st and BG3AI.Guard.extra_attack_spell(id, st, flags) then
+            local st = Ext.Stats.Get(id)
+            if st and BG3AI.Guard.extra_attack_spell(id, st) then
                 pay = {}
                 for k, v in pairs(cost) do if k ~= "action" then pay[k] = v end end
                 a.extra_attack = true

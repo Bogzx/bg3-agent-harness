@@ -484,8 +484,8 @@ end
 -- whose boost is UnlockSpellVariant(ExtraAttackCheck(), ModifyUseCosts(Replace,ActionPoint,0,0,ActionPoint))
 -- and which goes on the next cast (RemoveEvents OnSpellCast): the next weapon attack costs no action. We
 -- checked the raw UseCosts (ActionPoint:1), so every Extra Attack was refused "not enough action" (S023-S028:
--- 0 of 7). A weapon attack here = what the game's ExtraAttackSpellCheck takes, with an Action to free, and not a
--- weapon action (Lacerate, Cleave...): main-hand attacks, Divine Smite, Reckless Attack, an unarmed attack, a throw.
+-- 0 of 7). A weapon attack here = what the game's ExtraAttackSpellCheck takes, with an Action to free: main-hand
+-- attacks, Divine Smite, Reckless Attack, a weapon action (read live, Hamstring Shot), an unarmed attack, a throw.
 -- Every status with that boost at no cost, in the game's own order (HasHigherPriorityExtraAttackQueued). Fighter 11+
 -- has EXTRA_ATTACK_2 first and EXTRA_ATTACK after it. Not here: EXTRA_ATTACK_WAR_MAGIC and _WAR_PRIEST make the attack
 -- cost a bonus action, not nothing; MIND_MASTERY's holder can't cast.
@@ -503,8 +503,7 @@ function G.extra_attack_status(char)
     return nil
 end
 
-function G.extra_attack_spell(spell, st, flags)
-    if flags.IsDefaultWeaponAction then return false end
+function G.extra_attack_spell(spell, st)
     local roll, taken = "", EXTRA_ATTACK_SPELLS[spell]
     pcall(function() roll = tostring(st.SpellRoll and st.SpellRoll.Default or "") end)
     for _, kind in ipairs(EXTRA_ATTACK_ROLLS) do taken = taken or roll:find(kind, 1, true) end
@@ -792,7 +791,7 @@ function G.check_cast(char, spell, target, pos, upcast, force)
     local costs = G.parse_costs(st.UseCosts, upcast)
     local payers = {}
     local in_combat = G.in_combat(char)
-    local extra_status = in_combat and G.extra_attack_spell(spell, st, flags) and G.extra_attack_status(char)
+    local extra_status = in_combat and G.extra_attack_spell(spell, st) and G.extra_attack_status(char)
     if extra_status then
         for i = #costs, 1, -1 do
             if costs[i].name == "ActionPoint" then table.remove(costs, i) end

@@ -123,9 +123,13 @@ test("state.actions: EXTRA_ATTACK_2 lists the swing as the free attack, as the g
     combat_setup(9)
     stats.Target_MainHandAttack = { SpellType = "Target", UseCosts = "ActionPoint:1", SpellFlags = { "IsMelee" },
         SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } }
+    stats.Target_Weapon_Action = { SpellType = "Target", UseCosts = "ActionPoint:1",
+        SpellFlags = { "IsDefaultWeaponAction" }, SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } }
+    stats.Shout_Plain = { SpellType = "Shout", UseCosts = "ActionPoint:1", SpellFlags = {} }
     world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0
-    world[P1].comps.SpellBook = { Spells = { { PrepareType = "Unknown",
-        Id = { Prototype = "Target_MainHandAttack", OriginatorPrototype = "Target_MainHandAttack" } } } }
+    local function book(id) return { PrepareType = "Unknown", Id = { Prototype = id, OriginatorPrototype = id } } end
+    world[P1].comps.SpellBook = { Spells = { book("Target_MainHandAttack"), book("Target_Weapon_Action"),
+        book("Shout_Plain") } }
     osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK_2")] = 1
     BG3AI.State.spellCache = {}
     local ok, list = pcall(BG3AI.State.actions, P1)
@@ -133,8 +137,11 @@ test("state.actions: EXTRA_ATTACK_2 lists the swing as the free attack, as the g
     osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK_2")] = nil
     world[P1].comps.SpellBook = nil
     eq(ok, true, "actions read: " .. tostring(list))
-    local swing
-    for _, a in ipairs(list) do if a.spell == "Target_MainHandAttack" then swing = a end end
-    eq(swing.extra_attack, true, "tagged")
-    eq(swing.available, true, "no action needed")
+    local by = {}
+    for _, a in ipairs(list) do by[a.spell] = a end
+    eq(by.Target_MainHandAttack.extra_attack, true, "tagged")
+    eq(by.Target_MainHandAttack.available, true, "no action needed")
+    eq(by.Target_Weapon_Action.extra_attack, true, "a weapon action too")
+    eq(by.Shout_Plain.extra_attack, nil, "a plain Action spell isn't")
+    eq(by.Shout_Plain.available, false, "it needs the Action")
 end)

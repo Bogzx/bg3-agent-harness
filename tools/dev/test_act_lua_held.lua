@@ -464,7 +464,7 @@ test("extra attack: a bonus-cost weapon attack isn't the free attack: its result
     tick(10)
     eq(j.status, "done", "done " .. tostring(j.error))
     eq(j.result.extra_attack, nil, "not the free attack")
-    eq(G.extra_attack_spell("Target_Both", Ext.Stats.Get("Target_Both"), {}), true, "an Action among its costs is")
+    eq(G.extra_attack_spell("Target_Both", Ext.Stats.Get("Target_Both")), true, "an Action among its costs is")
     osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
 end)
 
@@ -523,19 +523,101 @@ end)
 
 test("extra attack: what the game's check takes is free: an unarmed attack, a throw, its named spells", function()
     free_attack_setup()
-    local flags = {}
     local function spell_of(name, roll, costs)
         spell(name, { UseCosts = costs or "ActionPoint:1", SpellFlags = {}, SpellRoll = roll and { Default = roll } })
-        return G.extra_attack_spell(name, Ext.Stats.Get(name), flags)
+        return G.extra_attack_spell(name, Ext.Stats.Get(name))
     end
     eq(spell_of("Target_UnarmedAttack", "Attack(AttackType.MeleeUnarmedAttack)"), true, "unarmed")
     eq(spell_of("Throw_Throw", "Attack(AttackType.RangedUnarmedAttack)"), true, "a throw")
     eq(spell_of("Projectile_ArrowOfSmokepowder", nil), true, "named")
     eq(spell_of("Projectile_FireBolt", "Attack(AttackType.RangedSpellAttack)"), false, "a spell attack")
     eq(spell_of("Target_Offhand", "Attack(AttackType.MeleeWeaponAttack)", "BonusActionPoint:1"), false, "no Action")
-    eq(G.extra_attack_spell("Target_Slash", { UseCosts = "ActionPoint:1",
-        SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } }, { IsDefaultWeaponAction = true }), false,
-        "a weapon action, as before")
+    -- live.md D290: Hamstring Shot, past the guard: no Action, EXTRA_ATTACK and its cooldown taken
+    spell("Projectile_HamstringShot", { UseCosts = "ActionPoint:1", SpellFlags = { "IsDefaultWeaponAction" },
+        SpellRoll = { Default = "Attack(AttackType.RangedWeaponAttack)" } })
+    eq(G.extra_attack_spell("Projectile_HamstringShot", Ext.Stats.Get("Projectile_HamstringShot")), true, "an action")
+end)
+
+-- live.md Stray row read, t6 and t7: the client's hover preview, on the caster, cancelled as an order starts.
+local PREVIEW_OPTS = { "IsPreview", "IsHoverPreview", "FromClient", "NoUnsheath" }
+local function preview_state(sp)
+    return { SpellCastState = { Caster = { Uuid = { EntityUuid = P1 } }, SpellId = { OriginatorPrototype = sp },
+        CastOptions = PREVIEW_OPTS } }
+end
+
+test("hover preview: its cast state isn't the order's, which takes its own", function()
+    free_attack_setup()
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    cast_seen = "none"
+    local j = swing()
+    eq(j.status, "running", "ordered " .. tostring(j.error))
+    create_hooks.SpellCastState(preview_state("Target_MainHandAttack"))
+    eq(j.cast_entity, nil, "not its entity")
+    eq(j.roll.state, "pending", "still waiting for its own")
+    eq(j.state_ms, nil, "not started")
+    local own = { SpellCastState = last_cast }
+    create_hooks.SpellCastState(own)
+    eq(j.cast_entity, own, "its own")
+    eq(j.roll.state, "cleared", "its own read")
+end)
+
+test("stray failed: a preview's, same id, own cast alive with no outcome: no end, no purge, the swing lands", function()
+    free_attack_setup()
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
+    local j = swing()
+    eq(j.status, "running", "ordered " .. tostring(j.error))
+    world[P1].comps.ServerCharacter = { OsirisController = { Tasks = { { Type = "Spell" } } } }
+    attack_event("CastSpellFailed")
+    eq(j.status, "running", "not its own")
+    eq(#called("PurgeOsirisQueue"), 0, "no purge")
+    attack_event("CastSpell")
+    tick(math.floor(A.CAST_NO_START_COMBAT_MS / 60) + 4)
+    eq(j.status, "running", "its CastSpell came: the bound is off")
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
+    attack_event("CastedSpell")
+    tick(10)
+    eq(j.status, "done", "landed " .. tostring(j.error))
+    eq(j.result.extra_attack, true, "the free attack")
+end)
+
+test("stray failed: with no CastSpell after it, the job ends at the bound in the same words", function()
+    free_attack_setup()
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
+    local j = swing()
+    world[P1].comps.ServerCharacter = { OsirisController = { Tasks = { { Type = "Spell" } } } }
+    attack_event("CastSpellFailed")
+    tick(math.floor(A.CAST_NO_START_COMBAT_MS / 60) - 2)
+    eq(j.status, "running", "inside the bound")
+    tick(4)
+    eq(j.status, "failed", "at the bound")
+    assert(j.error:find("no reason given", 1, true), j.error)
+    eq(#called("PurgeOsirisQueue"), 1, "its purge, as any failed cast")
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
+end)
+
+test("stray failed: after its CastSpell, with an outcome or with no entity, a failed ends the job at once", function()
+    free_attack_setup()
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    local j = swing()
+    eq(j.status, "running", "ordered " .. tostring(j.error))
+    attack_event("CastSpell")
+    attack_event("CastSpellFailed")
+    eq(j.status, "failed", "begun")
+    reset()
+    free_attack_setup()
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    cast_outcome = "CantCast"
+    j = swing()
+    attack_event("CastSpellFailed")
+    cast_outcome = nil
+    eq(j.status, "failed", "an outcome")
+    reset()
+    free_attack_setup()
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    cast_seen = "none"
+    j = swing()
+    attack_event("CastSpellFailed")
+    eq(j.status, "failed", "no entity")
 end)
 
 -- GuardCast's linked box branch: a call-allies box reads every group in the game data when nothing of it is in the
