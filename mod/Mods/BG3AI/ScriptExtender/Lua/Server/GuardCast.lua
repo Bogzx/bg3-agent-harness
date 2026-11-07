@@ -708,6 +708,8 @@ function G.check_cast(char, spell, target, pos, upcast, force)
     if not st then G.refuse("unknown action") end
     local variants, bad = container_spells(spell)
     if bad and bad > 0 then variants, bad = container_spells(spell) end -- one more read before giving up
+    -- live.md, L12 read 5: a twin without Fire Shield was told to choose between its variants, each then refused.
+    if variants and not G.holds_any(char, spell, variants) then G.refuse("the character does not have that action") end
     if variants and #variants == 0 then
         G.refuse("choose a variant (this action's variant list did not read as spell names)")
     elseif variants then
