@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import unittest
 
-from bg3ai import compact, turn
+from bg3ai import compact, delta, render, turn
 from bg3ai import compact_check as cc
 from bg3ai.render import Handles, render_combat
 from bg3ai.tools import combat
@@ -87,3 +87,23 @@ class EndTurn(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Status(unittest.TestCase):
+    """live.md "## Lost control fix live": get_status read `COMBAT round 3 turn=e1` on a turn the game ran."""
+
+    WORDS = "can't control: Goaded, the game runs its turn"
+
+    def status(self, **combat):
+        return {"in_combat": True, "party": [], "combat": {"round": 3, "current": P1, **combat}}
+
+    def test_get_status_says_the_game_runs_the_turn(self):
+        h = Handles()
+        out = render.render_status(self.status(game_turn=self.WORDS), None, h)
+        self.assertIn(f"COMBAT round 3 turn={h.get(P1)} ({self.WORDS})", out)
+        self.assertNotIn("the game runs", render.render_status(self.status(), None, h))
+
+    def test_the_change_line_says_it_too(self):
+        h = Handles()
+        self.assertTrue(delta._turn(self.status(game_turn=self.WORDS), h).endswith(f"turn={h.get(P1)} ({self.WORDS})"))
+        self.assertNotIn("the game runs", delta._turn(self.status(), h))

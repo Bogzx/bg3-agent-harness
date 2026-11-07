@@ -150,7 +150,8 @@ def render_status(s: dict, ui: dict | None, H: Handles) -> str:
         c = s.get("combat") or {}
         cur = c.get("current")
         cur_s = H.get(cur) if isinstance(cur, str) and UUID_RE.search(cur) else cur
-        mode.append(f"COMBAT round {c.get('round', '?')} turn={cur_s or '?'}")
+        mode.append(f"COMBAT round {c.get('round', '?')} turn={cur_s or '?'}"
+                    + (f" ({c['game_turn']})" if c.get("game_turn") else ""))  # the mod's lost-control words
     if s.get("turn_based"):
         mode.append("turn-based")
     if s.get("in_dialogue"):

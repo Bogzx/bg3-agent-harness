@@ -143,7 +143,8 @@ game unless it says so.
   once ran but a player's hotbar is grey. The action list, the guard, end_turn, stop and an order that never
   started now say `can't control: Goaded, the game runs its turn`, or `the game runs its turn` when a player can't see
   the status on the character (Minor Illusion shows no HUD bar and is hidden from the portrait); is_my_turn is false,
-  the state.combat row reads `game_turn`, not `ended`, the wait no longer says `now e1's turn` for it, and the side's
+  the state.combat row reads `game_turn`, not `ended`, get_status reads `turn=e1 (can't control: Goaded, the game runs
+  its turn)`, the wait no longer says `now e1's turn` for it, and the side's
   own casts in its own open turn read `cast e1 Red Ash (game's turn): ...` (a reaction the side answers on another's
   turn isn't tagged). Before, the list offered actions, orders failed three
   ways (one naming an unrelated status as the cause) or cut the game's cast, and end_turn ended a turn a player can't

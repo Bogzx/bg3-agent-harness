@@ -15,7 +15,7 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   list gives every action the reason `can't control: Goaded, the game runs its turn`, and use_ability, move_to,
   end_turn and stop fail at once with those words, sending nothing. A status a player can't see on the character
   (Minor Illusion: hidden from the portrait, no HUD bar) isn't named: `the game runs its turn`. The DISABLED line carries them, the row reads
-  `game_turn`, the wait doesn't return for it, and the side's own casts in its own open turn read `cast e1 Red Ash
+  `game_turn`, get_status's `turn=e1` carries the same words, the wait doesn't return for it, and the side's own casts in its own open turn read `cast e1 Red Ash
   (game's turn): Pommel Strike (attack)`; a reaction it answers on another's turn isn't tagged. In combat only: out of
   combat nothing changes. The other side reads what it read before. A reaction prompt the side owns is answered as
   before. Read live: the component and the game's AI under Goaded, Compelled Duel, Command: Approach, Confusion and
