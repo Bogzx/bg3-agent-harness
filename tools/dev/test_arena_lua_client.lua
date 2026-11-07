@@ -104,8 +104,12 @@ end
 function UI.dc() return nil end
 function UI.anyDC() return nil end
 function UI.pcall(f, ...) return pcall(f, ...) end
-UI.commands = {}
-function UI.command(_, name) UI.commands[#UI.commands + 1] = name return true end
+UI.commands, UI.params = {}, {}
+function UI.command(_, name, param)
+    UI.commands[#UI.commands + 1] = name
+    UI.params[#UI.commands] = param
+    return true
+end
 
 BG3AI = { UI = UI, Util = { loca = function(h) return h end } }
 dofile(LUA .. "/Shared/RPC.lua")
@@ -116,9 +120,17 @@ local function try(f, ...)
     local ok, v = pcall(f, ...)
     if ok then return v end
 end
+local function waitJob(kind, ms, fn) -- UIActions.lua's: a job whose check ticks
+    local job = BG3AI.RPC.start_job(kind, { timeout_ms = ms })
+    job.on_tick = function(j)
+        local status, result = fn(j)
+        if status then BG3AI.RPC.finish_job(j, status, result) end
+    end
+    return { job = job.id }
+end
 BG3AI.UIActions = { inner = { try = try, check = function(ok, err) if not ok then error(err, 0) end return ok end,
-    sig = function() return "" end, waitJob = function() return { job = 1 } end, dialogueSnapshot = function() end,
-    settleDialogue = function() end }, waitJob = function() return { job = 1 } end }
+    sig = function() return "" end, waitJob = waitJob, dialogueSnapshot = function() end,
+    settleDialogue = function() end }, waitJob = waitJob }
 dofile(LUA .. "/Client/UIActionsPrompts.lua")
 dofile(LUA .. "/Client/UISettings.lua")
 dofile(LUA .. "/Client/ArenaCamera.lua")
@@ -144,7 +156,7 @@ local failures, count = 0, 0
 local function test(name, fn)
     count = count + 1
     env = { BG3AI_ARENA = "1" }
-    pages, entities, UI.commands = { HotBar = { name = "HotBar" } }, {}, {}
+    pages, entities, UI.commands, UI.params = { HotBar = { name = "HotBar" } }, {}, {}, {}
     clock, RPC.jobs, RPC.sideInputAt = 1000, {}, {}
     channel({ teams = { A = { A1 }, B = { B1 } }, names = { A = { "Ana" }, B = { "Bo" } } })
     local ok, err = pcall(fn)
@@ -262,6 +274,67 @@ test("two interruptors: use=true hands the row to the bridge; only a row that re
     eq(UI.commands[1], "InterruptAcceptPlayerCommand", "accepted")
     local bad = rpc("ui.react", "{use=true,which=9}", "B").error
     assert(tostring(bad):find("no reaction option 9 (2 shown)", 1, true), bad)
+end)
+
+-- One tick of the newest job, as its side (RPC.lua tick_jobs); the job.
+local function tickJob()
+    local j = RPC.lastJob
+    RPC.with_side(j.side, j.on_tick, j)
+    return j
+end
+
+-- REVIEW-reactions F1: a job ticks outside the call, so the result of A's answer read B's prompt with no side.
+test("an answered prompt with the other side's next: the job's result has only that it's there", function()
+    prompt("Ana")
+    pages.ReactionDecisionPopup.DataContext.Data.InterruptEvents = { {}, {} }
+    local job = rpc("ui.react", "{use=false}", "A")
+    eq(job.ok, true, tostring(job.error))
+    pages.ReactionDecisionPopup = nil
+    prompt("Bo")
+    local r = tickJob()
+    eq(r.status, "done", "status")
+    eq(r.result.pending, 1, "pending")
+    eq(r.result.reaction.other_side, true, "other side")
+    eq(r.result.reaction.options, nil, "no rows")
+    eq(r.result.reaction.prompt, nil, "no text")
+end)
+
+test("the same with the side's own next: it reads its prompt", function()
+    prompt("Ana")
+    pages.ReactionDecisionPopup.DataContext.Data.InterruptEvents = { {}, {} }
+    local job = rpc("ui.react", "{use=false}", "A")
+    pages.ReactionDecisionPopup.DataContext.Data.InterruptEvents = { {} }
+    local r = tickJob()
+    eq(r.result.reaction.options[1].who, "Ana", "its row")
+end)
+
+-- live.md 03:44:15 read 4b: chosen, then Do Not React: a roll that hit did no damage, nothing paid.
+test("Do Not React on a chosen row unchooses it first, and waits for that", function()
+    prompt("Ana")
+    local root = pages.ReactionDecisionPopup.children[1]
+    local row = root.children[1]
+    row.DataContext = { Decision = "Use" }
+    local job = rpc("ui.react", "{use=false}", "A")
+    eq(job.ok, true, tostring(job.error))
+    eq(UI.commands[1], "InterruptUndecidedCommand", "unchosen first")
+    eq(UI.params[1], root.DataContext, "by the interruptor")
+    eq(#UI.commands, 1, "no decline yet")
+    eq(tickJob().status, "running", "still chosen: waits")
+    eq(#UI.commands, 1, "still no decline")
+    row.DataContext.Decision = "Undecided"
+    tickJob()
+    eq(UI.commands[2], "InterruptDontReactPlayerCommand", "then the decline")
+    pages.ReactionDecisionPopup.DataContext.Data.InterruptEvents = {}
+    eq(tickJob().status, "done", "closed")
+    eq(#UI.commands, 2, "one decline")
+end)
+
+test("Do Not React with nothing chosen: only the decline", function()
+    prompt("Ana")
+    pages.ReactionDecisionPopup.children[1].children[1].DataContext = { Decision = "Undecided" }
+    rpc("ui.react", "{use=false}", "A")
+    eq(UI.commands[1], "InterruptDontReactPlayerCommand", "decline")
+    eq(#UI.commands, 1, "alone")
 end)
 
 test("ui.react_spent: the observers' total, a side's own only; ui.react_probe hides the other side's prompt", function()

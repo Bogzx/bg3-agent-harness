@@ -207,11 +207,11 @@ class ReactTool(Base):
         self.addCleanup(patcher.stop)
 
     def test_done_with_nothing_spent_says_what_was_read_and_not_failed(self):
-        # pQ N1: 5 interrupts have no cost, Reckless Attack among them, so nothing dropped can't mean nothing happened
+        # pQ N1: 5 interrupts have no cost, and a spend can land after the window: the note says only what it read
         self._spend_reads([{"uuids": ["u"], "total": 5}])
         out = dialogue.react(True, "1")
-        self.assertEqual(out.split("\n")[0], "react: done — the prompt closed and no resource of its observers dropped"
-                         " in 0 s: a reaction with a cost didn't happen; one with no cost may have")
+        self.assertEqual(out.split("\n")[0],
+                         "react: done — the prompt closed; 0 s later its observers' resources, summed, had not dropped")
         self.assertNotIn("FAILED", out)
 
     def test_done_with_a_spend_is_plain_done(self):
