@@ -294,7 +294,7 @@ game unless it says so.
 - `level_up` reads the plan's skills, expertise and passives back, and won't finish without them even when the game calls
   the page complete. A level's expertise group can open full of the game's own picks, and a full group ignores a toggle and says
   nothing: a Rogue's level 6 finished Sleight of Hand with `done` and `complete` where the plan said Acrobatics. Now, only
-  for a pick that didn't land, as many of the group's unnamed picks as it lacks come off (`set.expertise_off` names them),
+  for a pick that didn't land, as many of the group's unnamed picks as it lacks come off (`set.<group>_off` names them),
   never one the game shows as locked. A plan's skill or passive the page doesn't offer is now a failure, no longer `done`.
 - A kit's subclass spell with no ability on its row or class reads the stats' ability, as a character's does (a Thief's
   Shout_SupremeSneak read None on a twin, Intelligence on the reference).

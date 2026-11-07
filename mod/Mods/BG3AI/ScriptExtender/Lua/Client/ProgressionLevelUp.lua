@@ -579,6 +579,7 @@ RPC.register("ui.level_up", function(args)
             return "next", 0
         end },
         { "skills", skillsStage(get, ctx, plan.skills) },
+        { "skills_room", I.skillRoomStage(get, ctx, plan.skills) },
         { "expertise", skillsStage(get, ctx, plan.expertise, "expertise") },
         { "expertise_room", I.skillRoomStage(get, ctx, plan.expertise, "expertise") },
         { "skills?", skillsReport(get, ctx) },

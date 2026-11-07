@@ -138,19 +138,24 @@ local function openPage(spec)
         page.passiveSel = ps
     end
     p.ClassProgressionDetails = obj("VMProgressionDetails", cpd)
-    -- Expertise group (spec.expertise = {names, held = {name = true}, preset = {name = true}, max}): held are earlier
-    -- picks (Enabled false); preset the page's own; a full group ignores ToggleSkill and says nothing (live).
-    if spec.expertise then
-        local e, items = spec.expertise, {}
+    -- Skill groups (spec.expertise, spec.class_skills = {names, held = {name = true}, preset = {name = true},
+    -- disabled = {name = true}, max, unread = true}): held are earlier picks (Enabled false); preset the page's own;
+    -- disabled can't be toggled; a full group ignores ToggleSkill and says nothing (live). unread: every row but a
+    -- disabled one reads Enabled nil, and a held row comes off if toggled.
+    local function skillGroup(e)
+        local items = {}
+        local g = { items = items, max = e.max }
         for i, n in ipairs(e.names) do
             items[i] = obj("ls.VM", { Name = n, Selected = (e.held or {})[n] or (e.preset or {})[n] or false,
-                Enabled = not (e.held or {})[n] })
+                Enabled = not ((e.held or {})[n] or (e.disabled or {})[n]), _g = g, _held = (e.held or {})[n] })
+            if e.unread then items[i]._p.Enabled = nil end
         end
-        page.expertiseItems = items
-        page.expertiseMax = e.max
-        local group = obj("ls.VM", { Skills = items, MaxSelectedSkillCount = e.max })
-        p.AllSkills = obj("ls.VM", { ExpertiseSkills = group })
+        return obj("ls.VM", { Skills = items, MaxSelectedSkillCount = e.max }), items
     end
+    local all = {}
+    if spec.expertise then all.ExpertiseSkills, page.expertiseItems = skillGroup(spec.expertise) end
+    if spec.class_skills then all.ClassProficientSkills, page.classItems = skillGroup(spec.class_skills) end
+    if next(all) then p.AllSkills = obj("ls.VM", all) end
     dc = obj("ls.DCCharacterLevelUp", p)
     -- Selecting a feat fills SelectedFeatDetails (the feat panel's DataContext, as on the live page):
     -- FeatDetails.AbilitySelection + MaxSelectedAbilityCount (Ability Improvement 2 of six, Athlete 1 of Str/Dex),
@@ -323,11 +328,11 @@ BG3AI.UI = {
         elseif name == "ToggleSkill" then
             if page.expertiseStuck or arg._p.Enabled == false then return true end
             local own = 0
-            for _, it in ipairs(page.expertiseItems) do
-                if it._p.Selected == true and it._p.Enabled ~= false then own = own + 1 end
+            for _, it in ipairs(arg._p._g.items) do
+                if it._p.Selected == true and not it._p._held then own = own + 1 end
             end
             if arg._p.Selected == true then arg._p.Selected = false
-            elseif own < page.expertiseMax then arg._p.Selected = true end
+            elseif own < arg._p._g.max then arg._p.Selected = true end
             return true
         elseif name == "TogglePassive" then
             arg._p.Value = arg._p.Value > 0 and 0.0 or 1.0
@@ -859,6 +864,64 @@ openPage(ROGUE6)
 j = run({ uuid = "claude", plan = { expertise = { "History" } } })
 check(j.status == "failed" and not page.finished and tostring(j.error):find("skill History", 1, true),
       "a pick not offered: not finished (" .. tostring(j.status) .. ", " .. tostring(j.error) .. ")")
+
+-- 33n. F1: an earlier level's picks ahead of the page's own in the list: only the page's own comes off
+openPage({ class = "Rogue", expertise = { max = 2,
+    names = { "Stealth", "Perception", "SleightOfHand", "Acrobatics", "Athletics" },
+    held = { Stealth = true, Perception = true }, preset = { SleightOfHand = true, Athletics = true } } })
+j = run({ uuid = "claude", plan = { expertise = { "Acrobatics", "Athletics" } } })
+check(j.status == "done" and expertiseOn() == "Stealth,Perception,Acrobatics,Athletics"
+      and table.concat(j.result.set.expertise_off or {}, ",") == "SleightOfHand",
+      "held ahead in the list: spared (" .. expertiseOn() .. ", " .. tostring(j.error) .. ")")
+-- 33o. F1: two unnamed, one lacking: one comes off, the other stays
+openPage({ class = "Rogue", expertise = { max = 2, names = { "Deception", "SleightOfHand", "Acrobatics" },
+    preset = { Deception = true, SleightOfHand = true } } })
+j = run({ uuid = "claude", plan = { expertise = { "Acrobatics" } } })
+check(j.status == "done" and expertiseOn() == "SleightOfHand,Acrobatics"
+      and table.concat(j.result.set.expertise_off or {}, ",") == "Deception",
+      "two unnamed, one lacking: only one off (" .. expertiseOn() .. ", " .. tostring(j.error) .. ")")
+-- 33p. F1: a named pick the page already holds, ahead of an unnamed one: kept
+openPage({ class = "Rogue", expertise = { max = 2, names = { "Athletics", "SleightOfHand", "Acrobatics" },
+    preset = { Athletics = true, SleightOfHand = true } } })
+j = run({ uuid = "claude", plan = { expertise = { "Acrobatics", "Athletics" } } })
+check(j.status == "done" and expertiseOn() == "Athletics,Acrobatics"
+      and table.concat(j.result.set.expertise_off or {}, ",") == "SleightOfHand",
+      "a named preset ahead: kept (" .. expertiseOn() .. ", " .. tostring(j.error) .. ")")
+-- 33q. F2: the tool's documented key on the same page: plan.skills lands too (its definition names only skills)
+openPage(ROGUE6)
+j = run({ uuid = "claude", plan = { skills = { "Acrobatics", "Athletics" } } })
+check(j.status == "done" and page.finished == true and expertiseOn() == "Acrobatics,Stealth,Athletics,Perception"
+      and table.concat(j.result.set.expertise_off or {}, ",") == "SleightOfHand",
+      "plan.skills on a full group: lands (" .. tostring(j.status) .. ", " .. expertiseOn() .. ", "
+      .. tostring(j.error) .. ")")
+-- 33r. F2: the group skillsStage toggled it in, the first holding the name: the class group; expertise is left alone
+openPage({ class = "Bard",
+    class_skills = { max = 1, names = { "Deception", "Arcana" }, preset = { Deception = true } },
+    expertise = { max = 2, names = { "Arcana", "Persuasion", "Insight" },
+        preset = { Persuasion = true, Insight = true } } })
+j = run({ uuid = "claude", plan = { skills = { "Arcana" } } })
+check(j.status == "done" and page.classItems[2]._p.Selected == true and page.classItems[1]._p.Selected == false
+      and expertiseOn() == "Persuasion,Insight" and table.concat(j.result.set.class_off or {}, ",") == "Deception"
+      and j.result.set.expertise_off == nil,
+      "plan.skills: the first group holding the name, the other untouched (" .. expertiseOn() .. ", "
+      .. tostring(j.error) .. ")")
+-- 33s. Q4: a named pick the game shows disabled can't land, so it costs no unnamed pick; the read-back names it
+openPage({ class = "Rogue", expertise = { max = 2, names = { "SleightOfHand", "Acrobatics", "Athletics" },
+    preset = { SleightOfHand = true, Athletics = true }, disabled = { Acrobatics = true } } })
+j = run({ uuid = "claude", plan = { expertise = { "Acrobatics", "Athletics" } } })
+check(j.status == "failed" and not page.finished and expertiseOn() == "SleightOfHand,Athletics"
+      and j.result.set.expertise_off == nil and tostring(j.error):find("skill Acrobatics", 1, true) ~= nil,
+      "a disabled name: nothing turned off, named (" .. expertiseOn() .. ", " .. tostring(j.error) .. ")")
+
+-- 33t. Enabled on a level-up page is unread: rows reading nil, held ones first. Nothing comes off, no earlier pick is
+--      lost, and the named pick that can't land is refused, not finished
+openPage({ class = "Rogue", expertise = { max = 2, unread = true,
+    names = { "Stealth", "Perception", "SleightOfHand", "Acrobatics", "Athletics" },
+    held = { Stealth = true, Perception = true }, preset = { SleightOfHand = true, Athletics = true } } })
+j = run({ uuid = "claude", plan = { expertise = { "Acrobatics", "Athletics" } } })
+check(j.status == "failed" and not page.finished and expertiseOn() == "Stealth,Perception,SleightOfHand,Athletics"
+      and j.result.set.expertise_off == nil and tostring(j.error):find("skill Acrobatics", 1, true) ~= nil,
+      "rows reading Enabled nil: nothing off, refused (" .. expertiseOn() .. ", " .. tostring(j.error) .. ")")
 
 -- 34. S032 Wyll L6 (Warlock, no feat): the multiclass items show "Lv 2" / nothing; options name the class from the
 --     character, drop the unnamed list, and the run never selects (or reports) the feat tab.

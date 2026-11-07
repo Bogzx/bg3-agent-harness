@@ -175,9 +175,12 @@ end
 
 -- A level's skill group can open full of the game's own picks, and a full group ignores ToggleSkill and says nothing
 -- (live 2026-11-07, Rogue L6: plan Acrobatics, Athletics; the page finished Sleight of Hand, Athletics). Only for a
--- named pick that didn't land: off with as many of the group's unnamed picks as it lacks, then on with it. Selected
--- with Enabled false is an earlier level's or another source's. The names turned off are in result.set.<key>_off.
-local function skillRoomStage(getDC, ctx, wanted, key)
+-- named pick that didn't land: off with as many of its group's unnamed picks as it lacks, then on with it. Its group is
+-- the one skillsStage toggled it in: `only`, else the first holding the name. Only a row reading Enabled true comes
+-- off: false is an earlier level's or another source's, and a level-up page's rows are unread, so one reading nil may
+-- be an earlier pick too and stays; the named pick then doesn't land and the read-back refuses. A name the game shows
+-- disabled can't land, so it costs nothing and the read-back names it. Turned off: result.set.<group>_off.
+local function skillRoomStage(getDC, ctx, wanted, only)
     local lacking
     return function()
         local dc = getDC()
@@ -186,28 +189,37 @@ local function skillRoomStage(getDC, ctx, wanted, key)
             return "next", ctx.fast and P.CC_SETTLE_MS or 300
         end
         lacking = {}
-        local keep, off = {}, {}
-        for _, g in ipairs(skillGroups(dc)) do
-            if g.key == key then
-                for _, name in ipairs(wantList(wanted) or {}) do
-                    local item = pick(g.skills, name)
-                    if item then
-                        keep[label(item)] = true
-                        if UI.prop(item, "Selected") ~= true then lacking[#lacking + 1] = item end
+        local groups, turned = skillGroups(dc), false
+        for _, g in ipairs(groups) do g.keep, g.lacks = {}, 0 end
+        for _, name in ipairs(wantList(wanted) or {}) do
+            for _, g in ipairs(groups) do
+                local item = (only == nil or g.key == only) and pick(g.skills, name) or nil
+                if item then
+                    g.keep[label(item)] = true
+                    if UI.prop(item, "Selected") ~= true and UI.prop(item, "Enabled") ~= false then
+                        lacking[#lacking + 1] = item
+                        g.lacks = g.lacks + 1
                     end
-                end
-                for _, it in ipairs(list(g.skills)) do
-                    if #off < #lacking and UI.prop(it, "Selected") == true and UI.prop(it, "Enabled") ~= false
-                        and not keep[label(it)] then
-                        UI.command(dc, "ToggleSkill", it)
-                        off[#off + 1] = label(it)
-                    end
+                    break
                 end
             end
         end
+        for _, g in ipairs(groups) do
+            local off = {}
+            for _, it in ipairs(list(g.skills)) do
+                if #off < g.lacks and UI.prop(it, "Selected") == true and UI.prop(it, "Enabled") == true
+                    and not g.keep[label(it)] then
+                    UI.command(dc, "ToggleSkill", it)
+                    off[#off + 1] = label(it)
+                end
+            end
+            if #off > 0 then
+                ctx.result.set[g.key .. "_off"] = off
+                turned = true
+            end
+        end
         if #lacking == 0 then return "next", 0 end
-        if #off > 0 then ctx.result.set[key .. "_off"] = off end
-        return "wait", ctx.fast and P.CC_SETTLE_MS or 300
+        return "wait", turned and (ctx.fast and P.CC_SETTLE_MS or 300) or 0
     end
 end
 P.inner.skillRoomStage = skillRoomStage
