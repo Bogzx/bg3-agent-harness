@@ -70,6 +70,37 @@ test("a rebuild that lands after the kit fails the job naming every passive held
     assert(tostring(j.error):find(T2 .. ": FightingStyle_Defense", 1, true), tostring(j.error))
 end))
 
+-- A Ranger-shaped twin: the game's class rows gave UnlockedSpellSlotLevel1 at levels 2 and 3, as its reference holds it
+-- (team 2 read 2, live 2026-11-08). The kit added neither copy.
+local function rangerRows()
+    for _, u in ipairs({ T1, T2 }) do
+        local p = world[u].comps.PassiveContainer.Passives
+        for _ = 1, 2 do p[#p + 1] = { Passive = { PassiveId = "UnlockedSpellSlotLevel1" } } end
+    end
+end
+
+test("a passive the game's class rows gave twice finishes the kit: only what the kit added counts", guarded(function()
+    twins()
+    rangerRows()
+    local done = rebuilds(1000)
+    local j = start()
+    runJob(j)
+    done()
+    eq(j.status, "done", tostring(j.error))
+end))
+
+test("a passive the kit added that the game re-adds still fails beside the game's own double", guarded(function()
+    twins()
+    rangerRows()
+    local done = rebuilds(Ar.Mirror.SETTLE_MS + 1)
+    local j = start()
+    runJob(j)
+    done()
+    eq(j.status, "failed", "the kit's Darkvision held twice")
+    assert(tostring(j.error):find(T1 .. ": Darkvision", 1, true), tostring(j.error))
+    assert(not tostring(j.error):find("UnlockedSpellSlotLevel1", 1, true), tostring(j.error))
+end))
+
 test("spell_abilities: both twins' rows written, replicated, the calls recorded; a row already right is left alone",
     guarded(function()
         twins()
