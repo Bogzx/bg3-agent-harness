@@ -188,6 +188,10 @@ test("cast start: an order still unstarted when the game pauses is reported as h
     tick(10)
     eq(j.status, "interrupted", "status " .. tostring(j.error))
     eq(j.error, A.ORDER_PAUSED, "says the order hadn't started")
+    -- live.md 05:52:45, 06:36:33, 06:38:40, 06:39:40: none of 4 ran after the answer: what was read, no promise
+    eq(j.error:find("wasn't cancelled", 1, true), nil, "no claim on the order's task: act.stop counts, doesn't name")
+    eq(j.error:find("shows in the events", 1, true), nil, "no promise of an event")
+    assert(j.error:find("read live, an order held this way didn't run after the answer", 1, true), j.error)
     eq(j.result.began, nil, "not begun"); eq(j.result.paused, true, "paused")
     eq(#called("PurgeOsirisQueue"), 0, "the paused cast is not purged")
     world[P1].comp_names = nil
