@@ -345,6 +345,8 @@ game unless it says so.
 - `builds-l5-4v4-team2-v1`'s Barbarian (Wildheart) and Bard (Valor) become a Fighter (Champion) and a Bard (Lore): a
   twin can't lose a passive its class rows gave (`RemovePassive` does nothing to one, live 2026-11-07), and every
   Barbarian subclass and Valor remove one at level 3. Swords and Glamour fail the knock-down scan. Still a draft.
+- `make_arena_save` refuses a build whose subclass rows remove a passive, naming the row: no call takes one off a
+  twin.
 
 ### Benchmark (`packages/bench`)
 

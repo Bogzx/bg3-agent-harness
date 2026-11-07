@@ -691,6 +691,27 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
         for b in d["builds"]:
             self.assertNotIn("passives_removed", plan(d, b["id"]).get("grants", {}), b["id"])
 
+    def test_a_build_whose_subclass_rows_remove_a_passive_is_refused(self):
+        barbarian = {
+            "id": "barbarian", "class": "Barbarian", "subclass": "TotemWarriorPath", "race": "Dwarf_GoldHill",
+            "background": "Outlander", "role": "frontline", "reference": None,
+            "gear": ["WPN_Greataxe_1", "OBJ_Potion_Healing", "OBJ_Potion_Healing", "ARM_Shoes_Barbarian",
+                     "ARM_Barbarian", {"item": "WPN_Handaxe_1", "equip": False},
+                     {"item": "WPN_Handaxe_1", "equip": False}, "OBJ_Potion_Healing_Greater"],
+            "script": {
+                "cc": {
+                    "abilities": {"Strength": 15, "Dexterity": 13, "Constitution": 14, "Intelligence": 10,
+                                  "Wisdom": 12, "Charisma": 8},
+                    "ability_bonus": ["Strength", "Constitution"], "skills": ["Intimidation", "Perception"],
+                },
+                "level_ups": [{"level": 2}, {"level": 3, "passives": [["TotemSpirit_Bear"]]},
+                              {"level": 4, "improvement": {"asi": {"Strength": 2}}}, {"level": 5}],
+            },
+        }  # fmt: skip
+        d = {"level": 5, "builds": [barbarian]}
+        with self.assertRaisesRegex(mas.SpecError, r"TotemWarriorPath level 3 removes RageUnlock: a twin can't"):
+            plan(d, "barbarian")
+
     def test_a_wizards_kit_adds_only_its_prepared_picks_and_a_clerics_keeps_prepared_for_the_mod_to_name(self):
         for lv, n in ((2, 5), (5, 9), (12, 17)):
             with self.subTest(level=lv):
