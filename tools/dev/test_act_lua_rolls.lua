@@ -228,6 +228,7 @@ end)
 test("a failed cast's leftover task isn't purged while the game is paused, and is once it isn't (s5-rx-2)", function()
     for _, held in ipairs({ true, false }) do
         reset()
+        cast_outcome = "CantCast"
         local j = swing()
         world[P1].comps.ServerCharacter = { OsirisController = { Tasks = { { Type = "Spell" } } } }
         world[P1].comp_names = held and PAUSED_NAMES or nil
@@ -512,7 +513,7 @@ end)
 
 test("held cast: an Extra Attack whose status went has resolved: no cost to read, no wait", function()
     osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
-    local h = { began = true, char = P1, check = { extra_attack = true } }
+    local h = { began = true, char = P1, check = { extra_attack = true, extra_status = "EXTRA_ATTACK" } }
     A.held_audits = { h }
     eq(A.cast_unresolved(P1), true, "status still on")
     osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil

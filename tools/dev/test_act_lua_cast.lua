@@ -552,7 +552,7 @@ test("cast: Extra Attack (EXTRA_ATTACK status) makes the next weapon attack cost
     local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = GOB }))
     eq(j.status, "failed", "no status: refused"); assert(j.error:find("not enough action"), j.error)
     osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
-    for _, sp in ipairs({ "Target_MainHandAttack", "Target_Smite_Divine" }) do
+    for _, sp in ipairs({ "Target_MainHandAttack", "Target_Smite_Divine", "Target_Slash_New" }) do
         j = job(op("cast", { char = P1, spell = sp, target = GOB }))
         eq(j.status, "running", sp .. ": " .. tostring(j.error))
         A.dispatch("CastedSpell", { P1, sp })
@@ -560,7 +560,7 @@ test("cast: Extra Attack (EXTRA_ATTACK status) makes the next weapon attack cost
         eq(j.status, "done", sp .. " done"); eq(j.result.extra_attack, true, sp .. " extra_attack")
         eq(j.result.charged_by_guard, nil, sp .. ": no action charged")
     end
-    for _, sp in ipairs({ "Target_Slash_New", "Projectile_FireBolt" }) do -- a weapon action, a spell attack
+    for _, sp in ipairs({ "Projectile_FireBolt" }) do -- a spell attack
         j = job(op("cast", { char = P1, spell = sp, target = GOB }))
         eq(j.status, "failed", sp); assert(j.error:find("not enough action"), j.error)
     end

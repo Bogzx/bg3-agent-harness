@@ -227,6 +227,25 @@ function A.engine_refusal(job)
     return (A.FAIL_REASONS[r] or "reason " .. r) .. " (the game's " .. r .. ")", r
 end
 
+-- live.md Stray row read: an order starting cancels the caster's live hover preview, and that CastSpellFailed names the
+-- preview's spell, with nothing to tell it from the order's. Its own cast alive with no outcome, and not yet begun, the
+-- job didn't fail (every real failure on record reads an outcome): with this ended, our purge took a live swing, read
+-- on p4a-6 and b1; dropped, the swing landed 2 of 2. A real one with no outcome ends at the bound, in the same words.
+function A.failed_not_own(job, why)
+    if not job.cast_entity or job.spell_begun then return false end
+    local ok, outcome = pcall(function() return job.cast_entity.SpellCastOutcome end)
+    if not ok or outcome ~= nil then return false end
+    job.not_own_failed = job.not_own_failed or { t = RPC.now_ms(), why = why }
+    return true
+end
+
+function A.not_own_bound(job, ms)
+    local f = job.not_own_failed
+    if not f or job.spell_begun or job.casted or job.paused_ms or RPC.now_ms() - f.t < ms then return false end
+    RPC.finish_job(job, "failed", nil, f.why)
+    return true
+end
+
 -- SpellCastState OnCreate of a stamped caster.
 function A.roll_cast_state(entity)
     if not next(A.roll_wait) then return end
@@ -240,6 +259,8 @@ function A.roll_cast_state(entity)
         return
     end
     local job, names = w.job, flag_names(st.CastOptions)
+    -- live.md Stray row read: the client's hover preview is a cast state on the caster, of any spell it hovers
+    if names and has(names, "IsPreview") then return end
     local p, o = state_spell(st)
     local same = (p == nil and o == nil) or p == w.spell or o == w.spell
     if same and job.status == "running" and job.roll.state == "pending" then -- the awaited cast
