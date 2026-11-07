@@ -207,18 +207,21 @@ end
 -- declined, the attack did no damage on a roll that hit, with nothing paid and no status; the same decline with nothing
 -- chosen landed. A click that chose a row and an accept that didn't follow leave this (a failed read, the runner's
 -- bound).
-local function untickThenDecline(dc, ev, ticked)
+local function untickThenDecline(dc, ticked)
     local closed = reactClosed(UI.count(UI.path(dc, "Data.InterruptEvents")))
     for _, vm in ipairs(ticked) do check(UI.command(dc, "InterruptUndecidedCommand", vm)) end
     local declined = false
     return waitJob("ui.react", 10000, function()
-        if not declined then
-            local w2 = reactionPopup()
-            if w2 and #chosenInterruptors(w2) > 0 then return nil end
-            declined = true
-            if w2 then check(UI.command(dc, "InterruptDontReactPlayerCommand", ev)) end
-        end
-        return closed()
+        -- REVIEW-reactions U1: the event can leave before the first tick, with another prompt up: nothing to decline
+        -- then, and the decline reads the popup's context and event afresh, as those it started with can be stale
+        local status, res = closed()
+        if status or declined then return status, res end
+        local w2 = reactionPopup()
+        if not w2 or #chosenInterruptors(w2) > 0 then return nil end
+        declined = true
+        local dc2 = try(function() return w2.DataContext end)
+        check(UI.command(dc2, "InterruptDontReactPlayerCommand", UI.path(dc2, "Data.InterruptEvents.1")))
+        return nil
     end)
 end
 
@@ -260,7 +263,7 @@ RPC.register("ui.react", function(args)
     end
     if args.use == false then
         local ticked = not args.dry and chosenInterruptors(w) or {}
-        if #ticked > 0 then return untickThenDecline(dc, ev, ticked) end
+        if #ticked > 0 then return untickThenDecline(dc, ticked) end
         check(UI.command(dc, "InterruptDontReactPlayerCommand", ev, args.dry))
     else
         check(UI.command(dc, "InterruptAcceptPlayerCommand", ev, args.dry))

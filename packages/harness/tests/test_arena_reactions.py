@@ -4,12 +4,15 @@ agents."""
 
 from __future__ import annotations
 
+import contextlib
 import types
 from collections.abc import Callable
+from pathlib import Path
+from unittest import mock
 
 import pytest
 from bg3harness.arena import match as am
-from test_arena_match import SIDES, ArenaModel, Game, Run, arena_events, grade, my_turn, setup
+from test_arena_match import ARENA, HELD_REFUSAL, SIDES, ArenaModel, Game, Run, arena_events, grade, my_turn, setup
 
 
 def patient(game: Game, side: str, run: Run) -> None:
@@ -51,6 +54,148 @@ def test_the_bound_runs_from_the_prompt_first_on_screen_not_from_the_hold():
           "reaction": {"prompt": "Counterspell?", "options": [{"i": 1, "who": "Red Cedar"}], "owner": "B"}}
     assert _hold_reads(late + [(t, up) for t in range(30, 118, 2)]) == []  # 116 s from the hold, 86 s on screen
     assert _hold_reads(late + [(t, up) for t in range(30, 124, 2)]) == ["ui.react"]  # 90 s on screen at 120 s
+
+
+L5 = {**ARENA, "turn_cap_s": 90, "wall_cap_min": 60, "round_cap": 20}
+
+
+def _two_forced_then(trigger: Callable[[ArenaModel], None], tmp_path, decline_fails: bool = False):
+    """A takes two forced turns, slow but within the rules, then `trigger` fires on its third turn; A then idles."""
+    forced = [0]
+
+    def a_play(game: Game, side: str, run: Run) -> None:
+        if forced[0] < 2 and my_turn(game, side) and model.reaction is None:
+            run.model += 100
+        elif forced[0] >= 2:
+            patient(game, side, run)
+
+    model, game, clock, agents, spec = setup({"A": a_play, "B": patient}, L5)
+    real = game.rpc
+
+    def rpc(op, args, side=None, context="server"):
+        if decline_fails and op == "ui.react" and side is None:
+            raise RuntimeError("no command")
+        return real(op, args, side, context=context)
+
+    game.rpc = rpc  # type: ignore[method-assign]
+    fired = [False]
+
+    def hook() -> None:
+        with contextlib.suppress(OSError):
+            forced[0] = sum(e["ev"] == "arena_turn_forced" for e in arena_events(tmp_path))
+        if forced[0] >= 2 and not fired[0] and my_turn(game, "A"):
+            fired[0] = True
+            trigger(model)
+
+    clock.tick_hooks.insert(0, hook)
+    return am.run_arena(spec, SIDES, game, agents, tmp_path, clock), game
+
+
+def _stalls(out_dir) -> list:
+    return [e["stall"] for e in arena_events(out_dir) if e["ev"] == "arena_stall"]
+
+
+def test_a_stall_in_a_stale_pause_is_the_games_fault_not_the_acting_sides_forfeit(tmp_path):
+    """pQ H1, S5b: the mod refuses every end with no hold to read. A did nothing wrong and can't end: it read a valid
+    forfeit to B at its third forced turn. A fault reruns."""
+
+    def stale(model: ArenaModel) -> None:
+        model.refuse_end = HELD_REFUSAL
+
+    out, _game = _two_forced_then(stale, tmp_path)
+    assert _stalls(tmp_path) == ["game"]
+    assert out.end is not None and out.end["reason"] == "fault" and out.end.get("winner") is None
+    assert out.invalid is not None
+
+
+def test_a_stall_with_a_hold_on_record_is_the_games_fault_not_the_acting_sides_forfeit(tmp_path):
+    """pQ H1, S3b: the decline errors, the hold stays on record, and the stall path has no excuse for it."""
+
+    def held(model: ArenaModel) -> None:
+        model.open_reaction("Wyll")
+
+    # the hold's own clock is pushed past the stall's, so the stall path is what decides here; the mod's gate says no
+    # pause, as for a held cast by someone on neither team: the hold on record is enough
+    with mock.patch.object(am, "REACTION_STUCK_S", 10_000.0), mock.patch.object(am, "_paused", lambda g, s: False):
+        out, _game = _two_forced_then(held, tmp_path, decline_fails=True)
+    assert _stalls(tmp_path) == ["game"]
+    assert out.end is not None and out.end["reason"] == "fault"
+
+
+def test_only_the_gates_pause_words_read_as_a_pause():
+    def gate(reply: Exception | None) -> types.SimpleNamespace:
+        def rpc(op, args, side):
+            assert (op, side) == ("guard.side_gate", "A")
+            if reply is not None:
+                raise reply
+            return {"ok": True}
+
+        return types.SimpleNamespace(rpc=rpc)
+
+    assert am._paused(gate(RuntimeError(HELD_REFUSAL)), "A") is True
+    assert am._paused(gate(RuntimeError("not your turn (side B is acting)")), "A") is False
+    assert am._paused(gate(TimeoutError("guard.side_gate: no answer")), "A") is False
+    assert am._paused(gate(None), "A") is False
+
+
+@pytest.mark.parametrize("how", ["raises", "job_failed"])
+def test_a_decline_that_keeps_failing_is_a_fault_not_an_hour_of_tokens(tmp_path, how):
+    """pQ H2, S3a: with the prompt up, the stuck clock never ran and a thinking side kept the idle clock at 0: a valid
+    wall_cap draw after 60 min. The bound's retries go on until REACTION_STUCK_S past the first failure."""
+    tries: list[float] = []
+    opened: list[float] = []
+
+    def a_play(game: Game, side: str, run: Run) -> None:
+        if model.reaction is not None:
+            run.model += am.POLL_S  # thinking non-stop
+        else:
+            patient(game, side, run)
+
+    model, game, clock, agents, spec = setup({"A": a_play, "B": patient}, L5)
+    real = game.rpc
+
+    def rpc(op, args, side=None, context="server"):
+        if op == "ui.react" and side is None:
+            tries.append(clock.now())
+            if how == "raises":
+                raise RuntimeError("no command")
+            return {"status": "failed", "error": "no command"}
+        return real(op, args, side, context=context)
+
+    game.rpc = rpc  # type: ignore[method-assign]
+
+    def hook() -> None:
+        if model.mod_round == 2 and not opened and my_turn(game, "A"):
+            model.open_reaction("Wyll")
+            opened.append(clock.now())
+
+    clock.tick_hooks.insert(0, hook)
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.end is not None and out.end["reason"] == "fault" and out.invalid is not None
+    assert "decline keeps failing" in out.invalid
+    assert len(tries) > 2  # it kept trying
+    assert tries[-1] - tries[0] < am.REACTION_STUCK_S + 2 * am.REACTION_POLL_S
+    assert clock.now() - opened[0] < 200  # 90 s + the first read's lateness + 60 s, not 60 min
+
+
+def test_a_decline_failing_once_starts_no_clock_for_the_next_hold():
+    """The failure's clock goes with its key: a new prompt gets its own bound and its own tries."""
+    hold = am._Hold(key="k", since=0.0, opened=0.0, shown=0.0, decline_failed=1.0)
+
+    class Reads:
+        def rpc(self, op, args=None, context="server"):
+            return {"reaction": {"prompt": "other", "owner": "B", "options": []}, "screen": "reaction"}
+
+    spec = types.SimpleNamespace(name="a", turn_cap_s=90.0)
+    assert am._reaction_check(spec, Reads(), None, print, hold, 500.0) == "B"  # type: ignore[arg-type]
+    assert hold.key == "other" and hold.decline_failed is None
+
+
+def test_the_pause_words_are_the_mods():
+    """The stall reads Guard.side_gate's refusal by its words."""
+    guard = Path(am.__file__).parents[5] / "mod/Mods/BG3AI/ScriptExtender/Lua/Server/Guard.lua"
+    assert am.PAUSED_REFUSAL in guard.read_text()
+    assert HELD_REFUSAL.startswith(am.PAUSED_REFUSAL)
 
 
 def test_an_unowned_reaction_prompt_is_declined_once_and_recorded(tmp_path):

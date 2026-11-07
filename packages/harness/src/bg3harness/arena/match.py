@@ -101,9 +101,10 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    moves on costs no read; while the game holds for a reaction, every REACTION_POLL_S. A prompt its owner leaves open
    for the arena's turn_cap_s from its first read on screen (what a turn gets: a shorter bound would take reactions
    from slow models only) is declined the same way (`arena_reaction_declined {round, side, detail}`). A hold
-   REACTION_STUCK_S past its prompt's last read on screen (or its first read, if none showed), or past a decline, is
-   one nobody can clear: the match ends
-   `fault`, so it can't hang. The same read finds a prompt one side owns (the
+   REACTION_STUCK_S past its prompt's last read on screen (or its first read, if none showed), past a decline, or
+   past the first failure of a decline that keeps failing, is one nobody can clear: the match ends
+   `fault`, so it can't hang. A stall with the game held or paused is the game's too, whoever's phase it is. The same
+   read finds a prompt one side owns (the
    mod's `owner`, from the game's own observer) while the other side's phase is on: until the next read or the next
    phase, that side's model time counts as the
    phase's progress on the stall clock (the game waits for its answer, not for the acting side; fairness audit
@@ -158,6 +159,7 @@ STALL_MIN_S = 300.0  # ... and at least this long has stalled
 STALL_CALLS = 3  # the tool calls of each side an arena_stall record shows
 UNOWNED_CHECK_S = 15.0  # a turn this old: ui.state is read for a prompt no team owns, then at most this often
 REACTION_POLL_S = 2.0  # while the game holds for a reaction: ui.state this often
+PAUSED_REFUSAL = "the game is paused for a reaction decision"  # Guard.side_gate's words
 REACTION_STUCK_S = 60.0  # a hold this long with no prompt on screen, or after its decline, ends the match
 END_FIELDS = ("winner", "reason", "rounds", "hp_left_A", "hp_left_B")
 # the runner's ends that make the match invalid (rerun, never graded): the game failed, our client side failed past
@@ -472,6 +474,7 @@ class _Hold:
     opened: float | None = None
     shown: float | None = None
     declined: float | None = None
+    decline_failed: float | None = None
 
 
 def _reaction_check(
@@ -494,6 +497,7 @@ def _reaction_check(
     key = str((held or {}).get("key") or (rx or {}).get("prompt") or "")
     if key != hold.key:
         hold.key, hold.since, hold.opened, hold.shown, hold.declined = key, now, None, None, None
+        hold.decline_failed = None
     if rx is not None:
         hold.opened, hold.shown = hold.opened or now, now
     owner = (held or {}).get("side") if rx is None else None
@@ -507,13 +511,18 @@ def _reaction_check(
     owner = None if unowned else rx.get("owner") or _prompt_owner(rx, ref)
     if not unowned and now - (hold.opened or now) < spec.turn_cap_s:
         return owner
+    if hold.decline_failed is not None and now - hold.decline_failed >= REACTION_STUCK_S:
+        age = now - hold.since
+        raise _Ended("fault", detail=f"a reaction held the game {age:.0f} s and its decline keeps failing ({key})")
     try:
         job = game.rpc("ui.react", {"use": False}, context="client") or {}
     except Exception as e:  # read again at the next check
         log(f"arena {spec.name}: declining a reaction prompt failed: {e}")
+        hold.decline_failed = hold.decline_failed or now
         return owner
     if job.get("status") == "failed":
         log(f"arena {spec.name}: declining a reaction prompt failed: {job.get('error')}")
+        hold.decline_failed = hold.decline_failed or now
         return owner
     hold.declined = now
     detail = str(rx.get("prompt") or "")
@@ -524,6 +533,15 @@ def _reaction_check(
         ref.event("arena_reaction_declined", round=ref.round, side=owner, detail=detail)
         log(f"arena {spec.name}: declined side {owner}'s unanswered reaction prompt ({detail})")
     return None
+
+
+def _paused(game: ArenaGame, side: str) -> bool:
+    """The mod's own gate says the game is paused for a reaction: no side can end a turn then, so a stall isn't its."""
+    try:
+        game.rpc("guard.side_gate", {}, side)
+    except Exception as e:
+        return PAUSED_REFUSAL in str(e)
+    return False
 
 
 def _held(game: ArenaGame, turn: Turn) -> list[str]:
@@ -787,7 +805,8 @@ def run_arena(
                 held, why = [], ""
                 if turn is not None and not (turn.stalled or turn.forced):
                     try:
-                        held = _held(game, turn)
+                        # during a pause nobody can end a turn: the game's stall (a fault, a rerun), not a forfeit
+                        held = [] if hold.key or _paused(game, turn.side) else _held(game, turn)
                     except Exception as e:  # the game can't say: it holds the turn
                         why = f"state.combat failed: {e}"
                 phase = {"side": turn.side, "character": turn.name, "members": turn.names} if turn else {}
