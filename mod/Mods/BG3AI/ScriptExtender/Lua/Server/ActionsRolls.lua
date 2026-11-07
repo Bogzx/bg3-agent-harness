@@ -350,12 +350,20 @@ end
 
 -- live.md 01:11:51: a Counterspell set to always raises no prompt and no pause, and the cast ends failed, reason
 -- Countered, with action 1 after. An enemy's reaction has no prompt either. The cost comes later here too, so the same
--- hold: never lands, so nothing to audit.
+-- hold. It never lands, so its audit (set by on_finish) waits for the game's charge instead: a30-read, by hotbar a
+-- countered Haste paid Action and L3, by Osiris Action alone, as the game doesn't charge an Osiris cast's slot.
+-- Outcome Countered only: a Canceled is unread on the player's route. With no cost read by the bound: nothing.
 function A.hold_countered(job, char, check)
     local function never() return false end
     A.hold_audit({ side = job.side, began = true }, char, never, nil, check)
-    A.held_audits[#A.held_audits].free_ms = RPC.now_ms()
+    local h = A.held_audits[#A.held_audits]
+    h.free_ms, h.countered = RPC.now_ms(), true
+    return h
 end
+
+-- What the game itself charges an Osiris cast (bonus at +1.2 s on a landed Divine Favour, charged_by_guard the slot),
+-- so a countered cast's audit leaves it, whenever it comes.
+A.TURN_RESOURCES = { ActionPoint = true, BonusActionPoint = true, ReactionActionPoint = true, Movement = true }
 
 -- A held cast that still holds its character's orders.
 local function held_open(h, now)
@@ -389,7 +397,11 @@ function A.held_audit_tick()
         else
             local now = RPC.now_ms()
             h.free_ms = h.free_ms or now
-            if now - h.free_ms >= A.HELD_LANDS_MS and not held_open(h, now) then table.remove(A.held_audits, i) end
+            if h.countered and A.cost_taken(h.char, h.check) then
+                h.landed_ms = now -- settles as a landing does, so a charge of the game's own comes first
+            elseif now - h.free_ms >= A.HELD_LANDS_MS and not held_open(h, now) then
+                table.remove(A.held_audits, i)
+            end
         end
     end
 end

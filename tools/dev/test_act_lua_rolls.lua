@@ -490,6 +490,13 @@ test("held cast: a cast countered with no prompt can't wedge its caster either",
     eq(job(next_order()).status, "running", "past the bound")
 end)
 
+test("held cast: a paused cast whose cost went with no landing and no Countered read pays nothing more (D15)", function()
+    local res = held_heal(4)
+    res.BonusActionPoint[1].Amount = 0 -- the game's, as a Canceled's
+    tick(math.ceil(A.HELD_RESOLVE_MS / 60) + 5)
+    eq(res.SpellSlot[1].Amount, 4, "not read as countered, so not charged")
+end)
+
 test("held cast: another refusal holds nothing back", function()
     combat_setup(9)
     spell("Target_Bolt", { TargetRadius = "18", SpellType = "Target", Level = 0, UseCosts = "ActionPoint:1" })

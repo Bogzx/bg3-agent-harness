@@ -664,7 +664,7 @@ reg("cast", function(args)
                     return
                 end
                 if not job.ui and select(2, A.engine_refusal(job)) == "Countered" then
-                    A.hold_countered(job, char, check)
+                    job.countered = A.hold_countered(job, char, check)
                 end
                 RPC.finish_job(job, "failed", nil, why)
             end,
@@ -961,14 +961,14 @@ reg("cast", function(args)
             -- A hotbar cast is the player's own: the game charged it (nothing extra from us).
             if job.ui then return end
             -- Resource audit: charge whatever the engine did not.
-            local function audit()
+            local function audit(leave)
                 local after = G.resources(char)
                 local charged = {}
                 for _, p in ipairs(check.payers) do
                     local before = (check.snapshot[p.name] or {})[p.level] or 0
                     local now = (after[p.name] or {})[p.level] or 0
                     local owed = p.amount - (before - now)
-                    if owed > 0.01 and G.deduct(char, p.name, p.level, owed) then
+                    if owed > 0.01 and not (leave and leave[p.name]) and G.deduct(char, p.name, p.level, owed) then
                         charged[#charged + 1] = { resource = G.friendly(p.name),
                             level = p.level > 0 and p.level or nil, amount = owed }
                     end
@@ -978,6 +978,8 @@ reg("cast", function(args)
             if not job.casted then
                 if type(job.result) == "table" and job.result.paused then
                     A.hold_audit(job, char, matches, audit, check)
+                elseif job.countered then
+                    job.countered.audit = function() audit(A.TURN_RESOURCES) end
                 end
                 return
             end

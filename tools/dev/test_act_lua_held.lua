@@ -112,3 +112,91 @@ test("held cast: with no state seen, a hit after its own CastSpell is still its 
     eq(k.result.damage[1].amount, 5, "its own hit")
     assert(tostring(k.result.unrolled):find("no cast state", 1, true), tostring(k.result.unrolled))
 end)
+
+-- a30-read c1b-1,2,3 and c2-1b (live.md): Gale's Haste countered by an enemy. By hotbar Action and L3 both went by
+-- +5993. By Osiris Action went by +5761 and L3 stayed 3 through +15 s: the game doesn't charge an Osiris cast's slot.
+local function countered_slot(outcome)
+    combat_setup(9)
+    spell("Target_SlotBolt", { TargetRadius = "18", SpellType = "Target", Level = 3,
+        UseCosts = "ActionPoint:1;SpellSlotsGroup:1:1:3" })
+    local res = world[P1].comps.ActionResources.Resources
+    res.SpellSlot = { { Level = 3, Amount = 3 } }
+    res.ActionPoint[1].Amount = 2 -- a double charge of the action would show
+    world[NPC].pos = { 1.5, 0, 0 }
+    cast_outcome = outcome
+    local j = job(op("cast", { char = P1, spell = "Target_SlotBolt", target = NPC }))
+    eq(j.status, "running", "started " .. tostring(j.error))
+    return res, j
+end
+local function fail_cast(j)
+    A.dispatch("CastSpellFailed", { P1, "Target_SlotBolt", "Target", "None", 0 })
+    cast_outcome = nil
+    eq(j.status, "failed", "ended " .. tostring(j.error))
+end
+
+test("countered: an Osiris cast pays its slot once, after the game's own charge of the action", function()
+    local res, j = countered_slot("Countered")
+    fail_cast(j)
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 3, "nothing charged before the game's charge")
+    res.ActionPoint[1].Amount = 1 -- the game's charge
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 2, "the slot is paid")
+    eq(res.ActionPoint[1].Amount, 1, "the action only by the game")
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 2, "once")
+    eq(#A.held_audits, 0, "no entry left")
+end)
+
+test("countered: no double charge if the game takes the slot first", function()
+    local res, j = countered_slot("Countered")
+    fail_cast(j)
+    res.SpellSlot[1].Amount = 2 -- the game's, with the action still to come
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 2, "the slot once")
+    eq(res.ActionPoint[1].Amount, 2, "the action is the game's to take, even later than the settle")
+    res.ActionPoint[1].Amount = 1
+    tick(30)
+    eq(res.ActionPoint[1].Amount, 1, "the action once")
+    eq(res.SpellSlot[1].Amount, 2, "the slot still once")
+end)
+
+test("countered: no double charge if the game takes the slot and the action together", function()
+    local res, j = countered_slot("Countered")
+    fail_cast(j)
+    res.SpellSlot[1].Amount, res.ActionPoint[1].Amount = 2, 1 -- the hotbar's shape: same read
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 2, "together: the slot once")
+    eq(res.ActionPoint[1].Amount, 1, "together: the action once")
+end)
+
+test("countered: a slot the game takes inside the settle isn't charged again", function()
+    local res, j = countered_slot("Countered")
+    fail_cast(j)
+    res.ActionPoint[1].Amount = 1
+    tick(2) -- under CAST_SETTLE_MS
+    eq(res.SpellSlot[1].Amount, 3, "still settling")
+    res.SpellSlot[1].Amount = 2 -- the game's
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 2, "once")
+end)
+
+test("countered: with no cost read by the bound nothing is charged, and a later charge finds no entry", function()
+    local res, j = countered_slot("Countered")
+    fail_cast(j)
+    tick(math.ceil(A.HELD_RESOLVE_MS / 60) + 5)
+    eq(res.SpellSlot[1].Amount, 3, "no cost read: not paid")
+    eq(#A.held_audits, 0, "the entry has gone")
+    res.ActionPoint[1].Amount = 1
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 3, "nothing waiting to charge")
+end)
+
+test("countered: a Canceled cast stays uncharged: only the outcome Countered pays its slot here", function()
+    local res, j = countered_slot("Canceled")
+    res.ActionPoint[1].Amount = 1 -- it went: the game took the action, as a Riposte's Canceled read
+    fail_cast(j)
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 3, "unread on the player's route, so not charged")
+    eq(#A.held_audits, 0, "no entry")
+end)
