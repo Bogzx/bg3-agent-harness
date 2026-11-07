@@ -490,7 +490,7 @@ test("held cast: a cast countered with no prompt can't wedge its caster either",
     eq(job(next_order()).status, "running", "past the bound")
 end)
 
-test("held cast: a paused cast whose cost went with no landing and no Countered read pays nothing more (D15)", function()
+test("held cast: a paused cast whose cost went, with no landing or Countered read, pays no more (D15)", function()
     local res = held_heal(4)
     res.BonusActionPoint[1].Amount = 0 -- the game's, as a Canceled's
     tick(math.ceil(A.HELD_RESOLVE_MS / 60) + 5)
