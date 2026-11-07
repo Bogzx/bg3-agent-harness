@@ -168,6 +168,141 @@ test("cast start: a cast held paused for a reaction is reported as paused, its t
     world[P1].comp_names = nil
 end)
 
+-- Live s5-rx-2 at 117.9 s: Blue Ash's order went in 1 s before its own Riposte's pause. No state came of it, the
+-- no-start waited out CAST_REACT_HOLD_MS and purged, and the Riposte (rolled 20 v 17) went with its reaction and die
+-- spent, the prompt closed with nobody answering.
+local PAUSED_NAMES = { "eoc::interrupt::ZoneParticipantComponent", PAUSED }
+
+test("cast start: an order still unstarted when the game pauses is reported as held, nothing purged (s5-rx-2)",
+    function()
+    cast_seen = "none"
+    local j = swing()
+    tick(15) -- 0.9 s
+    world[P1].comp_names = PAUSED_NAMES
+    tick(10)
+    eq(j.status, "running", "short pause " .. tostring(j.error))
+    tick(10)
+    eq(j.status, "interrupted", "status " .. tostring(j.error))
+    eq(j.error, A.ORDER_PAUSED, "says the order hadn't started")
+    eq(j.result.began, nil, "not begun"); eq(j.result.paused, true, "paused")
+    eq(#called("PurgeOsirisQueue"), 0, "the paused cast is not purged")
+    world[P1].comp_names = nil
+end)
+
+test("cast start: a pause just before the no-start's end keeps the purge off (s5-rx-2)", function()
+    cast_seen = "none"
+    local j = swing()
+    tick(47) -- 2.8 s: the no-start's end is at 3 s
+    world[P1].comp_names = PAUSED_NAMES
+    tick(8) -- 3.3 s, 0.5 s paused
+    eq(j.status, "running", "not 'never started' " .. tostring(j.error))
+    eq(#called("PurgeOsirisQueue"), 0, "not purged at the no-start's end")
+    tick(12)
+    eq(j.status, "interrupted", "status " .. tostring(j.error))
+    world[P1].comp_names = nil
+end)
+
+test("cast start: a pause that ended lets the no-start run again, purge and all", function()
+    cast_seen = "none"
+    local j = swing()
+    tick(5)
+    world[P1].comp_names = PAUSED_NAMES
+    tick(5) -- 0.3 s paused: a quick reaction, over
+    world[P1].comp_names = nil
+    tick(50) -- 3.6 s
+    eq(j.status, "failed", "status " .. tostring(j.error))
+    assert(j.error:find("never started"), j.error)
+    eq(#called("PurgeOsirisQueue") > 0, true, "the dead order purged")
+end)
+
+test("a failed cast's leftover task isn't purged while the game is paused, and is once it isn't (s5-rx-2)", function()
+    for _, held in ipairs({ true, false }) do
+        reset()
+        local j = swing()
+        world[P1].comps.ServerCharacter = { OsirisController = { Tasks = { { Type = "Spell" } } } }
+        world[P1].comp_names = held and PAUSED_NAMES or nil
+        A.dispatch("CastSpellFailed", { P1, "Target_Swing", "Target", "None", 0 })
+        eq(j.status, "failed", "status " .. tostring(j.error))
+        eq(#called("PurgeOsirisQueue"), held and 0 or 1, "purges, held " .. tostring(held))
+        world[P1].comp_names = nil
+    end
+end)
+
+test("combat move_to: a walk that never starts while the game is paused purges nothing (s5-rx-2)", function()
+    combat_setup(12)
+    local j = job(op("move_to", { char = P1, target = NPC }))
+    eq(j.status, "running", "ordered " .. tostring(j.error))
+    world[P1].comp_names = PAUSED_NAMES
+    tick(43)
+    eq(j.status, "failed", "status")
+    assert(j.error:find("never started moving", 1, true), j.error)
+    eq(#called("PurgeOsirisQueue"), 0, "the mover's paused cast is not purged")
+    world[P1].comp_names = nil
+end)
+
+test("combat move_to: a walk stopped 5 s by a pause purges nothing (s5-rx-2)", function()
+    combat_setup(12)
+    local j = job(op("move_to", { char = P1, target = NPC }))
+    eq(j.status, "running", "ordered " .. tostring(j.error))
+    tick(2)
+    world[P1].pos = { 1, 0, 0 } -- it set off: an attack that missed it raised its own Riposte, and the game paused
+    tick(2)
+    world[P1].comp_names = PAUSED_NAMES
+    tick(90)
+    eq(j.status, "failed", "status")
+    assert(j.error:find("no path to the destination", 1, true), j.error)
+    eq(#called("PurgeOsirisQueue"), 0, "the walker's paused cast is not purged")
+    world[P1].comp_names = nil
+end)
+
+-- Live s5-rx-2 at 116 s and 126 s, and live.md's Riposte read: the swing rolled and missed, the Riposte came, the
+-- action was gone, and the tool said "the game refused the cast".
+test("cast: a Canceled after the game took the cost says that, not a refusal, and purges nothing (s5-rx-2)", function()
+    cast_outcome = "Canceled"
+    local j = swing()
+    world[P1].comps.ServerCharacter = { OsirisController = { Tasks = { { Type = "Spell" } } } }
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0
+    A.dispatch("CastSpellFailed", { P1, "Target_Swing", "Target", "None", 0 })
+    eq(j.status, "failed", "status " .. tostring(j.error))
+    eq(j.error, string.format(A.CAST_CANCELED_SPENT, "action"), "says the cost went")
+    assert(not j.error:find("refused the cast", 1, true), j.error)
+    eq(#called("PurgeOsirisQueue"), 0, "its task may still be resolving")
+end)
+
+test("cast: a Canceled with nothing spent, or another reason with the cost gone, keeps the game's words", function()
+    cast_outcome = "Canceled"
+    local j = swing()
+    A.dispatch("CastSpellFailed", { P1, "Target_Swing", "Target", "None", 0 })
+    eq(j.error, "the game refused the cast: the cast was cancelled (the game's Canceled)", "nothing spent")
+    reset()
+    cast_outcome = "CantCast"
+    j = swing()
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0
+    A.dispatch("CastSpellFailed", { P1, "Target_Swing", "Target", "None", 0 })
+    assert(j.error:find("the game refused the cast: it can't be cast now", 1, true), j.error)
+end)
+
+test("cast: a free Extra Attack's Canceled reads its status, gone with the cast (s5-rx-2)", function()
+    for _, gone in ipairs({ true, false }) do
+        reset()
+        cast_outcome = "Canceled"
+        combat_setup(9)
+        world[P1].comps.ActionResources.Resources.ActionPoint = { { Level = 0, Amount = 0 } }
+        world[NPC].pos = { 1.5, 0, 0 }
+        spell("Target_MainHandAttack", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1",
+            Level = 0, SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" },
+            SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } })
+        osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
+        local j = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = NPC }))
+        eq(j.status, "running", "ordered " .. tostring(j.error))
+        if gone then osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil end
+        A.dispatch("CastSpellFailed", { P1, "Target_MainHandAttack", "Target", "None", 0 })
+        eq(j.error, gone and string.format(A.CAST_CANCELED_SPENT, "extra attack")
+            or "the game refused the cast: the cast was cancelled (the game's Canceled)", "gone " .. tostring(gone))
+        osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
+    end
+end)
+
 -- L5 scratch 00:39:40: the released cast healed and its slot stayed 4/4: the job had ended `interrupted`, so nothing
 -- audited the landing. Not an arena case: nothing here has a side.
 local function held_heal(amount)

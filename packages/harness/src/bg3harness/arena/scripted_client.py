@@ -14,7 +14,9 @@ It plays one own member at a time, the same way every time:
 2. The first standing party member in the read's turn group (the side's acting phase) acts: the nearest standing
    enemy in the read (by the rows' positions) is attacked with ATTACK (`use_ability`, UNARMED when the member has
    no ATTACK) when within REACH_M; else the member walks to it (`move_to target`, within melee reach) and attacks
-   when the next read puts it within REACH_M.
+   when the next read puts it within REACH_M. A body in the way can stop that walk short with metres left, and the
+   game refuses a swing at the edge of reach (live s5-rx-2 capped on both). So a member that walked and stands within
+   SHOOT_M, or whose swing was refused as too far, uses RANGED instead.
 3. `end_turn(who=<member>, wait=false)`; back to 1.
 
 Not in combat, or no own member to act: it waits POLL_S and reads again. It never ends on its own: the runner stops
@@ -39,8 +41,10 @@ from bg3harness.testing.reload_agent import Mcp, Turn, arg, emit, server_config
 SCRIPTED = "scripted"  # the profile name play.py arena reserves for this client
 PLAYER = "scripted/none"  # the player name a scripted side is recorded under (bg3bench never rates it)
 VERSION = "0.0.0 (bg3harness.arena.scripted_client: scripted, no model)"
-ATTACK, UNARMED = "Main Hand Attack", "Unarmed Strike"
-REACH_M = 2.5  # centre to centre: within this the member attacks without walking (melee 1.5 m + radii)
+ATTACK, UNARMED, RANGED = "Main Hand Attack", "Unarmed Strike", "Ranged Attack"
+REACH_M = 2.0  # centre to centre: within this the member attacks without walking (GuardCast.lua: 1.5 m + radii, 1.998)
+SHOOT_M = 15.0  # the shortest Ranged Attack in the builds
+TOO_FAR = ("target is out of range", "isn't a valid target")  # the guard's and the game's words at the edge of reach
 WITHIN_M = 1.5  # move_to's `within` for a target: stop inside melee reach
 POLL_S = 1.0
 TURN_WAIT_S = 60  # wait_for's longest wait
@@ -116,7 +120,13 @@ Call = Callable[[str, dict[str, Any]], tuple[str, bool]]
 def attack(call: Call, me: Row, foe: Row) -> None:
     text, err = call("use_ability", {"ability": ATTACK, "target": foe.handle, "who": me.handle})
     if err and "has no action called" in text:
-        call("use_ability", {"ability": UNARMED, "target": foe.handle, "who": me.handle})
+        text, err = call("use_ability", {"ability": UNARMED, "target": foe.handle, "who": me.handle})
+    if err and any(words in text for words in TOO_FAR):
+        shoot(call, me, foe)
+
+
+def shoot(call: Call, me: Row, foe: Row) -> None:
+    call("use_ability", {"ability": RANGED, "target": foe.handle, "who": me.handle})
 
 
 def step(call: Call, sleep: Callable[[float], None] = time.sleep) -> str:
@@ -135,12 +145,15 @@ def step(call: Call, sleep: Callable[[float], None] = time.sleep) -> str:
         me2 = next((r for r in view2.rows if r.handle == me.handle), None) if view2 else None
         near = nearest(view2, me2) if view2 and me2 else None
     attacked = near is not None and near[1] <= REACH_M
+    shot = near is not None and moved and not attacked and near[1] <= SHOOT_M
     if near is not None and attacked:
         attack(call, me, near[0])
+    elif near is not None and shot:
+        shoot(call, me, near[0])
     _text, err = call("end_turn", {"who": me.handle, "wait": False})
     if err:
         sleep(POLL_S)  # the end didn't go through: read again, don't press it in a loop
-    return "+".join(w for w, on in (("moved", moved), ("attacked", attacked)) if on) or "ended"
+    return "+".join(w for w, on in (("moved", moved), ("attacked", attacked), ("shot", shot)) if on) or "ended"
 
 
 def main(argv: list[str]) -> int:

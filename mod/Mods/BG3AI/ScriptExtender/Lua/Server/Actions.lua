@@ -758,7 +758,7 @@ local function start(kind, char, spec)
         -- block every later order and are saved with the game. A finished
         -- cast is left alone (its spell task may still be resolving).
         if char and job.osi_task and not job.stopping and A.active[char] == nil
-            and (job.status ~= "done" or job.osi_task ~= "spell") then
+            and (job.status ~= "done" or job.osi_task ~= "spell") and not A.cast_paused(char) then
             local n = osi_tasks(char)
             if n > 0 then
                 job.stopping = true
