@@ -5,6 +5,16 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-07: a container nobody holds, and hits before an order has started
+
+- A raw id of a container spell the character doesn't hold (neither the container nor a variant in its book) reads `the
+  character does not have that action`. Before, live.md L12 read 5: `Shout_FireShield` answered `choose a variant:
+  Shout_FireShield_Chill, Shout_FireShield_Warm`, each then refused. A holder's `choose a variant` is unchanged.
+- A hit or status that comes before an order has started isn't in that order's result. Before, live.md gapranged3: a held
+  arrow's hit, 201 ms after its CastedSpell and 730 ms before the queued order's own cast began, read `damage=[6; 6]`,
+  total 12, where its own was 6. AttackedBy has no cast id, so a held hit that comes after the order started still counts
+  as the order's. A held swing's CastSpellFailed still ends the order queued behind it.
+
 ## 2026-11-07: an order queued behind a held attack reads its own swing
 
 - An Extra Attack ordered after the game charged a held attack and before it landed (s5-rx-3 312.7 s, 467.7 s, about
