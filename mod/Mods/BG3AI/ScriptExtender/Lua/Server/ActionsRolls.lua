@@ -342,10 +342,19 @@ function A.held_landing(job)
 end
 
 -- Live, held-claim read gapranged3: a held arrow's hit at +351 ms, after its CastedSpell at +150, counted in the order
--- queued behind it, whose own cast began at +1081. AttackedBy has no cast id, but a hit or status before an order has
--- started can't be its own. A hit after it started can't be told apart, and counts as its own.
+-- queued behind it, whose own CastSpell came at +1081. AttackedBy has no cast id, but an order behind a held cast
+-- hasn't swung before its own CastSpell. Not its cast state: that comes about 930 ms earlier (a30-read c1-1..3), so by
+-- these reads before the held hit. Only behind a held entry: 33 of 33 own hits read came after a CastSpell, but
+-- elsewhere it isn't needed, and a cast with none would lose its hit. A held hit after that CastSpell counts as own.
 function A.order_unstarted(job)
-    return job.roll and job.roll.state == "pending" and not job.began
+    return job.behind_held and job.roll and not job.spell_begun and not job.casted
+end
+
+function A.held_for(char)
+    for _, h in ipairs(A.held_audits) do
+        if G.same(h.char, char) then return true end
+    end
+    return false
 end
 
 -- live.md 01:11:51: a Counterspell set to always raises no prompt and no pause, and the cast ends failed, reason

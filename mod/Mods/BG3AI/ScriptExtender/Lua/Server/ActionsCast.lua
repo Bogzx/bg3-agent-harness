@@ -623,6 +623,7 @@ reg("cast", function(args)
                 -- the HP the jump verdict compares with, read as the cast starts: a hit taken after the order (or
                 -- before a re-order) is not the fall's
                 if matches(a) and not job.began then job.began, job.hp0 = true, hp_of(char) end
+                if matches(a) then job.spell_begun = true end
             end,
             CastedSpell = function(job, a)
                 if matches(a) and A.held_landing(job) then return end
@@ -922,7 +923,7 @@ reg("cast", function(args)
             end
         end,
         start = function(job)
-            job.hits, job.statuses = {}, {}
+            job.hits, job.statuses, job.behind_held = {}, {}, A.held_for(char)
             if walk then
                 return begin_approach(job, targets[1], walk.plan, walk.reach, function(j)
                     local ok2, c = pcall(prepare)

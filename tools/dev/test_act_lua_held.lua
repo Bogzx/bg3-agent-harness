@@ -87,7 +87,46 @@ test("held cast: a held arrow's late hit isn't the queued order's", function()
     eq(k.result.damage[1].amount, 4, "its own amount")
 end)
 
-test("held cast: a status before the queued order has started isn't its own; after, it is", function()
+test("held cast: a held arrow's hit after the queued order's state, before its CastSpell, isn't its", function()
+    local k = extra_in_the_gap("none")
+    attack_event("CastedSpell")
+    create_hooks.SpellCastState({ SpellCastState = last_cast }) -- about +151 by the reads, before the hit at +351
+    hit(6)
+    eq(#k.hits, 0, "not this order's")
+    eq(k.last_hit, nil, "its own arrow's wait isn't cut short")
+    attack_event("CastSpell")
+    attack_event("CastedSpell")
+    hit(4)
+    tick(30)
+    eq(k.status, "done", "own landing " .. tostring(k.error))
+    eq(#k.result.damage, 1, "only its own arrow")
+    eq(k.result.damage[1].amount, 4, "its own amount")
+end)
+
+local function plain_hit(entries)
+    combat_setup(9)
+    world[NPC].pos = { 1.5, 0, 0 }
+    spell("Target_Plain", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0,
+        SpellFlags = { "IsHarmful" } })
+    A.held_audits = entries
+    local j = job(op("cast", { char = P1, spell = "Target_Plain", target = NPC }))
+    eq(j.status, "running", "started " .. tostring(j.error))
+    A.dispatch("AttackedBy", { NPC, P1, P1, "Slashing", 5, "", 0 })
+    A.dispatch("CastedSpell", { P1, "Target_Plain", "Target", "None", 0 })
+    tick(10)
+    eq(j.status, "done", "done " .. tostring(j.error))
+    eq(j.result.total_damage, 5, "its own")
+end
+
+test("held cast: an order behind no held cast keeps a hit that comes before its CastSpell", function()
+    plain_hit({})
+end)
+
+test("held cast: another character's held cast doesn't make an order unstarted", function()
+    plain_hit({ { char = P2, matches = function() return false end, free_ms = RPC.now_ms() } })
+end)
+
+test("held cast: a status before the queued order's CastSpell isn't its own, its state or not; after, it is", function()
     local saved = BG3AI.Visibility
     BG3AI.Visibility = setmetatable({ statusInfo = function(id) return { name = id } end }, { __index = saved })
     local k = extra_in_the_gap("none")
@@ -95,6 +134,9 @@ test("held cast: a status before the queued order has started isn't its own; aft
     eq(#k.statuses, 0, "the held attack's")
     attack_event("CastedSpell")
     create_hooks.SpellCastState({ SpellCastState = last_cast })
+    A.dispatch("StatusApplied", { NPC, "ALSO_THE_HELD_ATTACKS", P1, 0 })
+    eq(#k.statuses, 0, "its state alone: still the held attack's")
+    attack_event("CastSpell")
     A.dispatch("StatusApplied", { NPC, "ITS_OWN", P1, 0 })
     BG3AI.Visibility = saved
     eq(#k.statuses, 1, "its own")
