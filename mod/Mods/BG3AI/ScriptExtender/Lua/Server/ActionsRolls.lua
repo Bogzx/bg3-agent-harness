@@ -312,7 +312,7 @@ A.held_audits = A.held_audits or {}
 -- cost (a countered cast never lands), or it stood unpaused for HELD_RESOLVE_MS, so no read can wedge the character.
 A.HELD_RESOLVE_MS = 10000
 A.CAST_UNRESOLVED = "this character's last cast is still resolving after a reaction: its cost may not show yet, and no"
-    .. " order for this character starts until it has (at most 10 s after any prompt closes)"
+    .. " order but end_turn starts for this character until it has (at most 10 s after any prompt closes)"
 
 function A.hold_audit(job, char, matches, audit, check)
     A.held_audits[#A.held_audits + 1] = { char = char, matches = matches, audit = audit, side = job.side,

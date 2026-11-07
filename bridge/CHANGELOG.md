@@ -8,8 +8,8 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 ## 2026-11-07: an order can't start while its character's last cast is still resolving after a reaction
 
 - New refusal, in and out of a match, for casts, walks and other orders through the combat gate: `this character's last
-  cast is still resolving after a reaction: its cost may not show yet, and no order for this character starts until it
-  has (at most 10 s after any prompt closes)`. Before, live.md 08:03:05: a countered Magic Missile read Action 1/1 until
+  cast is still resolving after a reaction: its cost may not show yet, and no order but end_turn starts for this
+  character until it has (at most 10 s after any prompt closes)`. Before, live.md 08:03:05: a countered Magic Missile read Action 1/1 until
   between +4 s and +6 s, an order sent at +1 s ran after the hold, and one action bought two casts. It lifts when the
   cast lands, when the game takes its cost, or 10 s after any prompt closes. `end_turn` isn't held.
 - A cast countered with no prompt (Counterspell set to always; live.md 01:11:51) now reads `a reaction countered it

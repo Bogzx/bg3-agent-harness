@@ -510,6 +510,59 @@ test("held cast: an Extra Attack whose status went has resolved: no cost to read
     eq(A.cast_unresolved(P1), false, "status gone")
 end)
 
+test("held cast: end_turn isn't held, and the refusal says so", function()
+    held_heal(4)
+    tick(16)
+    failed_with(held_order(), "still resolving")
+    assert(A.CAST_UNRESOLVED:find("no order but end_turn starts for this character", 1, true), A.CAST_UNRESOLVED)
+    eq(job(op("end_turn", { char = P1 })).status, "running", "the turn can end inside the window")
+end)
+
+test("held cast: another character's order in the window runs: only the caster is held", function()
+    held_heal(4)
+    tick(16)
+    osiv[key("IsCharacter", P2)] = 1
+    osiv[key("IsOnStage", P2)] = 1
+    osiv[key("IsInCombat", P2)] = 1
+    world[P2] = { pos = { -1, 0, 0 }, comps = { TurnBased = { IsActiveCombatTurn = true }, ActionResources = {
+        Resources = { Movement = { { Level = 0, Amount = 9 } } } } } }
+    local saved = Osi.DB_PartyMembers
+    Osi.DB_PartyMembers = { Get = function() return { { "S_Player_" .. P1 }, { "S_Player_" .. P2 } } end }
+    local j = job(op("move_to", { char = P2, target = NPC }))
+    Osi.DB_PartyMembers = saved
+    eq(j.status, "running", "not held " .. tostring(j.error))
+    failed_with(held_order(), "still resolving")
+end)
+
+test("held cast: a new prompt on the cast starts the bound again", function()
+    held_heal(4)
+    tick(134) -- 8 s unpaused
+    world[P1].comp_names = { PAUSED }
+    tick(5)
+    world[P1].comp_names = nil
+    tick(84) -- 5 s since that prompt closed, 13 s since the first
+    failed_with(held_order(), "still resolving")
+end)
+
+test("held cast: the refusal's words state the bound in the constant", function()
+    local bound = math.floor(A.HELD_RESOLVE_MS / 1000) .. " s"
+    assert(A.CAST_UNRESOLVED:find(bound, 1, true), A.CAST_UNRESOLVED)
+end)
+
+test("held cast: a hotbar cast countered with no prompt holds nothing: the game's own UI orders there", function()
+    combat_setup(9)
+    spell("Target_Bolt", { TargetRadius = "18", SpellType = "Target", Level = 0, UseCosts = "ActionPoint:1" })
+    world[NPC].pos = { 1.5, 0, 0 }
+    local j = job(op("cast", { char = P1, spell = "Target_Bolt", target = NPC, ui = true }))
+    eq(j.status, "running", "started " .. tostring(j.error))
+    A.dispatch("CastSpell", { P1, "Target_Bolt", "Target", "None", 0 })
+    j.cast_entity = { SpellCastOutcome = { Result = "Countered" } }
+    A.dispatch("CastSpellFailed", { P1, "Target_Bolt", "Target", "None", 0 })
+    eq(j.status, "failed", "ended " .. tostring(j.error))
+    assert(j.error:find("a reaction countered it", 1, true), j.error)
+    eq(#A.held_audits, 0, "no entry")
+end)
+
 test("held cast: an order that never began holds nothing back: read live, it doesn't run later", function()
     cast_seen = "none"
     local j = swing()
