@@ -362,3 +362,44 @@ test("held cast on a prompt: another spell's failed by the caster isn't this cas
     tick(math.ceil(A.HELD_RESOLVE_MS / 60) + 5)
     eq(res.SpellSlot[1].Amount, 3, "not this cast's")
 end)
+
+-- live.md 05:50 and S5 s5-l12-m1: a swing rolled and missed, a Riposte, Canceled, the action gone. Players see a miss.
+local function dice(total, dc, nat)
+    return { { type = "MeleeWeaponAttack", natural = nat or 5, total = total, dc = dc } }
+end
+local function canceled_swing(rolls)
+    local saved = BG3AI.RollLog -- the read itself is RollLog's own suite's
+    local entity = { SpellCastOutcome = { Result = "Canceled" } }
+    BG3AI.RollLog = { castDice = function(e)
+        eq(e, entity, "this cast's dice")
+        return rolls or {}
+    end }
+    local res, j = countered_slot("Canceled")
+    res.ActionPoint[1].Amount = 1 -- the game's
+    j.cast_entity = entity
+    A.dispatch("CastSpellFailed", { P1, "Target_SlotBolt", "Target", "None", 0 })
+    cast_outcome = nil
+    BG3AI.RollLog = saved
+    return j, res
+end
+
+test("Riposted miss: reads as any miss, done and no_damage, and charges nothing", function()
+    local j, res = canceled_swing(dice(16, 18))
+    eq(j.status, "done", "done " .. tostring(j.error))
+    eq(j.result.no_damage, true, "no_damage")
+    eq(j.result.cast, "Target_SlotBolt", "its cast")
+    eq(j.result.target.uuid, NPC, "its target")
+    tick(30)
+    eq(res.SpellSlot[1].Amount, 3, "Canceled stays uncharged")
+    eq(#A.held_audits, 0, "no entry")
+end)
+
+test("Riposted miss: a die at its dc, a natural 20 below it, or no die read, isn't called a miss", function()
+    for _, rolls in ipairs({ dice(18, 18), dice(16, 18, 20), false }) do
+        local j = canceled_swing(rolls or nil)
+        eq(j.status, "failed", "not a miss")
+        eq(j.error, string.format(A.CAST_CANCELED_SPENT, "action"), "the cost's words")
+        assert(not j.error:find("events", 1, true), "promises nothing: " .. j.error)
+        reset()
+    end
+end)

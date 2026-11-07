@@ -272,8 +272,7 @@ end
 -- Riposte, and the swing's cast ended CastSpellFailed, outcome Canceled, with the action gone. "The game refused the
 -- cast" was false. What of its cost the game took before a Canceled, or nil. A free Extra Attack has no cost to read:
 -- the status it spends goes on the cast.
-A.CAST_CANCELED_SPENT = "the game took the %s, then cancelled the cast (the game's Canceled); it wasn't refused:"
-    .. " what came of it shows in the events"
+A.CAST_CANCELED_SPENT = "the game took the %s, then cancelled the cast (the game's Canceled); it wasn't refused"
 function A.cost_taken(char, check)
     local spent = A.cost_spent(char, check)
     if spent then return spent end
@@ -661,6 +660,11 @@ reg("cast", function(args)
                 local spent = A.canceled_cost(job, char, check)
                 if spent then
                     job.stopping = true -- it went, so as with a finished cast its task may still be resolving
+                    if A.cast_missed(job) then
+                        RPC.finish_job(job, "done", { cast = spell, extra_attack = check.extra_attack, no_damage = true,
+                            target = targets[1] and { uuid = targets[1] } or nil })
+                        return
+                    end
                     RPC.finish_job(job, "failed", nil, string.format(A.CAST_CANCELED_SPENT, spent))
                     return
                 end

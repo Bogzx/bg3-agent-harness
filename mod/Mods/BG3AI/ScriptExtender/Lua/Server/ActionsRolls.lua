@@ -374,6 +374,19 @@ end
 -- so a countered cast's audit leaves it, whenever it comes.
 A.TURN_RESOURCES = { ActionPoint = true, BonusActionPoint = true, ReactionActionPoint = true, Movement = true }
 
+-- live.md 05:50, countered-read part 4: a Riposte's Canceled comes on a swing that rolled and missed: 10 of 10 dice
+-- read in the handler were below the dc. As a player sees: a miss. No die read, one at or over its dc, or a natural 20:
+-- not called a miss.
+function A.cast_missed(job)
+    local L = BG3AI.RollLog
+    local any = false
+    for _, d in pairs(job.cast_entity and L and L.castDice and L.castDice(job.cast_entity) or {}) do
+        if not (d.type:find("Attack") and d.total and d.dc and d.total < d.dc and d.natural ~= 20) then return false end
+        any = true
+    end
+    return any
+end
+
 -- countered-read part 1 (live.md, 2 of 2): countered on a prompt, the cast's CastSpellFailed comes after its job has
 -- ended, about +4.9 s from the answer, and its outcome reads Countered at that moment only: nil before and after. A
 -- decline has no such failed. From here the entry goes as hold_countered's does: its audit waits for the game's charge.
