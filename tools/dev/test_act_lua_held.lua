@@ -851,4 +851,7 @@ test("held cast: one failed ends every matching entry with a readable outcome", 
     A.held_cast_failed(P1, "Target_MainHandAttack")
     eq(a.failed, true, "older")
     eq(b.failed, true, "newer")
+    a.entity.SpellCastOutcome.Result = "Countered"
+    A.held_cast_failed(P1, "Target_MainHandAttack")
+    eq(a.countered, true, "h.failed only ends the words: what a cast pays reads as it did before")
 end)
