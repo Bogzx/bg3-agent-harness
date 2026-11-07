@@ -42,7 +42,7 @@ def _hold_reads(reads: list[tuple[int, dict]]) -> list[str]:
     spec = types.SimpleNamespace(name="t", turn_cap_s=90)
     for t, ui in reads:
         game.ui = ui
-        am._reaction_check(spec, game, ref, lambda m: None, hold, 1000.0 + t)
+        am._reaction_check(spec, game, ref, lambda m: None, hold, 1000.0 + t)  # type: ignore[arg-type]
     return [c for c in calls if c == "ui.react"]
 
 
@@ -123,19 +123,19 @@ def test_a_stall_with_a_hold_on_record_is_the_games_fault_not_the_acting_sides_f
 
 
 def test_only_the_gates_pause_words_read_as_a_pause():
-    def gate(reply: Exception | None) -> types.SimpleNamespace:
+    def paused(reply: Exception | None) -> bool:
         def rpc(op, args, side):
             assert (op, side) == ("guard.side_gate", "A")
             if reply is not None:
                 raise reply
             return {"ok": True}
 
-        return types.SimpleNamespace(rpc=rpc)
+        return am._paused(types.SimpleNamespace(rpc=rpc), "A")  # type: ignore[arg-type]
 
-    assert am._paused(gate(RuntimeError(HELD_REFUSAL)), "A") is True
-    assert am._paused(gate(RuntimeError("not your turn (side B is acting)")), "A") is False
-    assert am._paused(gate(TimeoutError("guard.side_gate: no answer")), "A") is False
-    assert am._paused(gate(None), "A") is False
+    assert paused(RuntimeError(HELD_REFUSAL)) is True
+    assert paused(RuntimeError("not your turn (side B is acting)")) is False
+    assert paused(TimeoutError("guard.side_gate: no answer")) is False
+    assert paused(None) is False
 
 
 @pytest.mark.parametrize("how", ["raises", "job_failed"])
