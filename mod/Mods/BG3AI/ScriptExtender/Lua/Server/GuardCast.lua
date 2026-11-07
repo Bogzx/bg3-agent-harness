@@ -589,12 +589,14 @@ end
 -- casts, spending and the turn's end with no order, in a match and in normal play; the HUD's "Can't control: Goaded",
 -- its End Turn click ignored, hotbar cells can_use false). -> {name = the status, when one on it carries the stats'
 -- LoseControl flag and a player sees it on the character (V.statuses' filter)}, or nil. The one place this rule lives.
--- It reads the game's own state: eoc::status::LoseControlComponent present by entity, which came and went with the
--- game's turns on every sample of 5 statuses (live.md "## Goaded read 2"). Never its LoseControl bool, false under
--- Command: Approach and Confusion while the game's AI ran, nor the stats' flag (45 statuses, effect unread). Every
--- status counts: under Compelled Duel an order once ran as ordered, but a player's hotbar is grey (orchestrator D319).
--- A status arriving mid-turn reads the same.
+-- It reads the game's own state: eoc::status::LoseControlComponent present by entity, which lasts as long as the status
+-- (added at its apply, removed at its end, across other characters' turns; present on every sample of 5 statuses,
+-- live.md "## Goaded read" and "## Goaded read 2"). Never its LoseControl bool, false under Command: Approach and
+-- Confusion while the game's AI ran, nor the stats' flag (45 statuses, effect unread). Every status counts: under
+-- Compelled Duel an order once ran as ordered, but a player's hotbar is grey (orchestrator D319). A status arriving
+-- mid-turn reads the same. In combat only: every read was of a combat turn (REVIEW-reactions F1, orchestrator D321).
 function G.lost_control(char)
+    if not G.in_combat(char) then return nil end
     local e = G.entity(char)
     if not (e and U.comp(e, "StatusLoseControl")) then return nil end
     local V = BG3AI.Visibility

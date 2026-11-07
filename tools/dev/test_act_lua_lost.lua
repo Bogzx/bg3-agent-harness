@@ -221,3 +221,21 @@ test("lost control: the DISABLED entry carries the same words on the status's ow
         eq(d[1].effect, WORDS, "the words")
     end)
 end)
+
+-- REVIEW-reactions F1: every read was of a combat turn; out of combat the component on changes nothing, an order runs
+-- as before this rule, and back in combat it is refused again.
+test("lost control: out of combat the component changes nothing, an order runs as before", function()
+    withGoaded(function()
+        osiv[key("IsInCombat", P1)] = nil
+        eq(G.lost_control(P1), nil, "not lost out of combat")
+        local m0 = #called("CharacterMoveToPosition")
+        local j = job(op("move_to", { char = P1, target = NPC }))
+        eq(j.error ~= WORDS, true, "move not refused in the lost words")
+        eq(#called("CharacterMoveToPosition") > m0, true, "the walk is sent")
+        eq((pcall(G.osi, "CharacterMoveToPosition", P1, 0, 0, 0)), true, "G.osi lets it through")
+        osiv[key("IsInCombat", P1)] = 1
+        eq(G.lost_control(P1) ~= nil, true, "in combat: lost again")
+        local ok, err = pcall(G.osi, "CharacterMoveToPosition", P1, 0, 0, 0)
+        eq(ok == false and G.is_refusal(err) and err.reason, WORDS, "in combat: refused")
+    end)
+end)

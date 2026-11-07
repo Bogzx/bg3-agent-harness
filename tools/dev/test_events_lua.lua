@@ -91,9 +91,18 @@ end
 -- live.md "## Goaded read": an own cast in a turn the game runs is tagged for its side; an enemy's isn't.
 do
     local saved = BG3AI.Guard
-    BG3AI.Guard = { lost_control = function() return {} end }
+    local active, ended = true, false
+    BG3AI.Guard = { lost_control = function() return {} end, tb_flags = function() return active, ended end }
     listeners.CastedSpell("S_Player_" .. SH, "Target_FireBolt", "", "", 0)
     check("own cast in the game's turn: tagged", last("cast").turn == "game's", last("cast").turn)
+    -- REVIEW-reactions N1: a reaction the side answers on the other side's turn is neither its turn nor the game's
+    active = false
+    listeners.CastedSpell("S_Player_" .. SH, "Target_FireBolt", "", "", 0)
+    check("own cast, its turn not open: untagged", last("cast").turn == nil, last("cast").turn)
+    active, ended = true, true -- ended, its group still open (a shared group): a reaction, not the game's turn
+    listeners.CastedSpell("S_Player_" .. SH, "Target_FireBolt", "", "", 0)
+    check("own cast, its turn ended: untagged", last("cast").turn == nil, last("cast").turn)
+    ended = false
     listeners.CastedSpell("Goblin_" .. GOB, "Projectile_GOB_SecretHint", "", "", 0)
     check("enemy cast: never tagged", last("cast").turn == nil, last("cast").turn)
     BG3AI.Guard = nil
