@@ -25,9 +25,9 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   spell. With the same id the job read `the game refused the cast (no reason given)` and our purge followed: 2 of 12
   melee swings by the switch lost their attack, the first swing's id differing and so harmless. With the failed
   dropped the swing landed, 2 of 2, through a test-only wrap; the fix itself has no live stray yet. A real failure with
-  no outcome now ends at the no-start bound, in the same words: 3 s in combat; 8 s out of combat, for a jump, or where
-  the range is unknown. An order behind a held swing, with its own cast state and no outcome, now stays up through the
-  held swing's CastSpellFailed, which ended it before (the held-cast entry below); by the fake, unread live. A hover
+  no outcome now ends at the no-start bound, in the same words: 3 s in combat; 8 s out of combat or for a jump. An order
+  behind a held swing, with its own cast state and no outcome, now stays up through the held swing's CastSpellFailed,
+  which ended it before (the held-cast entry below); by the fake, unread live. A hover
   preview's cast state is no longer taken as the order's; by reading, nothing seen.
 
 ## 2026-11-07: a countered cast pays as a player's does, and a swing a Riposte answered reads as a miss
