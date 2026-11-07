@@ -159,6 +159,13 @@ class Bg3leStale(Exception):  # noqa: N818  (play.py's names)
     fixes itself, so no retry loop may swallow it; the runner stops until tools/build_bg3le.sh is run."""
 
 
+class StatsPoolsMissing(Bg3leStale):
+    """This launch's bg3le log shows Ext.Stats without its pools (LaunchWatch.stats_problem): GUID, Float and
+    TranslatedString attributes would read or write wrongly, with nothing telling the mod. A Bg3leStale, not a
+    LaunchBlocked: no relaunch loop, a build that doesn't find the pools needs a fix, and a build that finds them
+    only sometimes must not get another try (the game is killed; the runner stops)."""
+
+
 class LaunchGaveUp(Exception):  # noqa: N818  (play.py's names)
     """LAUNCH_ATTEMPTS launches in a row died before the save played: the runner stops (not a RuntimeError, so no
     retry loop swallows it)."""
@@ -402,15 +409,28 @@ def crash_reporter_pids() -> list[int]:
     return out
 
 
+STATS_SCAN = b" stats via the rarity run"  # bg3le's build_from_run: every scan's first line, cached or not
+STATS_MISSING = (  # what a scan logs when a pool isn't there, or when attributes stay off
+    b"stats: no string pool found",
+    b"stats: no float pool found",
+    b"stats: no guid pool found",
+    b"stats: no translated string pool found",
+    b"stats: attributes unavailable",
+)
+
+
 class LaunchWatch:
     """Fast crash detection for one launch, polled by Runner.wait_for(). Dead when: a bg3le log of this launch's stamp
     (runtime/logs/bg3le-<stamp>.log.<pid>) has a `crash:` line or was written by LinuxCrashReporter; a game crash
-    reporter runs; bg3 was up and is gone; or bg3 is up but port 9998 has refused for PORT_DEAD_S s."""
+    reporter runs; bg3 was up and is gone; or bg3 is up but port 9998 has refused for PORT_DEAD_S s. The same read
+    keeps what the last stats scan logged (stats_problem)."""
 
     def __init__(self, stamp: str, logs: Path, started: float | None = None, port_dead_s: float = PORT_DEAD_S):
         self.stamp, self.logs, self.port_dead_s = stamp, logs, port_dead_s
         self.started = time.time() if started is None else started
         self.offsets: dict[str, int] = {}
+        self.stats_scanned = False
+        self.stats_missing: list[str] = []  # the last scan's
         self.bg3_since: float | None = None
         self.port_ok_at: float | None = None
 
@@ -431,7 +451,23 @@ class LaunchWatch:
                     return line.split(b"] ", 1)[-1].decode(errors="replace").strip()[:200]
                 if b"host is LinuxCrashReporter" in line:
                     return f"LinuxCrashReporter started ({f.name})"
+                if STATS_SCAN in line:
+                    self.stats_scanned, self.stats_missing = True, []
+                elif any(m in line for m in STATS_MISSING):
+                    self.stats_missing.append(line.split(b"] ", 1)[-1].decode(errors="replace").strip()[:200])
         return None
+
+    def stats_problem(self) -> str | None:
+        """Why this launch's Ext.Stats can't be trusted, from its bg3le log: the last scan missed a pool, or no scan
+        ran. A scan comes before the Menu state and another before Running (all 623 kept logs that reached Running,
+        2026-11-06), so a game at either has its answer in the log. A crash in the lines read here is a GameDied, as
+        in wait_for: this read moves the offset, so no later poll would see it."""
+        crash = self.log_crash()
+        if crash:
+            raise GameDied(f"bg3le logged {crash}")
+        if not self.stats_scanned:
+            return "bg3le logged no stats scan"
+        return "; ".join(self.stats_missing) or None
 
     def check(self, now: float | None = None) -> str | None:
         now = time.time() if now is None else now
