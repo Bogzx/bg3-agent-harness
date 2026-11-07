@@ -10,7 +10,7 @@ import time
 import traceback
 
 from bg3harness import bg3le_buildinfo, runs
-from bg3harness.game.io import Bg3leStale, LaunchBlocked, LaunchGaveUp, SteamNotOffline
+from bg3harness.game.io import Bg3leStale, LaunchBlocked, LaunchGaveUp, StatsPoolsMissing, SteamNotOffline
 from bg3harness.runner import codewatch as rcode
 from bg3harness.runner import env as renv
 from bg3harness.runner import policy as rpolicy
@@ -185,6 +185,10 @@ class LoopSide:
             self.give_up_launch(e)
             stop_why = "gave up: the game crashes on every launch"
             outcome = "gave_up"
+            return 1
+        except StatsPoolsMissing as e:  # before Bg3leStale: a rebuild doesn't fix this one
+            stop_why = f"bg3le can't read this launch's stats: {e}"[:300]
+            outcome, self.fatal = "gave_up", True
             return 1
         except Bg3leStale as e:
             stop_why = f"stale bg3le build: run {bg3le_buildinfo.REBUILD} ({e})"[:300]

@@ -20,7 +20,24 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import testenv  # noqa: F401  (first: the game's profile folders are a temp dir before play)
 from bg3harness.runner import env as renv
-from test_crash import FakeRunBase
+from test_crash import FAKE_LAUNCH, FakeRunBase
+
+
+class StatsRefusal(FakeRunBase):
+    def test_a_launch_without_pools_stops_the_runner_and_names_no_rebuild(self):
+        bad = self.tmp / "launch_no_pools.sh"
+        bad.write_text(FAKE_LAUNCH.replace('at 0x3"', 'at 0x3\n[ 1.1] stats: no guid pool found; GUID"'))
+        bad.chmod(0o755)
+        renv.LAUNCH_SH = bad
+        r = self.r
+        r.check_memory = lambda: None
+        r.code_update_check = lambda: None
+        self.assertEqual(r.run(), 1)
+        log = (renv.RUNTIME / "runner.log").read_text()
+        self.assertEqual(log.count("REFUSING TO PLAY"), 1)  # one launch: no relaunch
+        self.assertIn("runner stopped (bg3le can't read this launch's stats: stats: no guid pool found", log)
+        self.assertNotIn("tools/build_bg3le.sh", log)
+        self.assertFalse(self.claude_log.exists())
 
 
 class OperatorStop(FakeRunBase):
