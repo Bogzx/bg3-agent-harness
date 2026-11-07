@@ -114,16 +114,35 @@ test("a nothing-to-write kit replicates nothing (arena-v0's Fighter and Rogue)",
     eq(#replicated, 0, "no write")
 end))
 
-test("a container spell's variants are found by their originator", guarded(function()
+test("an upcast row is found by its originator", guarded(function()
     twins()
     for _, u in ipairs({ T1, T2 }) do
-        book(u, { row("Projectile_Orb_Cold", "Osiris", "None", "Projectile_Orb"),
+        book(u, { row("Projectile_Orb_2", "Osiris", "None", "Projectile_Orb"),
             row("Projectile_Orb", "Osiris", "None") })
     end
     local j = start({ spell_abilities = { Projectile_Orb = "Intelligence" } })
     runJob(j)
     eq(j.status, "done", tostring(j.error))
-    eq(world[T1].comps.SpellBook.Spells[1].SpellCastingAbility, "Intelligence", "the variant")
+    eq(world[T1].comps.SpellBook.Spells[1].SpellCastingAbility, "Intelligence", "the upcast")
+end))
+
+test("a container's variant, its own originator, and its upcast take the container's ability", guarded(function()
+    twins()
+    for _, u in ipairs({ T1, T2 }) do
+        book(u, { row("Target_Curse_Wis", "Osiris", "None"),
+            row("Target_Curse_Wis_4", "Osiris", "None", "Target_Curse_Wis"),
+            row("Target_Curse", "Osiris", "None"), row("Target_Other", "Osiris", "None") })
+    end
+    local keep = G.container_of
+    G.container_of = function(id) return id == "Target_Curse_Wis" and "Target_Curse" or nil end
+    local j = start({ spell_abilities = { Target_Curse = "Charisma" } })
+    runJob(j)
+    G.container_of = keep
+    eq(j.status, "done", tostring(j.error))
+    local rows = world[T1].comps.SpellBook.Spells
+    eq(rows[1].SpellCastingAbility, "Charisma", "the variant")
+    eq(rows[2].SpellCastingAbility, "Charisma", "its upcast")
+    eq(rows[4].SpellCastingAbility, "None", "a spell of no container stays as it is")
 end))
 
 test("a kit's spell that lands late is written when it does; one that never lands fails naming it", guarded(function()
@@ -181,6 +200,42 @@ test("reference: one boost read two ways is one boost, in either direction", fun
         { boosts = { "ActionResource|||", "IncreaseMaxHP|||" } })
     eq(d.ok, true, Ar.Symmetry.diff_text(d))
 end)
+
+test("reference: a kit's unlock row is left out by its exact form; any other UnlockSpell row still counts", function()
+    local slot = "d136c5d9-0ff0-43da-acce-a74a07f8d6bf"
+    local kitRow = "UnlockSpell|UnlockSpell|Target_Bane,AddChildren," .. slot .. ",,Charisma|"
+    local d = diff({ boosts = { kitRow, "UnlockSpell|UnlockSpell|Target_PommelStrike|" } },
+        { boosts = { "UnlockSpell|||" } })
+    eq(d.ok, true, Ar.Symmetry.diff_text(d))
+    for _, other in ipairs({ "UnlockSpell|UnlockSpell|Target_Bane|",
+        "UnlockSpell|UnlockSpell|Target_Bane,MostPowerful," .. slot .. ",,Charisma|",
+        "UnlockSpell|UnlockSpell|Target_Bane,AddChildren,e9127b70-22b7-42a1-b172-d02f828f260a,,Charisma|",
+        "UnlockSpell|UnlockSpell|Target_Bane,AddChildren," .. slot .. ",UntilRest,Charisma|", "UnlockSpell|||" }) do
+        d = diff({ boosts = { other } }, { boosts = {} })
+        eq(d.ok, false, other .. " is no kit unlock")
+    end
+    d = diff({ boosts = {} }, { boosts = { "UnlockSpell|||" } })
+    eq(d.ok, false, "a reference's own row still has to be on the twin")
+end)
+
+test("unlocks: the spell goes in by its boost on both twins, the kit's other spells by AddSpell", guarded(function()
+    twins()
+    for _, u in ipairs({ T1, T2 }) do book(u, { row("Target_Bane", "Boost", "Charisma") }) end
+    local j = start({ unlocks = { Target_Bane = "Charisma" },
+        grants = { spells = { "Target_Bane", "Target_DancingLights" } } })
+    runJob(j)
+    eq(j.status, "done", tostring(j.error))
+    local boost = Ar.Symmetry.unlock_boost("Target_Bane", "Charisma")
+    eq(boost, "UnlockSpell(Target_Bane,AddChildren,d136c5d9-0ff0-43da-acce-a74a07f8d6bf,,Charisma)",
+        "the Land rows' form")
+    local boosts, added = {}, {}
+    for _, c in ipairs(j.result.calls) do
+        if c[1] == "AddBoosts" and c[3] == boost then boosts[#boosts + 1] = c[2] end
+        if c[1] == "AddSpell" then added[#added + 1] = c[3] end
+    end
+    eq(enc(boosts), enc({ T1, T2 }), "one boost a twin")
+    eq(enc(added), enc({ "Target_DancingLights", "Target_DancingLights" }), "no AddSpell for the unlocked spell")
+end))
 
 test("reference: weapon_action_dc passes by its exact row only (D148); any other value on either side fails", function()
     local accepted = { { field = "derived", only_twin = { "weapon_action_dc=8" },

@@ -8,7 +8,7 @@
  "karmic": false,
  "round_cap": 20,
  "wall_cap_min": 60.0,
- "turn_cap_s": 60,
+ "turn_cap_s": 90,
  "condition": "rules",
  "tools_off": "arena-v1",
  "name": "builds-l5-4v4-team2-v1",
@@ -167,6 +167,9 @@
       "passives_removed": [
        "RageUnlock"
       ]
+     },
+     "spell_abilities": {
+      "Shout_SpeakWithAnimals_Barbarian": "Charisma"
      }
     }
    },
@@ -338,6 +341,40 @@
       "passives_removed": [
        "BardicInspiration"
       ]
+     },
+     "spell_abilities": {
+      "Target_ViciousMockery": "Charisma",
+      "Target_TrueStrike": "Charisma",
+      "Target_HealingWord": "Charisma",
+      "Target_CureWounds": "Charisma",
+      "Target_Heroism": "Charisma",
+      "Target_FaerieFire": "Charisma",
+      "Target_Bane": "Charisma",
+      "Target_Silence": "Charisma",
+      "Shout_BladeWard": "Charisma",
+      "Target_Blindness": "Charisma",
+      "Zone_Fear": "Charisma",
+      "Target_HealingWord_2": "Charisma",
+      "Target_HealingWord_3": "Charisma",
+      "Target_CureWounds_2": "Charisma",
+      "Target_CureWounds_3": "Charisma",
+      "Target_Heroism_2": "Charisma",
+      "Target_Heroism_3": "Charisma",
+      "Target_FaerieFire_2": "Charisma",
+      "Target_FaerieFire_3": "Charisma",
+      "Target_Bane_2": "Charisma",
+      "Target_Bane_3": "Charisma",
+      "Target_Silence_3": "Charisma",
+      "Target_Blindness_3": "Charisma"
+     },
+     "unlocks": {
+      "Target_HealingWord": "Charisma",
+      "Target_CureWounds": "Charisma",
+      "Target_Heroism": "Charisma",
+      "Target_FaerieFire": "Charisma",
+      "Target_Bane": "Charisma",
+      "Target_Silence": "Charisma",
+      "Target_Blindness": "Charisma"
      }
     }
    },
@@ -475,7 +512,48 @@
        "ArcaneWard",
        "ArcaneWard_Cast"
       ],
-      "spells": []
+      "spells": [
+       "Shout_ArcaneRecovery_2",
+       "Shout_ArcaneRecovery_3"
+      ]
+     },
+     "spell_abilities": {
+      "Projectile_FireBolt": "Intelligence",
+      "Projectile_RayOfFrost": "Intelligence",
+      "Target_ShockingGrasp": "Intelligence",
+      "Projectile_MagicMissile": "Intelligence",
+      "Shout_Shield_Wizard": "Intelligence",
+      "Target_MageArmor": "Intelligence",
+      "Projectile_RayOfSickness": "Intelligence",
+      "Zone_BurningHands": "Intelligence",
+      "Projectile_ScorchingRay": "Intelligence",
+      "Target_MistyStep": "Intelligence",
+      "Target_ChillTouch": "Intelligence",
+      "Projectile_Fireball": "Intelligence",
+      "Target_Counterspell": "Intelligence",
+      "Projectile_MagicMissile_2": "Intelligence",
+      "Projectile_MagicMissile_3": "Intelligence",
+      "Shout_Shield_Wizard_2": "Intelligence",
+      "Shout_Shield_Wizard_3": "Intelligence",
+      "Target_MageArmor_2": "Intelligence",
+      "Target_MageArmor_3": "Intelligence",
+      "Projectile_RayOfSickness_2": "Intelligence",
+      "Projectile_RayOfSickness_3": "Intelligence",
+      "Zone_BurningHands_2": "Intelligence",
+      "Zone_BurningHands_3": "Intelligence",
+      "Projectile_ScorchingRay_3": "Intelligence",
+      "Target_MistyStep_3": "Intelligence",
+      "Shout_ArcaneRecovery_2": "Intelligence",
+      "Shout_ArcaneRecovery_3": "Intelligence"
+     },
+     "unlocks": {
+      "Projectile_MagicMissile": "Intelligence",
+      "Shout_Shield_Wizard": "Intelligence",
+      "Target_MageArmor": "Intelligence",
+      "Projectile_RayOfSickness": "Intelligence",
+      "Zone_BurningHands": "Intelligence",
+      "Projectile_ScorchingRay": "Intelligence",
+      "Target_MistyStep": "Intelligence"
      }
     }
    },
@@ -639,6 +717,22 @@
       "boosts": "Ability(Dexterity,2)",
       "passives": [],
       "spells": []
+     },
+     "spell_abilities": {
+      "Target_DancingLights": "Charisma",
+      "Target_HuntersMark": "Wisdom",
+      "Target_CureWounds": "Wisdom",
+      "Projectile_EnsnaringStrike_Container": "Wisdom",
+      "Target_Barkskin": "Wisdom",
+      "Target_HuntersMark_2": "Wisdom",
+      "Target_CureWounds_2": "Wisdom",
+      "Projectile_EnsnaringStrike_2": "Wisdom",
+      "Target_EnsnaringStrike_2": "Wisdom"
+     },
+     "unlocks": {
+      "Target_HuntersMark": "Wisdom",
+      "Target_CureWounds": "Wisdom",
+      "Projectile_EnsnaringStrike_Container": "Wisdom"
      }
     }
    }

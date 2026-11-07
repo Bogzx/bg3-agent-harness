@@ -66,7 +66,10 @@ end
 -- takes its fade-in template and stays frozen at LevelUpStep=Started: no animations, no skip input, nothing
 -- hit-testable (live 2026-10-10, Wyll L4 after swap_party: fade=true at open, 226-326 probes never hovered a
 -- button; S018/S021 likewise). So the page is opened only once the fade is over.
-P.INTRO_WAIT_MS = 5000     -- a Started page of this character this long before it counts as frozen
+-- A Started page of this character this long before it counts as frozen. The intro's end lives in the overview tab's
+-- template (CharacterLevelUp.xaml: 2 s, then 0.5 s for each of up to 13 items, 0.7 s more), so choosing a tab before it
+-- ends drops that template and the banner stays over a page with no panels (live L5, Wizard 2: 5 s wasn't enough).
+P.INTRO_WAIT_MS = 15000
 P.CLOSE_GIVEUP_MS = 6000   -- a close (button + ESCAPE) ignored this long: use this character's page as it is
 
 function P.screenFade()
@@ -291,6 +294,15 @@ RPC.register("ui.level_up_options", function(args)
     return o
 end)
 
+-- On a tab the stages choose, not the overview: the spell sub-tabs show under levelupTab only (CCLib_k.xaml subTabs).
+local function offOverview()
+    for _, t in ipairs({ "featTab", "subClassTab", "deityTab" }) do
+        local el = UI.cachedByName("CharacterLevelUp", t)
+        if el ~= nil and UI.prop(el, "IsSelected") == true then return true end
+    end
+    return false
+end
+
 -- ui.level_up {uuid, plan = {class?, subclass?, deity?, feat?, abilities? = {Str=1, Dex=1} | {Dex=2},
 --              skills?, expertise?, passives?, passive_lists?, cantrips?, spells?, allow_defaults?}, finish? = true}
 -- Subclass levels (Wizard 2, Druid 2, most others 3) need plan.subclass unless the page already shows one or
@@ -402,7 +414,7 @@ RPC.register("ui.level_up", function(args)
                 return "next", 1500
             end
             return "wait", 300
-        end, 25000 },
+        end, 40000 }, -- an intro, a close, a reopen and its intro; the tool waits 60 s
         { "class_tab", tabStage(ctx, "classTab") },
         { "class", function()
             local dc = get()
@@ -573,8 +585,8 @@ RPC.register("ui.level_up", function(args)
         { "passives", passivesStage(get, ctx, plan.passives, plan.allow_defaults) },
         { "passives?", passivesReport(get, ctx) },
         { "levelup_tab", function()
-            -- Back to the level-up overview (its spell sub-tabs) after the feat tab, as a player would.
-            if UI.prop(get(), "CanSelectFeat") == true and selectTab(ctx.widget, "levelupTab") then return "next", 450 end
+            -- Back to the level-up overview (its spell sub-tabs) after the other tabs, as a player would.
+            if offOverview() and selectTab(ctx.widget, "levelupTab") then return "next", 450 end
             return "next", 0
         end },
         { "spells", spellsStage("CharacterLevelUp", get, ctx, plan.spells, plan.cantrips) },
@@ -713,10 +725,10 @@ function P.showFeatSelector(w, sel)
     return false, false
 end
 
--- Class/race selectors are sub-tabs of the level-up overview. On a feat level the feat tab was shown last and its
--- panel (and the LeftPanels centring, which depends on the panel width) moves everything: back to the overview first.
+-- Class/race selectors are sub-tabs of the level-up overview. On a feat or subclass level another tab was shown last
+-- and its panel (and the LeftPanels centring, which depends on the panel width) moves everything: back to the overview.
 local function showClassSelector(w, sel)
-    if tabSelected("featTab") then
+    if offOverview() then
         local ok = selectTab("CharacterLevelUp", "levelupTab")
         return ok == true, ok == true
     end
@@ -782,40 +794,48 @@ RPC.register("ui.level_up_spell_probe", function(args)
         local lu = UI.findAll(w, function(e) return UI.name(e) == "levelUp" end, { prune = true, hidden = true, max = 80000 })[1]
         out.hit_set = lu ~= nil and set(lu, "IsHitTestVisible", true) or false
     end
+    local mine = {}
+    local pool = args.remove and "Additions" or "Available"
+    for _, it in ipairs(list(UI.prop(s.sel, pool))) do mine[tostring(it)] = true end
+    local buttons = args.remove and PICK_BUTTONS or SPELL_BUTTONS
+    local function isButton(e) return buttons[UI.name(e) or ""] == true end
+    local function scan()
+        local n = 0
+        for _, b in ipairs(UI.findAll(w, isButton, { prune = true, max = 80000 })) do
+            local it = buttonItem(b)
+            if it ~= nil and mine[tostring(it)] then
+                n = n + 1
+                local over = UI.prop(b, "IsMouseOver") == true
+                if over then out.hovered = n end
+                if same(it, item) then
+                    out.index = n
+                    out.over = over
+                    out.enabled = UI.prop(b, "IsEnabled") ~= false
+                    local cp = UI.prop(b, "TemplatedParent")
+                    local cw, ch = tonumber(UI.prop(cp, "ActualWidth")) or 0, tonumber(UI.prop(cp, "ActualHeight")) or 0
+                    out.cell = { w = cw, h = ch }
+                    local panel = cp and try(function() return cp.VisualParent end)
+                    local pw = tonumber(UI.prop(panel, "ActualWidth")) or 0
+                    out.cols = (cw > 0 and pw >= cw) and math.floor(pw / cw + 0.01) or 1
+                    out.in_list = UI.prop(panel, "IsMouseOver") == true
+                    out.near = nearness(cp)
+                end
+            end
+        end
+        out.n = n
+        return out.index ~= nil
+    end
+    -- On these pages a sub-tab clears its own selection as it opens its panel (CCLib_k.xaml: subTabsSpellsList sets
+    -- gameplaySubPanel's Tag, and a Tag change sets its SelectedIndex to -1), so IsSelected never says the selector is
+    -- showing; live L5 launch 2 probed 16 times, each a switch. The button being there says it.
+    if pg and scan() then return out end
     local tabOk, switched
     if s.source == "FeatDetails" then tabOk, switched = P.showFeatSelector(w, s.sel)
     elseif pg then tabOk, switched = showPageSelector(pg, w, s.sel)
     else tabOk, switched = showClassSelector(w, s.sel) end
     if switched then out.switched = true return out end
     if not tabOk then out.tab = "no sub-tab for this selector" end
-    local mine = {}
-    local pool = args.remove and "Additions" or "Available"
-    for _, it in ipairs(list(UI.prop(s.sel, pool))) do mine[tostring(it)] = true end
-    local buttons = args.remove and PICK_BUTTONS or SPELL_BUTTONS
-    local n = 0
-    local function isButton(e) return buttons[UI.name(e) or ""] == true end
-    for _, b in ipairs(UI.findAll(w, isButton, { prune = true, max = 80000 })) do
-        local it = buttonItem(b)
-        if it ~= nil and mine[tostring(it)] then
-            n = n + 1
-            local over = UI.prop(b, "IsMouseOver") == true
-            if over then out.hovered = n end
-            if same(it, item) then
-                out.index = n
-                out.over = over
-                out.enabled = UI.prop(b, "IsEnabled") ~= false
-                local cp = UI.prop(b, "TemplatedParent")
-                local cw, ch = tonumber(UI.prop(cp, "ActualWidth")) or 0, tonumber(UI.prop(cp, "ActualHeight")) or 0
-                out.cell = { w = cw, h = ch }
-                local panel = cp and try(function() return cp.VisualParent end)
-                local pw = tonumber(UI.prop(panel, "ActualWidth")) or 0
-                out.cols = (cw > 0 and pw >= cw) and math.floor(pw / cw + 0.01) or 1
-                out.in_list = UI.prop(panel, "IsMouseOver") == true
-                out.near = nearness(cp)
-            end
-        end
-    end
-    out.n = n
+    scan()
     return out
 end)
 

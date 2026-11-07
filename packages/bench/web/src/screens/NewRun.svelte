@@ -6,7 +6,7 @@
   import TableWrap from "../lib/TableWrap.svelte";
   import { api } from "../lib/api";
   import { usd } from "../lib/format";
-  import { formProblems, minutes, startProblem, youtubeNote } from "../lib/run";
+  import { formProblems, minutes, startProblem, ticketNote, youtubeNote } from "../lib/run";
   import type { FoundMatrix, Plan, PlanForm, ProfileRow, RunState, ScenarioRow } from "../lib/types";
 
   let profiles = $state<ProfileRow[]>([]);
@@ -27,6 +27,7 @@
 
   const problems = $derived(formProblems(form, profiles));
   const note = $derived(plan ? youtubeNote(plan.youtube) : null);
+  const ticket = $derived(plan ? ticketNote(plan.ticket) : null);
   const startWhy = $derived(canStart ? startProblem(plan, !!running?.running || !!found) : "this panel starts no run");
 
   onMount(() => {
@@ -144,6 +145,7 @@
       <h2>Plan <span class="right">{plan.jobs.length} jobs · reserve {usd(plan.reserve_usd)}</span></h2>
       <div class="body">
         {#if note}<div class="note" role="alert">{note}</div>{/if}
+        {#if ticket}<div class="note" aria-label="Tickets">{ticket}</div>{/if}
         {#if plan.budget.error}
           <div class="note bad">Budget {plan.budget.file}: {plan.budget.error}. Nothing starts without a budget file.</div>
         {:else}

@@ -390,6 +390,7 @@ def kit_plan(
     choices: list[dict[str, Any]] = []
     grants: dict[str, list[str]] = {"boosts": [], "passives": [], "passives_removed": [], "spells": []}
     pool: list[str] = []  # spells a preparer prepares from (no AlwaysPrepared flag)
+    class_spells: list[str] = []  # what the class rows' AddSpells give: the game's, its upcasts the kit's
     abilities: dict[str, str] = {}  # spell -> its ability: AddSpell gives none, ArenaMirror writes the rows
     improvements = kit.get("improvements") or []
     if not isinstance(improvements, list):
@@ -416,8 +417,10 @@ def kit_plan(
                     grants["spells"] += ids
                     if spell_ab := _row_ability(args, 2) or c["casting"]:
                         abilities.update(dict.fromkeys(ids, spell_ab))
-                elif not (len(args) > 4 and args[4] == "AlwaysPrepared"):
-                    pool += _spells_of(args[0], static)
+                else:
+                    class_spells += _spells_of(args[0], static)
+                    if not (len(args) > 4 and args[4] == "AlwaysPrepared"):
+                        pool += _spells_of(args[0], static)
                 continue
             if name == "ReplacePassives":  # the game offers a swap of an earlier pick: a build keeps its pick
                 continue
@@ -528,6 +531,12 @@ def kit_plan(
         spell_ab = x.pop("ability", None) or c["casting"]
         if x["kind"] == "spells" and spell_ab:
             abilities.update(dict.fromkeys(x["ids"], spell_ab))
+    upcast = _upcasts([*abilities, *class_spells], rows, static)
+    # A class row's spell is the game's, so only its upcasts can be added; the kit's own goes in with them by one boost
+    grants["spells"] += [x for x, spell in upcast.items() if spell in class_spells]
+    unlocks = {spell: abilities[spell] for spell in upcast.values() if spell not in class_spells}
+    for entry, spell in upcast.items():
+        abilities[entry] = abilities.get(spell) or c["casting"]
     out_kit: dict[str, Any] = {
         "race": rpart,
         "player": {"passives": player},
@@ -549,7 +558,18 @@ def kit_plan(
         out_kit["prepared"] = list(prepared)
     if abilities:
         out_kit["spell_abilities"] = abilities
+    if unlocks:
+        out_kit["unlocks"] = unlocks
     return {"race": race, "kit": out_kit}
+
+
+def _upcasts(held: list[str], rows: list[dict[str, Any]], static: dict[str, Any]) -> dict[str, str]:
+    """{entry: its spell}: what `held` spells have at the slots these rows open. A character's book gets those rows from
+    the game (live L5 S4); AddSpell gives a copy the one id it names."""
+    boosts = ";".join(r["row"].get("Boosts") or "" for r in rows)
+    top = max(map(int, re.findall(r"ActionResource\(SpellSlot,\d+,(\d+)\)", boosts)), default=0)
+    table = static["upcasts"]
+    return {x: sid for sid in held for p, ids in table.get(sid, {}).items() if int(p) <= top for x in ids}
 
 
 def race_plan(

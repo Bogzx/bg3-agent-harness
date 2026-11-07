@@ -466,6 +466,29 @@ test("a spells choice asks the game's SpellList set per pick, never walks it: th
         end)
     end))
 
+test("a spells choice's unlocked pick goes in by its boost, the other by AddSpell, as real kits' picks do",
+    guarded(function()
+        twin(T1)
+        twin(T2)
+        local spells = { kind = "spells", list = "cantrips", n = 2, exact = true,
+            ids = { "Target_FireBolt", "Target_RayOfFrost" } }
+        capped(function()
+            local r = Ar.Mirror.kit({ twins = { T1, T2 }, race = HALFELF,
+                kit = kit({ choices = { spells }, unlocks = { Target_FireBolt = "Intelligence" } }) })
+            local j = RPC.jobs[r.job]
+            runJob(j)
+            eq(j.status, "done", "job: " .. tostring(j.error))
+        end)
+        eq(enc(named("AddSpell")), enc({ { "AddSpell", T1, "Target_RayOfFrost", 0, 1 },
+            { "AddSpell", T2, "Target_RayOfFrost", 0, 1 } }), "only the other pick")
+        local boost = Ar.Symmetry.unlock_boost("Target_FireBolt", "Intelligence")
+        local got = {}
+        for _, c in ipairs(named("AddBoosts")) do
+            if c[3] == boost then got[#got + 1] = c[2] end
+        end
+        eq(enc(got), enc({ T1, T2 }), "the boost on both twins")
+    end))
+
 test("a list that can't be checked fails closed naming it: an element that doesn't read, a set that answers no bool",
     guarded(function()
         twin(T1)

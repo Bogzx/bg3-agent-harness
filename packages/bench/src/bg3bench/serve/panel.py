@@ -24,7 +24,7 @@ from typing import Any, Protocol, cast
 from bg3harness import doctor as hdoctor
 from bg3harness import profiles as hprofiles
 
-from bg3bench import conditions, matrix, scenario
+from bg3bench import conditions, matrix, scenario, tickets
 from bg3bench.adapters import play_flags
 
 YOUTUBE_UNVERIFIED_S = 15 * 60  # an account without phone verification uploads at most 15 minutes
@@ -270,6 +270,7 @@ def result_row(run_dir: Path, man: dict, res: dict) -> dict[str, Any]:
         "recovered_launches": res.get("recovered_launches") or [],
         "luck_z": (res.get("luck") or {}).get("z"),
         "saves_bytes": _dir_size(run_dir / "saves"),
+        "ticket": tickets.view(run_dir),
     }
 
 

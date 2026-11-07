@@ -12,6 +12,7 @@ them.
 
     python -m bg3bench.submission.release --suite bench-v0.8 --pins-from MANIFEST... [--out FILE]
         [--condition rules ...] [--client pi --client claude] [--game-build B --bg3le-sha256 H --mod-sha1 H]
+        [--tickets]
 
 --out defaults to packages/bench/releases/<suite>.json (default_path), where the validator and the panel look for
 it. That file ships with the repo, so a fresh checkout validates against the released suite; the bench's tests fail
@@ -57,6 +58,7 @@ PIN_KEYS = ("game_build", "bg3le_sha256", "mod_sha1")
 # The code a run plays with besides the mod (bg3harness.pins.code_digest of the repo the release is built from).
 # Optional: bench-v0.8 and v0.9's releases predate it, and P02 checks it only when the release has it.
 CODE_PIN = "code_sha1"
+TICKETS_VERSION = 1  # the release's optional `tickets`: its presence means a run needs a ticket from the site
 # The tool groups a client profile can turn off on top of the condition's (bg3harness.profiles.tools_off: screenshots
 # for a pi model without image input), and the clients whose profiles do. Each is a variant of every condition.
 VARIANTS = (("screenshots",),)
@@ -162,10 +164,12 @@ def build(
     suite_saves: Mapping[str, saves.Save],
     served: Mapping[str, Served],
     variants: Mapping[str, Mapping[str, Served]] | None = None,
+    tickets: bool = False,
 ) -> Json:
     """The release document. scenarios: the suite's scenario files by name (holdouts are left out); suite_saves: its
     saves.json entries; served: per condition id what its play processes are served; variants: per condition id,
-    what they are served under a profile's tools off (variant_key: the groups off)."""
+    what they are served under a profile's tools off (variant_key: the groups off); tickets: this suite's runs need a
+    ticket from the site (the key is left out otherwise, so a suite released without them builds as it did)."""
     if missing := [k for k in PIN_KEYS if not game_pins.get(k)]:
         raise ReleaseError(f"missing pins: {', '.join(missing)}")
     if bad := saves.disagreements(suite_saves, scenarios):
@@ -213,7 +217,7 @@ def build(
             )
             for cid, sv in sorted(served.items())
         },
-    }
+    } | ({"tickets": {"version": TICKETS_VERSION}} if tickets else {})
     if errs := errors(doc):
         raise ReleaseError("not a release.v1 document: " + "; ".join(errs[:5]))
     return doc
@@ -268,6 +272,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--condition", action="append", help="a condition id (repeat); default: rules")
     ap.add_argument("--client", action="append", choices=CLIENTS, help="a client (repeat); default: pi and claude")
     ap.add_argument("--repo", type=Path, default=suite.PACKAGE_ROOT.parents[1], help="the harness repo (bridge/)")
+    ap.add_argument("--tickets", action="store_true", help="this suite's runs need a ticket from the site")
     a = ap.parse_args(argv)
     try:
         if a.suite != suite.suite_version():
@@ -289,7 +294,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             else {}
         )
         doc = build(
-            a.suite, pins.versions(), game_pins, pack.load_scenarios(), saves.load().get(a.suite, {}), served, variants
+            a.suite,
+            pins.versions(),
+            game_pins,
+            pack.load_scenarios(),
+            saves.load().get(a.suite, {}),
+            served,
+            variants,
+            tickets=a.tickets,
         )
     except (ReleaseError, saves.SavesError, ValueError, OSError) as e:
         print(f"refused: {e}", file=sys.stderr)

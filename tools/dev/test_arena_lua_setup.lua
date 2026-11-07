@@ -220,6 +220,7 @@ test_setup("every twin that differs from its build's reference is named and setu
         assert(j.error:find("pair 1", 1, true) and j.error:find("build fighter", 1, true)
             and j.error:find("pair 2", 1, true) and j.error:find("Another", 1, true), j.error)
         eq(#named("SetHostileAndEnterCombat"), 0, "nobody hostile")
+        eq(j.result.positions[A1] ~= nil and j.result.positions[B4] ~= nil, true, "where they stood, for the record")
         eq(enc(j.result.reference[2].diffs[1].only_reference), enc({ "DiscipleOfLife" }), "the rows in the result")
     end)
 
@@ -595,6 +596,9 @@ test_setup("arena.setup: a member not at the arena's level after joining fails s
     eq(j.status, "failed", "level off")
     eq(j.error, "levels after setup differ from the arena's level 4: Bix 1, Bree 1", "error")
     eq(enc(j.result.members[B3].level), enc({ 4, 1 }), "Bix before/after kept in the result")
+    local stood = 0
+    for _ in pairs(j.result.positions) do stood = stood + 1 end
+    eq(stood, 8, "a failed setup says where its members stood")
     eq(Ar.state, nil, "no match begun")
     game()
     for _, bad in ipairs({ "nil", "0", "2.5", '"4"', "13" }) do

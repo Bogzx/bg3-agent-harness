@@ -208,6 +208,14 @@ def test_the_builds_arena_accepts_only_each_builds_own_weapon_action_dc_row():
         assert "D148" in ref["accepted"][0]["why"]
 
 
+def test_a_kits_unlocks_need_a_reference_too():
+    a = copy.deepcopy(raw("arena-v0.1"))
+    a["mirror"]["pairs"][0]["kit"]["unlocks"] = {"Target_Bane": "Charisma"}
+    assert arena.validate(a, "arena-v0.1") == [
+        "mirror.pairs[0]: a kit with unlocks has no reference (only a draft may lack one)"
+    ]
+
+
 def test_a_kit_part_only_a_reference_checks_needs_one_whatever_build_says():
     a = copy.deepcopy(raw("arena-v0.1"))
     assert arena.validate(a, "arena-v0.1") == []

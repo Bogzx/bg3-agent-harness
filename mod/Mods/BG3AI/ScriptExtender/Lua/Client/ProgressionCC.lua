@@ -561,13 +561,16 @@ function P.findSpell(dc, name, cantrips)
     return nil, nil, offered and "already known" or "not offered"
 end
 
--- The selector holding `name` as a pick: sel entry, its Additions item; nil when no selector does.
+-- The selector holding `name` as a pick: sel entry, its Additions item; nil when no selector does. A pick taken off
+-- leaves its slot in Additions with Spell nil (live L5 launch 2 again), so an empty slot holds nothing, and it loses
+-- its made-up name here, or the next spell put in that slot would read as the hireling's own pick.
 function P.findPick(dc, name, cantrips)
     for _, s in ipairs(spellSelectors(dc)) do
         if cantrips == nil or (UI.prop(s.sel, "IsCantrips") == true) == cantrips then
             P.nameSpells(s.sel)
             local item = pick(UI.prop(s.sel, "Additions"), name)
-            if item then return s, item end
+            if item and UI.prop(item, "Spell") ~= nil then return s, item end
+            if item then P.vmNames[tostring(item)] = nil end
         end
     end
     return nil
@@ -575,8 +578,11 @@ end
 
 -- A respec's page opens with the hireling's own picks in its selectors, and a full selector takes no click. When the
 -- plan names a kind (spells, cantrips) it is that kind's whole pick list, so what else a selector holds goes first:
--- { name, cantrips, remove = true } in needs_clicks, ahead of the adds. A pick with no readable name can't be clicked.
-local function ownPicks(dc, ctx, wantSpells, wantCantrips)
+-- { name, cantrips, remove = true } in needs_clicks, ahead of the adds. A hireling's picks are other VMs than
+-- Available's, so they read no name (live L5 launch 2), and two can share a level and school, so which is which
+-- can't be told; but Available's Selected says what's held. When that isn't all the plan's, every unnamed pick goes
+-- under a made-up name, and the plan's go on by name in the next pass.
+local function ownPicks(dc, wantSpells, wantCantrips)
     local out = {}
     for _, s in ipairs(spellSelectors(dc)) do
         local cantrips = UI.prop(s.sel, "IsCantrips") == true
@@ -585,19 +591,26 @@ local function ownPicks(dc, ctx, wantSpells, wantCantrips)
         want = wantList(want)
         if want and s.source ~= "FeatDetails" then
             P.nameSpells(s.sel)
-            local keep = {}
+            local keep, planned, stray = {}, {}, false
             for _, n in ipairs(want) do
                 local item = pick(UI.prop(s.sel, "Additions"), n)
                 if item then keep[tostring(item)] = true end
+                local offered = pick(UI.prop(s.sel, "Available"), n)
+                if offered then planned[tostring(offered)] = true end
             end
-            for i, it in ipairs(list(UI.prop(s.sel, "Additions"))) do
+            for _, it in ipairs(list(UI.prop(s.sel, "Available"))) do
+                local held = UI.prop(it, "Selected") == true or UI.prop(it, "NotAvailable") == true
+                stray = stray or (held and not planned[tostring(it)])
+            end
+            for _, it in ipairs(list(UI.prop(s.sel, "Additions"))) do
                 if UI.prop(it, "Spell") ~= nil and not keep[tostring(it)] then
                     local n = label(it)
-                    if n then out[#out + 1] = { name = n, cantrips = cantrips, remove = true }
-                    else
-                        ctx.result.problems[#ctx.result.problems + 1] = ("%s pick #%d: no name, can't take it off")
-                            :format(cantrips and "cantrip" or "spell", i)
+                    if not n and stray then
+                        P.ownPicks = (P.ownPicks or 0) + 1
+                        n = "own pick " .. P.ownPicks
+                        P.vmNames[tostring(it)] = n
                     end
+                    if n then out[#out + 1] = { name = n, cantrips = cantrips, remove = true } end
                 end
             end
         end
@@ -610,7 +623,7 @@ local function spellsStage(widgetName, getDC, ctx, wantSpells, wantCantrips, mov
         local dc = getDC()
         if not dc then return "fail", "page closed" end
         if #spellSelectors(dc) == 0 then return "next", 0 end
-        local needs = moves and ownPicks(dc, ctx, wantSpells, wantCantrips) or {}
+        local needs = moves and ownPicks(dc, wantSpells, wantCantrips) or {}
         local function queue(names, cantrips)
             for _, n in ipairs(wantList(names) or {}) do
                 local s, item, why = P.findSpell(dc, n, cantrips)
@@ -909,7 +922,7 @@ RPC.register("ui.cc_apply", function(args)
         { "skills?", skillsReport(get, ctx) },
         { "passive_lists", I.passiveListsStage(get, ctx, plan.passive_lists) },
         { "passives", passivesStage(get, ctx, plan.passives, true, true) },
-        { "equipment", I.equipmentStage(get, ctx, pg.widget == "CharacterRespec") },
+        pg.widget == "CharacterRespec" and { "equipment", I.equipmentStage(get, ctx) } or kept,
         { "spells", spellsStage(pg.widget, get, ctx, plan.spells, plan.cantrips, pg.widget == "CharacterRespec") },
         { "spells?", spellsReport(get, ctx) },
         { "picks?", I.picksStage(get, ctx, plan) },

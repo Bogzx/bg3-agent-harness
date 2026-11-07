@@ -529,18 +529,58 @@ do
     r = applySkills(q, { class = "Fighter", spells = { "Shield", "Sleep" } })
     check(needsOf(r) == "", "spells: a kind the plan doesn't name stays, a plan already on the page clicks nothing ("
         .. needsOf(r) .. ")")
-    q.spellSelectors = { selector({}, { "Shield" }, false) }
-    q.spellSelectors[1]._p.Additions = { obj("ls.VM", { Spell = obj("ls.VM", {}) }), obj("ls.VM", {}) }
-    r = applySkills(q, { class = "Fighter", spells = { "Shield" } })
-    probs = table.concat(r.result.problems, ";")
-    check(probs:find("spell pick #1: no name", 1, true) ~= nil and needsOf(r) == "+Shield",
-        "spells: a pick with no name is named, an empty slot is no pick (" .. probs .. ")")
+    -- a hireling's picks: other VMs than Available's, so no name; Available says what's held (live L5 launch 2)
+    local function unnamed() return obj("ls.VM", { Spell = obj("ls.VM", {}) }) end
+    local function held(names, offered)
+        local sel = selector({}, offered, false)
+        sel._p.Additions = {}
+        for i, n in ipairs(names) do
+            sel._p.Additions[i] = unnamed()
+            for _, it in ipairs(sel._p.Available) do
+                if it._p.Name == n then it._p.Selected = true end
+            end
+        end
+        sel._p.Additions[#names + 1] = obj("ls.VM", {}) -- an empty slot is no pick
+        return sel
+    end
+    q.spellSelectors = { held({ "Shield", "Sleep" }, { "Shield", "Sleep", "Magic Missile" }) }
+    r = applySkills(q, { class = "Fighter", spells = { "Shield", "Magic Missile" } })
+    local needs = needsOf(r)
+    check(select(2, needs:gsub("%-own pick %d+", "")) == 2 and needs:find("+Magic Missile", 1, true) ~= nil
+        and needs:find("-", 1, true) == 1, "spells: every unnamed pick off when one isn't the plan's (" .. needs .. ")")
+    check(#r.result.problems == 0, "spells: no problem (" .. table.concat(r.result.problems, ";") .. ")")
+    local first = r.result.needs_clicks[1].name
+    local _, found = BG3AI.Progression.findPick(obj("ls.DC", {}), first, false)
+    check(found == nil, "the made-up name only reads where the page has it")
+    local path0 = BG3AI.UI.path
+    BG3AI.UI.path = function(_, k) if k == "ClassProgressionDetails.SpellSelectors" then return q.spellSelectors end end
+    _, found = BG3AI.Progression.findPick(obj("ls.DC", {}), first, false)
+    BG3AI.UI.path = path0
+    check(found == q.spellSelectors[1]._p.Additions[1], "the probe finds a pick by its made-up name")
+    -- taken off, the slot stays in Additions with Spell nil and the plan's next spell can land in it (live 22:40)
+    local slot = found
+    slot._p.Spell = nil
+    BG3AI.UI.path = function(_, k) if k == "ClassProgressionDetails.SpellSelectors" then return q.spellSelectors end end
+    _, found = BG3AI.Progression.findPick(obj("ls.DC", {}), first, false)
+    BG3AI.UI.path = path0
+    check(found == nil, "a pick that came off reads as off though its slot stays")
+    slot._p.Spell = obj("ls.VM", {})
+    q.spellSelectors[1]._p.Additions[2]._p.Spell = nil
+    for _, it in ipairs(q.spellSelectors[1]._p.Available) do it._p.Selected = it._p.Name == "Magic Missile" end
+    r = applySkills(q, { class = "Fighter", spells = { "Shield", "Magic Missile" } })
+    check(needsOf(r) == "+Shield", "the next pass leaves a refilled slot on and adds the rest (" .. needsOf(r) .. ")")
+    q.spellSelectors = { held({ "Shield", "Sleep" }, { "Shield", "Sleep", "Magic Missile" }) }
+    r = applySkills(q, { class = "Fighter", spells = { "Shield", "Sleep" } })
+    check(needsOf(r) == "", "spells: unnamed picks that are all the plan's stay (" .. needsOf(r) .. ")")
 
-    -- the probe finds the pick's button in the Additions, from another tab
     local UIm = BG3AI.UI
     local path, findAll, name = UIm.path, UIm.findAll, UIm.name
     q.spellSelectors = { book }
-    local sub = obj("ListBoxItem", { DataContext = book, IsSelected = true })
+    -- the sub-tab opens its panel and clears its own selection (CCLib_k.xaml): IsSelected never reads true
+    local panel = false
+    local sub = obj("ListBoxItem", { DataContext = book, IsSelected = false }, function(_, k, v)
+        if k == "IsSelected" and v then panel = true end
+    end)
     sub.name = "tab"
     local buttons = { list = obj("ls.VM", {}) }
     buttons.list.name = "subTabsSpellsList"
@@ -557,7 +597,8 @@ do
     UIm.findAll = function(_, pred)
         local out = {}
         for _, e in ipairs(all) do
-            if e == sub and (e._p.DataContext ~= nil) or (e ~= sub and pred(e)) then out[#out + 1] = e end
+            local isButton = e ~= sub and e ~= buttons.list
+            if e == sub or (e ~= sub and pred(e) and (panel or not isButton)) then out[#out + 1] = e end
         end
         return out
     end
@@ -567,8 +608,22 @@ do
     check(p1.switched == true and page.shown == "classTab", "probe: the class tab first, from the ability tab")
     tabs.classTab._p.IsSelected = true
     local p2 = probe({ name = "Sleep", remove = true })
-    check(p2.index == 2 and p2.n == 2, "probe: the pick's own button, among the Additions' only ("
-        .. tostring(p2.index) .. "/" .. tostring(p2.n) .. ")")
+    check(p2.switched == true and panel, "probe: then the sub-tab")
+    p2 = probe({ name = "Sleep", remove = true })
+    check(p2.switched == nil and p2.index == 2 and p2.n == 2, "probe: the panel's up, the sub-tab reads unselected: "
+        .. "the pick's own button, among the Additions' only (" .. tostring(p2.index) .. "/" .. tostring(p2.n) .. ")")
+    do -- a level-up has no page entry, so the scan after the tab switch is its only way to a spell's button
+        local P_ = BG3AI.Progression
+        local ccPage0, luDC0 = P_.ccPage, P_.luDC
+        local luDC = obj("ls.DC", {})
+        P_.ccPage = function() return nil end
+        P_.luDC = function() return luDC end
+        sub._p.IsSelected = true
+        local ok, res = pcall(probe, { name = "Sleep", remove = true })
+        P_.ccPage, P_.luDC = ccPage0, luDC0
+        check(ok and res.index == 2 and res.n == 2, "probe: a level-up finds the button after the tab switch ("
+            .. (ok and tostring(res.index) or tostring(res)) .. ")")
+    end
     book._p.Additions[2] = nil
     check(probe({ name = "Sleep", remove = true }).placed == true, "probe: a pick that's off says so")
     UIm.path, UIm.findAll, UIm.name = path, findAll, name

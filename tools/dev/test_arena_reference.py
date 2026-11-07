@@ -223,6 +223,27 @@ class RespecTest(unittest.TestCase):
             live(g, FakeRoute()).respec(PLANS, "u1")
         self.assertEqual(g.finished, 0)
 
+    def test_failed_clicks_keep_the_clicks_and_the_page_for_the_stop_file(self):
+        res = {"needs_clicks": [{"name": "Bless"}], "problems": ["spell Bless: not offered"]}
+        failed = {"picked": [], "failed": {"Bless": "its button never appeared"}}
+        with self.assertRaisesRegex(ar.RefStepError, "picks failed") as stop:
+            live(FakeGame([Job("done", res)]), FakeRoute(), click=lambda n: failed).respec(PLANS, "u1")
+        log = stop.exception.log or {}
+        self.assertEqual((log["clicked"], log["cc"]), ([failed], res))
+
+    def test_clicks_still_open_keep_the_last_page_for_the_stop_file(self):
+        need = {"needs_clicks": [{"name": "Bless"}], "complete": True, "problems": []}
+        g = FakeGame([Job("done", need) for _ in range(ar.CLICK_PASSES + 1)])
+        with self.assertRaises(ar.RefStepError) as stop:
+            live(g, FakeRoute()).respec(PLANS, "u1")
+        log = stop.exception.log or {}
+        self.assertEqual((len(log["clicked"]), log["cc"]), (ar.CLICK_PASSES, need))
+
+    def test_a_respec_that_never_lands_keeps_what_it_had_for_the_stop_file(self):
+        with self.assertRaises(ar.RefStepError) as stop:
+            live(FakeGame([Job("done", DONE)]), FakeRoute(applies=False)).respec(PLANS, "u1")
+        self.assertEqual((stop.exception.log or {})["cc"], DONE)
+
     def test_no_level_up_before_the_respec_has_landed(self):
         ups: list[Any] = []
         g = FakeGame([Job("done", DONE)])
@@ -302,6 +323,16 @@ class SetupCheckTest(unittest.TestCase):
         )
         self.assertEqual((code, rec["xp"], rec["positions"]), (0, {"added": 6072}, {"Ash": [1, 2, 3]}))
 
+    def test_a_failed_setup_keeps_what_it_read_of_the_twins(self):
+        res = {"teams": {"A": ["a1"], "B": []}, "not_applied": [{"pair": 1}], "positions": {"a1": [1, 2, 3]}}
+        state = {"uuid": "a1", "level": 5, "available": 5, "can_level_up": False}
+        code, rec = ar.setup_check(FakeGame([Job("failed", res, "the twins are not their builds")], [state]), {})
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            (rec["level_state"], rec["not_applied"], rec["positions"]), ([state], res["not_applied"], res["positions"])
+        )
+        self.assertIn("not their builds", rec["error"])
+
     def test_a_twin_with_a_level_up_pending_after_the_party_join_fails_it(self):
         # S1 read AvailableLevel and CanLevelUp before any join, and Sym.FIELDS doesn't compare them
         teams = {"teams": {"A": ["a1"], "B": ["b1"]}}
@@ -354,6 +385,11 @@ class DressTest(unittest.TestCase):
 
     def test_a_prepared_set_that_isnt_the_plans_stops_it_though_the_tool_says_done(self):
         g = FakeGame([], prepared=[[], ["Target_Bane"]])  # a look-alike's cell flipped
+        with self.assertRaisesRegex(ar.RefStepError, "the plan's"):
+            live(g, FakeRoute()).dress(KIT, "u1")
+
+    def test_an_extra_spell_flipped_on_beside_the_plans_stops_it_though_the_tool_says_done(self):
+        g = FakeGame([], prepared=[[], ["Target_Bless", "Target_Bane"]])  # a look-alike's cell flipped too
         with self.assertRaisesRegex(ar.RefStepError, "the plan's"):
             live(g, FakeRoute()).dress(KIT, "u1")
 

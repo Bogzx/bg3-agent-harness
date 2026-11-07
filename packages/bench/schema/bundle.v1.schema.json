@@ -319,6 +319,41 @@
     "packed": {
       "type": "number",
       "description": "epoch seconds the bundle was packed"
+    },
+    "ticket": {
+      "type": "object",
+      "description": "the run's ticket from the site (optional; a release with `tickets` requires it: T01). root and lines are recomputed from this bundle's scrubbed streams (bg3bench.submission.ticket_hash)",
+      "required": [
+        "id",
+        "nonce",
+        "root",
+        "lines"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "nonce": {
+          "$ref": "#/$defs/sha256"
+        },
+        "root": {
+          "$ref": "#/$defs/sha256"
+        },
+        "lines": {
+          "type": "object",
+          "description": "stream file name -> its number of complete lines",
+          "maxProperties": 33,
+          "propertyNames": {
+            "pattern": "^(facts\\.jsonl|rolls\\.jsonl|S[0-9]{3,}(-[rc][0-9]+)?\\.events\\.jsonl)$"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
     }
   }
 }

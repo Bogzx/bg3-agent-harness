@@ -178,6 +178,11 @@ class Seeds(unittest.TestCase):
         want = ["Cast", "DeathSavingThrows", "Granted", "Open", "Pick", "Racial", "Ready", "WPN_Dagger"]
         self.assertEqual(sorted(scan.kit_seeds(kit)), want)
 
+    def test_an_unlocked_spells_upcasts_are_seeds_by_its_spell_abilities(self):
+        kit = {"choices": [{"kind": "spells", "ids": ["Pick"]}], "unlocks": {"Pick": "Charisma"},
+               "spell_abilities": {"Pick": "Charisma", "Pick_2": "Charisma"}}  # fmt: skip
+        self.assertEqual(sorted(scan.kit_seeds(kit)), ["Pick", "Pick_2"])
+
 
 class Bar(unittest.TestCase):
     def test_the_controls_hit(self):
