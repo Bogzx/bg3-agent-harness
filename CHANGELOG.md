@@ -115,10 +115,13 @@ game unless it says so.
   change. bench-v0.11's release cited it until 0.10.0.
 - 0.10.0 (2026-11-07): what the agent sees changed: a raw id of a container spell the character doesn't hold reads
   `the character does not have that action`, where it read `choose a variant:` with variants that were then refused.
-  A hit or status that comes before an order has started no longer counts in that order's result: a held arrow's late
-  hit had read `damage=[6; 6]` where the order's own was 6. An Osiris-ordered cast countered with no prompt pays its
-  spell slot, as a hotbar cast does; it had paid the action alone (a30-read). A cast countered on a prompt is not
-  changed yet. Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
+  So does a raw id of a call-allies container not held. For an order behind a held cast, a hit or status before its own
+  CastSpell no longer counts in its result: a held arrow's late hit had read `damage=[6; 6]` where the order's own was
+  6; offline only so far. An Osiris-ordered cast that is countered pays every cost but the four turn resources, on a
+  prompt or with none, as a hotbar cast did for its slot; it had paid the action alone (a30-read). Read live for a
+  spell slot only. A swing a Riposte answered reads as any miss, `done ... no_damage`, when every die on its own cast
+  read below its dc and none is a natural 20; otherwise its text keeps the true words and drops `what came of it shows
+  in the events`. Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
