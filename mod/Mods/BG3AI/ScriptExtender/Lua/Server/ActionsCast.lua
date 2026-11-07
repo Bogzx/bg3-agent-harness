@@ -625,10 +625,7 @@ reg("cast", function(args)
                 if matches(a) and not job.began then job.began, job.hp0 = true, hp_of(char) end
             end,
             CastedSpell = function(job, a)
-                if matches(a) and A.held_landing(job) then
-                    job.hits, job.statuses, job.last_hit = {}, {}, nil -- what came so far was the held cast's
-                    return
-                end
+                if matches(a) and A.held_landing(job) then return end
                 if matches(a) and not job.casted and A.roll_checked(job) then
                     -- Hits usually land before CastedSpell; give stragglers a
                     -- short settle window (see on_tick), then report.
@@ -673,7 +670,7 @@ reg("cast", function(args)
             end,
             -- AttackedBy(defender, attackerOwner, attacker, damageType, amount, cause, storyActionId)
             AttackedBy = function(job, a)
-                if G.same(a[3], char) or G.same(a[2], char) then
+                if not A.order_unstarted(job) and (G.same(a[3], char) or G.same(a[2], char)) then
                     local tgt = G.guid(a[1])
                     if tgt and G.visible(tgt) then
                         job.hits[#job.hits + 1] = { target = tgt, name = name_of(tgt),
@@ -684,7 +681,7 @@ reg("cast", function(args)
             end,
             -- StatusApplied(target, status, causee, storyActionId): visible statuses only.
             StatusApplied = function(job, a)
-                if G.same(a[3], char) then
+                if not A.order_unstarted(job) and G.same(a[3], char) then
                     local tgt = G.guid(a[1])
                     local V = BG3AI.Visibility
                     local info = V and V.statusInfo and V.statusInfo(tostring(a[2]))

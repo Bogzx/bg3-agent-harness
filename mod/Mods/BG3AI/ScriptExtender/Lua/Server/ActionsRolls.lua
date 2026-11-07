@@ -341,6 +341,13 @@ function A.held_landing(job)
     return A.held_claimed and job.roll and job.roll.state == "pending"
 end
 
+-- Live, held-claim read gapranged3: a held arrow's hit at +351 ms, after its CastedSpell at +150, counted in the order
+-- queued behind it, whose own cast began at +1081. AttackedBy has no cast id, but a hit or status before an order has
+-- started can't be its own. A hit after it started can't be told apart, and counts as its own.
+function A.order_unstarted(job)
+    return job.roll and job.roll.state == "pending" and not job.began
+end
+
 -- live.md 01:11:51: a Counterspell set to always raises no prompt and no pause, and the cast ends failed, reason
 -- Countered, with action 1 after. An enemy's reaction has no prompt either. The cost comes later here too, so the same
 -- hold: never lands, so nothing to audit.
