@@ -606,6 +606,17 @@ function Ar.note_forced(char, why)
     U.with_side(s, RPC.push, "turn_forced", { uuid = char, name = V.name(char), why = why })
 end
 
+-- The game paused for a reaction decision: a member carries the pause component (live: all 8 of them, gone within 0.1 s
+-- of the answer).
+function Ar.game_held()
+    for _, team in pairs(Ar.state and Ar.state.teams or {}) do
+        for _, u in ipairs(team) do
+            if BG3AI.Actions.cast_paused(u) then return true end
+        end
+    end
+    return false
+end
+
 -- A shared turn group's last end that the game ignored (act.end_turn, arena only): live 14 (2026-11-02, 2v2 twins in
 -- one engine group) every member had its EndTurn and the game changed no flag (all four active, none
 -- RequestedEndTurn) and never closed the group; writing TurnBased.RequestedEndTurn = true + Replicate("TurnBased") on

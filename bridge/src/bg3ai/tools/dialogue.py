@@ -237,9 +237,10 @@ def react(use: bool, which: str = "") -> str:
 
 def _spent_check(out: str, mark: Any) -> str:
     """A `react: done` whose prompt closed with no resource of its observers dropped says so (L5 reads, 02:00: a confirm
-    with no row chosen closed it, nobody reacted, and the side read done). A reaction with no cost reads the same, so
-    this reports what was read and doesn't call it failed. An unreadable mark, or a total of 0 (no read of resources),
-    leaves the answer as it was; so does a prompt still up, as the next one can hold the spend."""
+    with no row chosen closed it, nobody reacted, and the side read done). It says only what was read, true on any
+    frame: a reaction with no cost, a spend the frames carry past the window (live spends: 1.40-3.56 s from the call's
+    start) and a spend with a gain in one read all read the same. An unreadable mark, or a total of 0 (no read of
+    resources), leaves the answer as it was; so does a prompt still up, as the next one can hold the spend."""
     if not out.startswith("react: done") or not isinstance(mark, dict) or not mark.get("uuids") or not mark.get("total"):
         return out
     end = time.monotonic() + REACT_SPENT_S
@@ -254,8 +255,8 @@ def _spent_check(out: str, mark: Any) -> str:
     if isinstance(probe, dict) and probe.get("open"):
         return out
     _, sep, rest = out.partition("\n")
-    return (f"react: done — the prompt closed and no resource of its observers dropped in {REACT_SPENT_S:g} s: a reaction "
-            "with a cost didn't happen; one with no cost may have") + sep + rest
+    return (f"react: done — the prompt closed; {REACT_SPENT_S:g} s later its observers' resources, summed, had not "
+            "dropped") + sep + rest
 
 
 def _react_click(args: dict, which: int, t0: float, confirm: bool = False) -> str:
@@ -285,7 +286,7 @@ def _react_click(args: dict, which: int, t0: float, confirm: bool = False) -> st
     return reporting._finish("react", args, text, t0)
 
 
-REACT_SPENT_S = 4.0  # after a done: how long to watch the observers' resources for the cost (no spend has been timed live)
+REACT_SPENT_S = 4.0  # after a done: how long to watch the observers' resources for the cost
 _ROMAN = re.compile(r"^(?:I|II|III|IV|V|VI|VII|VIII|IX)$")
 _ROMAN_N = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9}
 

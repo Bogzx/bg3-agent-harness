@@ -418,7 +418,7 @@ def _wait_state(low: str, tgt: str, kinds: set, ui: dict, view: dict) -> str | N
         if not _wait_combat(view).get("active"):
             return "not in combat"
         mine = _wait_acting(view)
-        if mine:
+        if mine and not ui.get("waiting"):  # the other side's prompt holds the game: no order of this side starts yet
             cs = _wait_combat(view)
             return "\n".join([combat._now_turn_text(mine)] + turn.disabled_lines(cs, queueing._label)
                              + [x for x in (observe._turn_block(cs, mine[0]),) if x])

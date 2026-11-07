@@ -107,7 +107,8 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    mod's `owner`, from the game's own observer) while the other side's phase is on: until the next read or the next
    phase, that side's model time counts as the
    phase's progress on the stall clock (the game waits for its answer, not for the acting side; fairness audit
-   S2-1).
+   S2-1). While the game holds, the mod refuses a side's orders and ends (Guard.side_gate), the phase's model-time cap
+   doesn't run and the time a read shows held doesn't count toward it.
 6. An agent that exits while the fight is on is resumed in the same conversation with RESUME; exit 0 counts toward
    EXIT_RESUMES (then a forfeit), anything else (a crash, an API or MCP failure, a hang) toward FAULT_RESUMES (then
    client_fault: invalid).
@@ -820,8 +821,15 @@ def run_arena(
                 continue
             mark_turn()
             assert turn_mark is not None
+            if hold.key:  # waiting on the game's pause isn't the phase's thinking, slow as the other side may be
+                turn_mark = (turn_mark[0], turn_mark[1] + gained[turn.side])
+                continue
             cap = spec.turn_cap_s  # one character a phase (the mod's turn order, D643): turn_cap_s x 1
             if model(turn.side) - turn_mark[1] < cap:
+                continue
+            ui_read = now  # an end sent during a pause is refused by the mod: read for one before capping
+            prompt_side = _reaction_check(spec, game, ref, log, hold, now)
+            if hold.key:
                 continue
             cap_phase(turn, f"{cap:g} s cap", f"the per-turn time cap ({cap:g} s of model time)")
         if ref.mod_end is None:  # the mod ended it but its record didn't reach the ring: the status's end
