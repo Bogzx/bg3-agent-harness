@@ -318,6 +318,7 @@ game unless it says so.
   can, nothing changes and the result's `already_held` names it. Character creation still stops at the held row. A level-up refused as not complete now names a skill group short of its max (`3 class skills (plan.skills)`), where it said the page showed nothing open. A plan's skill or passive the page doesn't offer is now a failure, no longer `done`.
 - A kit's subclass spell with no ability on its row or class reads the stats' ability, as a character's does (a Thief's
   Shout_SupremeSneak read None on a twin, Intelligence on the reference).
+- `builds-l12-4v4-v1` and its build file aren't drafts any more, so its S6 matrix plans its one match.
 
 ### Benchmark (`packages/bench`)
 
