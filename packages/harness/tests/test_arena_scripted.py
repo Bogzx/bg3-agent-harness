@@ -173,6 +173,35 @@ def test_a_member_that_didnt_get_there_ends_its_turn_without_attacking():
     assert "use_ability" not in [t for t, _a in calls.log]
 
 
+def test_a_member_past_the_melee_edge_walks_before_it_swings():
+    # live s5-rx-2: 28 refusals `target is out of range (2.5 m, range 1.5 m)`, each without a step: REACH_M was 2.5
+    calls = Calls([fight((0, 0, 0), (2.5, 0, 0)), fight((1, 0, 0), (2.5, 0, 0))])
+    assert sc.step(calls, calls.slept.append) == "moved+attacked"
+    assert "move_to" in [t for t, _a in calls.log]
+
+
+def test_a_walk_stopped_short_by_bodies_shoots_rather_than_ends_with_nothing():
+    # live s5-rx-2 519.3 s: Red Birch's walk ended 2.5 m off with 6.4 m left: bodies in the way
+    calls = Calls([fight((0, 0, 0), (3, 0, 0)), fight((0.5, 0, 0), (3, 0, 0))])
+    assert sc.step(calls, calls.slept.append) == "moved+shot"
+    assert [a["ability"] for t, a in calls.log if t == "use_ability"] == ["Ranged Attack"]
+
+
+def test_a_swing_refused_at_the_edge_of_reach_shoots():
+    # live s5-rx-2 517.5 s: Red Ash at 2.0 m, InvalidTarget, 16 times, the action kept each time
+    refused = "use_ability: FAILED — the game refused the cast: the target isn't a valid target for it"
+    calls = Calls([fight((0, 0, 0), (2, 0, 0))], {"Main Hand Attack": (refused, True)})
+    assert sc.step(calls, calls.slept.append) == "attacked"
+    assert [a["ability"] for t, a in calls.log if t == "use_ability"] == ["Main Hand Attack", "Ranged Attack"]
+
+
+def test_a_swing_refused_for_anything_else_doesnt_shoot():
+    for why in ("not enough action", "the game is paused for a reaction decision: no order starts"):
+        calls = Calls([fight((0, 0, 0), (2, 0, 0))], {"Main Hand Attack": (f"use_ability: FAILED — {why}", True)})
+        sc.step(calls, calls.slept.append)
+        assert [a["ability"] for t, a in calls.log if t == "use_ability"] == ["Main Hand Attack"]
+
+
 def test_a_member_without_the_weapon_attack_uses_its_unarmed_strike():
     calls = Calls([fight((0, 0, 0), (1, 0, 0))], {"Main Hand Attack": ("Karlach has no action called 'x'", True)})
     sc.step(calls, calls.slept.append)

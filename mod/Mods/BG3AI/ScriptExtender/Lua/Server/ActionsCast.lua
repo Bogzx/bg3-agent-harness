@@ -268,6 +268,22 @@ function A.cost_spent(char, check)
     return nil
 end
 
+-- Live s5-rx-2 at 116 s and 126 s, and live.md's Riposte read: a swing that rolled and missed an Ash raised its
+-- Riposte, and the swing's cast ended CastSpellFailed, outcome Canceled, with the action gone. "The game refused the
+-- cast" was false. What of its cost the game took before a Canceled, or nil. A free Extra Attack has no cost to read:
+-- the status it spends goes on the cast.
+A.CAST_CANCELED_SPENT = "the game took the %s, then cancelled the cast (the game's Canceled); it wasn't refused:"
+    .. " what came of it shows in the events"
+function A.canceled_cost(job, char, check)
+    if select(2, A.engine_refusal(job)) ~= "Canceled" then return nil end
+    local spent = A.cost_spent(char, check)
+    if spent then return spent end
+    if check and check.extra_attack and not G.b(G.q("HasActiveStatus", char, G.EXTRA_ATTACK_STATUS)) then
+        return "extra attack"
+    end
+    return nil
+end
+
 local NULL_GUID = "NULL_00000000-0000-0000-0000-000000000000"
 
 -- A27: a variant of a call-allies container (Gather Your Allies' groups) summons allies at its point.
@@ -636,6 +652,12 @@ reg("cast", function(args)
                     job.jump_cancel.why = job.jump_cancel.why or why
                     return
                 end
+                local spent = A.canceled_cost(job, char, check)
+                if spent then
+                    job.stopping = true -- it went, so as with a finished cast its task may still be resolving
+                    RPC.finish_job(job, "failed", nil, string.format(A.CAST_CANCELED_SPENT, spent))
+                    return
+                end
                 RPC.finish_job(job, "failed", nil, why)
             end,
             -- AttackedBy(defender, attackerOwner, attacker, damageType, amount, cause, storyActionId)
@@ -690,16 +712,20 @@ reg("cast", function(args)
                 return
             end
             if job.state_ms and not job.began then job.began, job.hp0 = true, hp_of(char) end
-            if job.state_ms and not job.casted then
+            -- Live s5-rx-2 at 117.9 s: Blue Ash's order went in 1 s before its own Riposte's pause, so the side gate
+            -- let it through and it never started. An order still unstarted when the game pauses is reported as held
+            -- too: the no-start's purge would cancel the character's paused cast (the Riposte, which had rolled 20).
+            if (job.state_ms or (job.ordered_ms and not job.began and not job.ui)) and not job.casted then
                 if not A.cast_paused(char) then job.paused_ms = nil
                 elseif not job.paused_ms then job.paused_ms = RPC.now_ms()
                 elseif RPC.now_ms() - job.paused_ms >= A.CAST_PAUSED_MS then
                     job.stopping = true -- on_finish's purge of leftover tasks would cancel the held cast
-                    RPC.finish_job(job, "interrupted", { began = true, paused = true, cast = spell }, A.CAST_PAUSED)
+                    RPC.finish_job(job, "interrupted", { began = job.began or nil, paused = true, cast = spell },
+                        job.began and A.CAST_PAUSED or A.ORDER_PAUSED)
                     return
                 end
             end
-            if not job.casted and not job.began and job.ordered_ms then
+            if not job.casted and not job.began and job.ordered_ms and not job.paused_ms then
                 local p = G.pos(char)
                 if p and job.ordered_pos and U.dist(p, job.ordered_pos) > 0.5 then
                     job.began = true -- the engine walks into range / the jump took off
@@ -924,20 +950,28 @@ reg("cast", function(args)
         end,
         on_finish = function(job)
             if job.jump_marked then pcall(BG3AI.Nav.inflightDone, "jump") end -- NAV-7: only its own marker
-            if not job.casted then return end
             -- A hotbar cast is the player's own: the game charged it (nothing extra from us).
             if job.ui then return end
             -- Resource audit: charge whatever the engine did not.
-            local after = G.resources(char)
-            local charged = {}
-            for _, p in ipairs(check.payers) do
-                local before = (check.snapshot[p.name] or {})[p.level] or 0
-                local now = (after[p.name] or {})[p.level] or 0
-                local owed = p.amount - (before - now)
-                if owed > 0.01 and G.deduct(char, p.name, p.level, owed) then
-                    charged[#charged + 1] = { resource = G.friendly(p.name), level = p.level > 0 and p.level or nil, amount = owed }
+            local function audit()
+                local after = G.resources(char)
+                local charged = {}
+                for _, p in ipairs(check.payers) do
+                    local before = (check.snapshot[p.name] or {})[p.level] or 0
+                    local now = (after[p.name] or {})[p.level] or 0
+                    local owed = p.amount - (before - now)
+                    if owed > 0.01 and G.deduct(char, p.name, p.level, owed) then
+                        charged[#charged + 1] = { resource = G.friendly(p.name),
+                            level = p.level > 0 and p.level or nil, amount = owed }
+                    end
                 end
+                return charged
             end
+            if not job.casted then
+                if type(job.result) == "table" and job.result.paused then A.hold_audit(job, char, matches, audit) end
+                return
+            end
+            local charged = audit()
             if #charged > 0 and type(job.result) == "table" then job.result.charged_by_guard = charged end
         end,
     })

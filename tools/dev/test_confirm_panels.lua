@@ -391,18 +391,18 @@ do
     ok(not okr and tostring(errr):find("no reaction option 7 (6 shown)", 1, true), "ui.react: no row 7")
     r = ops["ui.react"]({ use = false })
     ok(r.job and sent[1] and sent[1].name == "InterruptDontReactPlayerCommand", "ui.react use=false: the command as before")
-    -- two interruptors with a row each (their Accept button shows): the command path as before
+    -- two interruptors with a row each (their Accept button shows; L5 reads 02:00: accept with no row chosen closes it
+    -- with nobody reacting): the row goes to the bridge, and once it reads chosen it's accepted
     shield.buttons, sent = rows(2, 2), {}
     r = ops["ui.react"]({ use = true, which = 2 })
-    ok(r.job and r.needs_click == nil, "ui.react: two interruptors -> commands, no click")
+    ok(r.needs_click == 2 and r.confirm == true and #sent == 0, "ui.react: two interruptors, no row chosen -> click")
+    shield.buttons[4].DataContext = { Decision = "Use" }
+    r = ops["ui.react"]({ use = true, which = 2 })
+    ok(r.job and sent[1] and sent[1].name == "InterruptAcceptPlayerCommand",
+        "ui.react: two interruptors, chosen -> Accept")
     -- v010 live windows 6-7: Karlach's Reckless Attack, one interruptor with one row. Its Accept button is collapsed;
     -- InterruptAcceptPlayerCommand closed the prompt without the reaction (w6), and the row's press (its
     -- CommandParameter, a PassThrough multi-binding, reads nil) left it unanswered (w7). The bridge clicks the row.
-    local _prop = UIt.prop
-    UIt.prop = function(e, k)
-        if k == "IsChecked" and type(e) == "table" then return e.checked end
-        return _prop(e, k)
-    end
     local reckless = popup(true, { { id = "reckless" } })
     reckless.buttons = rows(1)
     local pressedRow
@@ -414,12 +414,12 @@ do
     okr, errr = pcall(ops["ui.react"], { use = true, which = 2 })
     ok(not okr and tostring(errr):find("no reaction option 2 (1 shown)", 1, true),
         "ui.react: lone row, which 2 refused")
-    -- the row already chosen (Decision Use, the toggle checked): pressing it would undo the choice -> Accept as before
-    reckless.buttons[2].checked, pressedRow, sent = true, nil, {}
+    -- the row already chosen (Decision Use): a click would undo the choice -> Accept as before. No IsChecked in this
+    -- fake: bg3le reads it as nil on a ticked row (live.md 02:42:47)
+    reckless.buttons[2].DataContext, pressedRow, sent = { Decision = "Use" }, nil, {}
     r = ops["ui.react"]({ use = true })
     ok(r.job and pressedRow == nil and sent[1] and sent[1].name == "InterruptAcceptPlayerCommand",
         "ui.react: a checked lone row -> Accept")
-    UIt.prop = _prop
     pages = { shield }
     -- ui.react_probe: over the wanted row, over another, watch reads no rows
     shield.buttons = rows(6)

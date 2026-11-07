@@ -459,8 +459,9 @@ def test_the_caps_end_turn_says_which_cap_ended_the_turn(tmp_path):
 
 def test_the_other_sides_reaction_prompt_is_not_the_acting_sides_stall(tmp_path):
     """Fairness audit S2-1: in B's phase the game opens A's reaction prompt (Karlach's Shield) and waits for A, who
-    thinks 1 s a second and answers after 400 s. That waiting is the prompt's: A's model time is no idle of B's
-    phase, so B is never stalled or capped (it was: held at 300 s, a forced turn toward B's forfeit)."""
+    thinks 1 s a second and never answers. That waiting is the prompt's: A's model time is no idle of B's phase, so B
+    is never stalled or capped (it was: held at 300 s, a forced turn toward B's forfeit), and the prompt is declined
+    at the turn cap."""
     waited: set[tuple[int, str]] = set()
 
     def b_waits_a_tick(game: Game, side: str, run: Run) -> None:
@@ -486,13 +487,11 @@ def test_the_other_sides_reaction_prompt_is_not_the_acting_sides_stall(tmp_path)
         if model.reaction is None or not opened:
             return
         agents.runs["A"].model += 1.0
-        if clock.now() - opened[0] >= 400:
-            game.rpc("ui.react", {"use": True}, "A", context="client")
 
     clock.tick_hooks.insert(0, open_in_bs_phase)
     clock.tick_hooks.insert(1, a_answers_late)
     out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
-    assert opened and model.reacted == [("Karlach", True)]
+    assert opened and model.reacted == [("Karlach", False)]
     assert stalls(tmp_path) == []
     assert not [e for e in arena_events(tmp_path) if e["ev"] == "arena_turn_forced"]
     assert out.end is not None and out.end["reason"] == "round_cap" and out.invalid is None

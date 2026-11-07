@@ -580,6 +580,18 @@ class WaitForNoop(Base):
         out, dt = self.timed("combat_started")
         self.assertIn("already in combat", out)
 
+    def test_my_turn_waits_out_the_other_sides_prompt(self):
+        # Load 2: during a pause no order of the acting side starts, so its turn isn't to be taken yet
+        self.g.combat = {"active": True, "current": P1}
+        self.g.ui = {"waiting": "a reaction prompt of the other side is open"}
+        out, dt = self.timed("my_turn", timeout_s=0.3)
+        self.assertGreaterEqual(dt, 0.3)
+        self.assertNotIn("'s turn", out)
+        self.g.ui = {}
+        out, dt = self.timed("my_turn")
+        self.assertLess(dt, 0.4)
+        self.assertIn("'s turn", out)
+
     def test_finished_job_returns_at_once(self):
         world_tools.move_to(target=self.door, wait=False)
         time.sleep(0.05)

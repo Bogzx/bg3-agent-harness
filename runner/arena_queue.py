@@ -32,6 +32,10 @@
   reruns and the table never counts it, REVIEW-18g), and stops the matrix (`drift: ...`); with `allow_drift = true`
   in the matrix file it stays valid, flagged, and the matrix goes on. A match whose pins don't read counts as drifted
   once a first match recorded them.
+- A queue line `{"type": "operator_stop", "job", "attempt", "t", "by", "why"}` closes the matrix: a start refuses it
+  (exit 2) before anything is charged or played, because an open attempt would otherwise be charged again and replayed.
+  It is for a runner killed after a match whose spend was then written back by hand; it is no end record, and the
+  attempt stays unended in the queue. A deliberate replay is a new matrix name.
 - `--table` grades every played match (the last attempt of each, its facts and rolls) and prints bg3bench.arena's
   results table (pairings, pairs, side A, models) as JSON.
 
@@ -63,6 +67,7 @@ from bg3harness.runner import env as renv
 
 SIDES = ("A", "B")
 OVER_BUDGET = "over_budget"
+OPERATOR_STOP = "operator_stop"  # a queue line that closes the matrix (module doc)
 DRIFT = "drift"
 SEED = 2026  # the table's bootstrap seed
 
@@ -193,6 +198,17 @@ class ArenaQueue:
                 return r["pins"]
         return None
 
+    def operator_stopped(self) -> str | None:
+        """Why the operator closed the matrix (an OPERATOR_STOP queue line), None when it is open."""
+        for line in (self.root / "queue.jsonl").read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:  # a torn last line
+                continue
+            if rec.get("type") == OPERATOR_STOP:
+                return str(rec.get("why"))
+        return None
+
     def state(self) -> dict[str, dict[str, Any]]:
         jobs = self.q.state()
         for st in jobs.values():
@@ -254,6 +270,8 @@ class ArenaQueue:
         """Play until every match is done, gave up or ended over budget, or a stop (module doc); the stop reason. A
         process that dies here (a signal, an exception) leaves progress.json stopped, never running."""
         self.q.create(self.m["name"], self.m["jobs"])
+        if (why := self.operator_stopped()) is not None:
+            raise ValueError(f"{self.root / 'queue.jsonl'} was closed by the operator: {why}; use a new matrix name")
         try:
             return self._run()
         except BaseException as e:

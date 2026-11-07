@@ -9,6 +9,7 @@ Run: cd bridge && uv run python -m unittest tests.test_reactclick
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from test_turn_macros import Base  # noqa: F401  (sets BG3AI_RUNTIME before importing server)
 
@@ -146,7 +147,7 @@ class ReactTool(Base):
         super().setUp()
         self.p = FakePrompt()
         saved = world_tools._inp
-        world_tools._inp = lambda: self.p
+        world_tools._inp = lambda own_prompt=False: self.p
         self.addCleanup(setattr, world_tools, "_inp", saved)
         base = self.g.rpc
         self.g.rpc = lambda op, args=None, context="server", **kw: (
@@ -167,6 +168,99 @@ class ReactTool(Base):
         self.assertTrue(out.startswith("react: done — clicked reaction row 3"), out)
         self.assertEqual(self.p.clicked, [3])
         self.assertEqual(self.jobs, [("ui.react", {"use": True, "which": "3"})])
+
+    def test_two_interruptors_click_the_row_then_confirm(self):
+        # live 02:00: Cutting Words + Shield: the mod's press chose nothing, and its accept closed the prompt unused
+        seq = [JobResult("done", {"needs_click": 2, "rows": 4, "confirm": True}), JobResult("done", {})]
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            self.jobs.append((op, dict(args)))
+            return seq.pop(0)
+        self.g.run_job = run_job
+        self.p.answers = False
+        out = dialogue.react(True, "2")  # the click chooses the row, so the prompt stays up (answers=False)
+        self.assertEqual([a for _, a in self.jobs], [{"use": True, "which": "2"}, {"use": True, "which": 2}])
+        self.assertIn("react: done", out)
+
+    def test_two_interruptors_a_click_that_chooses_nothing_says_so(self):
+        seq = [JobResult("done", {"needs_click": 2, "rows": 4, "confirm": True}),
+               JobResult("done", {"needs_click": 2, "rows": 4, "confirm": True})]
+        self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: seq.pop(0)
+        self.p.answers = False
+        out = dialogue.react(True, "2")
+        self.assertIn("react: FAILED — the row doesn't read chosen after the click", out)
+
+    def _spend_reads(self, totals, shown=False):
+        """ui.react answers done; ui.react_spent reads `totals` in turn, the last repeating; the prompt shows or not."""
+        saved, seq = self.g.rpc, list(totals)
+
+        def rpc(op, args=None, context="server", **kw):
+            if op == "ui.react_spent":
+                return seq.pop(0) if len(seq) > 1 else seq[0]
+            if op == "ui.react_probe":
+                return {"open": shown, "events": int(shown)}
+            return saved(op, args, context, **kw)
+        self.g.rpc = rpc
+        self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult("done", {})
+        patcher = mock.patch.object(dialogue, "REACT_SPENT_S", 0.0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _click_spend_reads(self, seq):
+        """The click routes through the spend check: nothing drops, and after the last job the prompt reads closed."""
+        saved, seq = self.g.rpc, list(seq)
+        last = {"done": False}
+
+        def run_job(op, args, context="server", wait_s=25.0, **kw):
+            last["done"] = len(seq) == 1
+            return seq.pop(0)
+
+        def rpc(op, args=None, context="server", **kw):
+            if op == "ui.react_spent":
+                return {"uuids": ["u"], "total": 5}
+            if op == "ui.react_probe" and (args or {}).get("watch") and last["done"]:
+                return {"open": False, "events": 0}
+            return saved(op, args, context, **kw)
+        self.g.run_job, self.g.rpc = run_job, rpc
+        patcher = mock.patch.object(dialogue, "REACT_SPENT_S", 0.0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_confirm_route_goes_through_the_spend_check(self):
+        # pQ T1: the combined prompt's route, where the 02:00 false done came from
+        self._click_spend_reads([JobResult("done", {"needs_click": 2, "rows": 4, "confirm": True}),
+                                 JobResult("done", {})])
+        self.p.answers = False
+        self.assertEqual(dialogue.react(True, "2").split("\n")[0],
+                         "react: done — the prompt closed; 0 s later its observers' resources, summed, had not dropped")
+
+    def test_the_lone_click_route_goes_through_the_spend_check(self):
+        self._click_spend_reads([JobResult("done", {"needs_click": 2, "rows": 6})])
+        self.assertEqual(dialogue.react(True, "2").split("\n")[0],
+                         "react: done — the prompt closed; 0 s later its observers' resources, summed, had not dropped")
+
+    def test_done_with_nothing_spent_says_what_was_read_and_not_failed(self):
+        # pQ N1: 5 interrupts have no cost, and a spend can land after the window: the note says only what it read
+        self._spend_reads([{"uuids": ["u"], "total": 5}])
+        out = dialogue.react(True, "1")
+        self.assertEqual(out.split("\n")[0],
+                         "react: done — the prompt closed; 0 s later its observers' resources, summed, had not dropped")
+        self.assertNotIn("FAILED", out)
+
+    def test_done_with_a_spend_is_plain_done(self):
+        self._spend_reads([{"uuids": ["u"], "total": 5}, {"uuids": ["u"], "total": 4}])
+        self.assertEqual(dialogue.react(True, "1").split("\n")[0], "react: done")
+
+    def test_a_total_of_zero_or_none_is_unread(self):
+        # pQ N2: resourceTotal gives 0 for a failed read, and nothing can drop below 0
+        for mark in ({"uuids": ["u"], "total": 0}, {"uuids": ["u"]}):
+            self._spend_reads([mark])
+            self.assertEqual(dialogue.react(True, "1").split("\n")[0], "react: done", mark)
+
+    def test_a_prompt_still_up_leaves_the_answer(self):
+        # pQ: if the next prompt holds the first reaction, its spend can't have landed yet
+        self._spend_reads([{"uuids": ["u"], "total": 5}], shown=True)
+        self.assertEqual(dialogue.react(True, "1").split("\n")[0], "react: done")
 
     def test_a_single_row_prompt_is_untouched(self):
         self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult("done", {})

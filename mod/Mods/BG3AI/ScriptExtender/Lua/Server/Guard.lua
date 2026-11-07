@@ -545,6 +545,12 @@ function G.side_gate()
         local why = f and (": " .. tostring(f.name) .. "'s turn was ended at " .. f.why) or ""
         G.refuse("not your turn (side " .. acting .. " is acting)" .. why)
     end
+    -- Load 2 (live.md 03:58:01): an end sent while the game was paused for a reaction went through and the turns rolled
+    -- on under the pause; the caster's next order never started, and the no-start check's purge dropped its paused
+    -- attack (41 of 57; 18 attack rolls in 160 turns). Nothing a side orders starts during a pause.
+    if Ar.game_held() then
+        G.refuse("the game is paused for a reaction decision: no order starts until it is answered")
+    end
 end
 
 function G.not_in_dialogue(char)

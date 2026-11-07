@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.4.0 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.5.0 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -89,7 +89,11 @@ game unless it says so.
 - 0.4.0 (2026-11-05): what a maximise run's agent is told changed: the kickoff states the end rule (a stretch with
   no acting call since a restart ends the run) and names the served tools that are acting calls, and the resume
   message no longer says the run goes on until its time cap. It also covers the bg3 tool changes of bench-v0.11
-  (bridge/CHANGELOG.md, 2026-11-04 night and 2026-11-05 entries). bench-v0.11's release cites it.
+  (bridge/CHANGELOG.md, 2026-11-04 night and 2026-11-05 entries). bench-v0.11's release cited it until 0.5.0.
+- 0.5.0 (2026-11-07): what the agent sees changed: `rules/arena.md` on who answers a reaction prompt and when one is
+  declined, and in normal play too, `react` with use=true says when its prompt closed and its observers' resources
+  hadn't dropped, and a swing the game took the cost of and then cancelled no longer says the game refused it. The
+  served tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
@@ -256,9 +260,26 @@ game unless it says so.
   buy, skills, expertise, passives, spell picks and equipment selector, and reads every pick back. Normal play's
   level-up changes too: `ui.level_up` waits up to 15 s for the intro (was 5 s; live, a Wizard's 5 s wasn't enough and
   the page stayed without panels), and it returns to the overview after the subclass and deity tabs, as it did after
-  the feat tab. No tool, description or rules text changed, so the served tool definitions and their digests stay
-  and the harness version stays. `releases/bench-v0.11.json` moves `mod_sha1` and `code_sha1`; its game and bg3le pins
-  don't change.
+  the feat tab.
+- Reaction prompts in a match. A prompt belongs to the side of the character it asks: the HUD stays on a living team
+  member so the prompt shows, and only that side sees it and answers it, by a row click where the game needs one. The
+  rules text says so, in place of "a match never makes" that click. While the game is paused for a reaction, a side's
+  orders and ends are refused and nothing is purged, and an order the pause caught reads INTERRUPTED. The runner reads
+  for a hold before a turn cap, doesn't count time held, and declines a prompt left open past the cap
+  (`arena_reaction_declined`). A stall while the game is held, or a hold or decline nobody can clear, ends the match as a
+  fault, never as the acting side's forfeit. Known and open: an Extra Attack order sent after a decline, before the held
+  attack lands, can answer `done` with `unrolled=` though its own swing then goes, and a refused or cancelled order's die
+  is recorded on that caster's next attack. No grader reads either.
+- Also in normal play: a cast that lands after a pause pays for itself, as the resource audit now waits for the cast's
+  CastedSpell (a released Healing Word healed with its slot unspent). `react` with use=true says so when its prompt
+  closed and its observers' resources hadn't dropped 4 s later. A swing the game took the cost of and then cancelled no
+  longer says the game refused it.
+- S6: `packages/bench/matrices/arena-s6-{l2,l5,l12}.toml`, one DeepSeek self-match per tier under one $1 budget file,
+  graded and never rated, with no release. The L12 matrix plans no match while its arena is a draft. A matrix queue the
+  operator closed (an `operator_stop` line) is refused before anything is charged or played.
+- The served tool definitions don't change in this round, but match rules and `react`'s results do, so the harness goes
+  to 0.5.0. `releases/bench-v0.11.json` moves that version, `mod_sha1` and `code_sha1`; its game and bg3le pins don't
+  change.
 
 ### Benchmark (`packages/bench`)
 

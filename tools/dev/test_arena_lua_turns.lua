@@ -66,6 +66,22 @@ test("a turn group across the teams: the side listed first acts, the other's mem
     as("A", G.combat_gate, A1, "turn")
 end)
 
+-- Load 2 (live.md 03:58:01): an end during a pause went in, and the caster's next order's purge dropped its attack.
+test("while the game is paused for a reaction the acting side's orders and ends are refused", function()
+    begin()
+    setTurn(A1, true, false)
+    local paused = BG3AI.Actions.cast_paused
+    BG3AI.Actions.cast_paused = function(u) return u == B1 end
+    local why = "the game is paused for a reaction decision: no order starts until it is answered"
+    refused(function() as("A", G.combat_gate, A1, "turn") end, why)
+    eq(rpc("guard.side_gate", "{}", "A").error, why, "the gate's op")
+    eq(rpc("guard.side_gate", "{}", "B").error, "not your turn (side A is acting)", "the other side: as ever")
+    eq(rpc("guard.side_gate", "{}").ok, true, "no side: the harness goes on")
+    BG3AI.Actions.cast_paused = function() return false end
+    eq(rpc("guard.side_gate", "{}", "A").ok, true, "the pause gone")
+    BG3AI.Actions.cast_paused = paused
+end)
+
 test("a TurnStarted of the other team ends a member's turn for its side, though both are player characters", function()
     begin()
     setTurn(A1, true, false)

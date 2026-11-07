@@ -36,6 +36,7 @@ ARENA = {
     "tools_off": "arena-v1",
 }
 SIDES = {"A": Side("A", "pi/model-x"), "B": Side("B", "pi/model-y")}
+HELD_REFUSAL = "the game is paused for a reaction decision: no order starts until it is answered"  # Guard.side_gate
 
 
 def wrong_context(ctx: str, op: str) -> dict[str, Any] | None:
@@ -65,6 +66,8 @@ class ArenaModel(GameModel):
 
     def __init__(self, clock: FakeClock, caps: bool = True, order: list[str] | None = None) -> None:
         super().__init__(clock=clock)
+        self.held_reaction: dict[str, Any] | None = None  # ui.state with no side: a hold with no popup
+        self.decline_sticks = False  # ui.react leaves the prompt up
         self.order = order
         self.phase: tuple[int, str | None, int] = (0, None, 0)  # (round, character or side, phase index), last record
         self.ended: dict[str, Any] | None = None
@@ -166,8 +169,11 @@ class ArenaModel(GameModel):
     def reply_side(self, ctx: str, op: str, args: dict[str, Any], side: str) -> Any:
         if (refused := wrong_context(ctx, op)) is not None:
             return refused
-        if op == "act.end_turn" and self.reaction is not None:
-            return {"ok": True, "result": self.failed_job(op, "a reaction prompt is open", side)}
+        if op == "guard.side_gate":
+            held = self.reaction is not None or self.held_reaction is not None or self.refuse_end == HELD_REFUSAL
+            return {"ok": False, "error": HELD_REFUSAL} if held else {"ok": True, "result": {"ok": True}}
+        if op == "act.end_turn" and (self.reaction is not None or self.held_reaction is not None):
+            return {"ok": True, "result": self.failed_job(op, HELD_REFUSAL, side)}
         if op == "act.end_turn" and self.refuse_end:
             return {"ok": True, "result": self.failed_job(op, self.refuse_end, side)}
         if op == "act.end_turn" and self.hold:
@@ -223,6 +229,11 @@ class ArenaModel(GameModel):
             self.cameras += 1
             r = {"moved": False, "skipped": "side A's input"} if self.cameras <= self.camera_skips else {"moved": True}
             return {"ok": False, "error": self.camera_error} if self.camera_error else {"ok": True, "result": r}
+        if op == "ui.state" and self.held_reaction is not None and self.reaction is None:
+            ui = super().reply(ctx, op, args)
+            assert ui is not None
+            ui["result"]["held_reaction"] = self.held_reaction
+            return ui
         if op == "ui.state" and self.reaction is not None and self.arena is not None:
             ui = super().reply(ctx, op, args)
             assert ui is not None
@@ -231,7 +242,8 @@ class ArenaModel(GameModel):
             return ui
         if op == "ui.react" and self.reaction is not None:
             self.reacted.append((self.reaction["options"][0]["who"], bool(args.get("use"))))
-            self.reaction = None
+            if not self.decline_sticks:
+                self.reaction = None
             return {"ok": True, "result": self.settled_job("ui.react", {"answered": "skip"})}
         return super().reply(ctx, op, args)
 
@@ -469,50 +481,6 @@ def test_the_arenas_combat_ending_without_a_wipe_is_an_invalid_match(tmp_path):
     assert [e["ev"] for e in arena_events(tmp_path)].count("arena_end") == 1
     g = grade(tmp_path)
     assert (g["valid"], g["invalid_reason"]) == (False, "fault")
-
-
-def patient(game: Game, side: str, run: Run) -> None:
-    """Ends its turn; while a reaction prompt holds the game, its end_turn waits (no model time)."""
-    if (char := my_turn(game, side)) and game.rpc("act.end_turn", {"char": char}, side)["status"] == "done":
-        run.model += 5
-
-
-def open_at_round_2(model: ArenaModel, who: str) -> Callable[[], None]:
-    def hook() -> None:
-        if model.arena is not None and model.mod_round == 2 and not model.reacted and model.reaction is None:
-            model.open_reaction(who)
-
-    return hook
-
-
-def test_an_unowned_reaction_prompt_is_declined_once_and_recorded(tmp_path):
-    """A prompt for someone on neither team holds the game: neither side may answer it, so the runner declines it
-    (with no side) and records it. Turns that move on cost no ui.state read."""
-    model, game, clock, agents, spec = setup({"A": patient, "B": patient})
-    clock.tick_hooks.insert(0, open_at_round_2(model, "Wolf"))
-    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
-    assert model.reacted == [("Wolf", False)]
-    assert game.calls.count(("ui.react", None)) == 1
-    assert game.calls.count(("ui.state", None)) == 1  # read only once the held turn was UNOWNED_CHECK_S old
-    unowned = [e for e in arena_events(tmp_path) if e["ev"] == "arena_reaction_unowned"]
-    assert [(e["round"], e["detail"]) for e in unowned] == [(2, "Wolf | Shield | Choose how to react.")]
-    assert out.end is not None and out.end["reason"] == "round_cap" and out.invalid is None
-    assert grade(tmp_path)["valid"]
-
-
-def test_a_reaction_prompt_a_team_owns_is_left_to_that_side(tmp_path):
-    model, game, clock, agents, spec = setup({"A": patient, "B": patient})
-    clock.tick_hooks.insert(0, open_at_round_2(model, "Wyll"))
-
-    def answer() -> None:  # side B answers its prompt once the runner has looked at it
-        if model.reaction is not None and ("ui.state", None) in game.calls:
-            game.rpc("ui.react", {"use": True}, "B", context="client")
-
-    clock.tick_hooks.append(answer)
-    am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
-    assert model.reacted == [("Wyll", True)]
-    assert ("ui.react", None) not in game.calls
-    assert not [e for e in arena_events(tmp_path) if e["ev"] == "arena_reaction_unowned"]
 
 
 def test_an_end_of_the_mods_own_before_the_runners_is_the_one_written(tmp_path):

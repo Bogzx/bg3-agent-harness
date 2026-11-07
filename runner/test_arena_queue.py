@@ -242,6 +242,56 @@ def test_the_same_pins_play_on_and_unread_pins_after_the_first_count_as_drift(tm
     assert stop.startswith("drift: ") and "pins: not read (arena.json)" in stop
 
 
+def test_a_queue_the_operator_closed_is_refused_with_nothing_charged_or_played(tmp_path, pilot):
+    budgets(tmp_path)
+    player = Player(tmp_path, "kill")
+    with pytest.raises(KeyboardInterrupt):
+        queue(pilot, tmp_path, player).run()  # the runner dies mid-match: a start with no end
+    log = tmp_path / "matrix" / pilot["name"] / "queue.jsonl"
+    rec = {"type": aq.OPERATOR_STOP, "job": M1, "attempt": 1, "t": 2.0, "by": "op", "why": "spend written by hand"}
+    with log.open("a") as f:
+        f.write(json.dumps(rec) + "\n")
+    before = spent(tmp_path)
+    q = queue(pilot, tmp_path, player)
+    with pytest.raises(ValueError, match="closed by the operator: spend written by hand"):
+        q.run()
+    assert spent(tmp_path) == before and len(player.calls) == 1
+    assert [r["type"] for r in lines(tmp_path)][-2:] == ["start", aq.OPERATOR_STOP]
+    assert q.state()[M1]["attempts"][-1]["result"] is None  # no end record was made up
+
+
+def test_a_closed_queue_with_an_empty_reason_is_still_closed(tmp_path, pilot):
+    budgets(tmp_path)
+    player = Player(tmp_path, "kill")
+    with pytest.raises(KeyboardInterrupt):
+        queue(pilot, tmp_path, player).run()
+    log = tmp_path / "matrix" / pilot["name"] / "queue.jsonl"
+    with log.open("a") as f:
+        f.write(json.dumps({"type": aq.OPERATOR_STOP, "job": M1, "attempt": 1, "t": 2.0, "by": "op", "why": ""}) + "\n")
+    before = spent(tmp_path)
+    with pytest.raises(ValueError, match="closed by the operator"):
+        queue(pilot, tmp_path, player).run()
+    assert spent(tmp_path) == before and len(player.calls) == 1
+
+
+def test_a_model_file_in_a_sibling_checkout_is_the_ledger_the_match_reads_and_charges(tmp_path, pilot):
+    tree = tmp_path / "tree"
+    budgets(tree)
+    sibling = "../ovh-e2e/runtime/budget-deepseek.json"
+    ledger = tmp_path / "ovh-e2e" / "runtime" / "budget-deepseek.json"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text(json.dumps({"cap": 0.1, "spent": 0}))
+    jobs = [{**j, "budgets": {"own": j["budgets"]["own"], "A": [sibling], "B": [sibling]}} for j in pilot["jobs"]]
+    m = {**pilot, "jobs": jobs}
+    player = Player(tree)
+    assert queue(m, tree, player).run() == "budget"  # its reserve doesn't fit the sibling's cap
+    assert player.calls == []
+    ledger.write_text(json.dumps({"cap": 10.0, "spent": 1.0}))
+    assert queue(m, tree, player).run() == "finished"
+    assert json.loads(ledger.read_text())["spent"] == 2.0  # both matches' A + B
+    assert not (tree / "ovh-e2e").exists() and not (tree / "runtime" / sibling).exists()
+
+
 def test_a_reserve_a_budget_file_cant_hold_stops_the_matrix_and_a_later_run_resumes(tmp_path, pilot):
     budgets(tmp_path, haiku=0.5)  # the haiku side reserves $1.00
     player = Player(tmp_path)
