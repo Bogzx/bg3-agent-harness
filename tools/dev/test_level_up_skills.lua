@@ -30,7 +30,9 @@ local function rows18(e)
     return e
 end
 local function rogue6(full)
-    return real("Rogue", rows18({ max = 2, full = full, open = { "Acrobatics", "Investigation", "Athletics" },
+    local takes = full == "as read" and "Deception" or nil
+    return real("Rogue", rows18({ max = 2, full = not takes and full or nil, takes = takes,
+        open = { "Acrobatics", "Investigation", "Athletics" },
         held = { Stealth = true, Perception = true }, preset = { Deception = true, SleightOfHand = true } }))
 end
 local function expertiseOn()
@@ -46,7 +48,7 @@ local TWO = { "Acrobatics", "Athletics" }
 -- 33j. Rogue L6's page: it opens full of its own picks and the game calls it complete. By either key the plan's picks
 --      land, an earlier level's stay, and what left the page is said. plan.skills is the one key the tool's definition
 --      names, and the class and race groups' disabled rows don't stop it reaching expertise.
-for _, full in ipairs({ "replaces", "clears" }) do
+for _, full in ipairs({ "as read", "replaces", "clears" }) do
     for _, key in ipairs({ "expertise", "skills" }) do
         local how = " (" .. full .. ", plan." .. key .. ", "
         openPage(rogue6(full))
@@ -144,6 +146,16 @@ check(j.status == "done" and expertiseOn() == "Performance,Persuasion" and offOf
       and table.concat(j.result.already_held or {}, ",") == "Acrobatics",
       "plan.skills, no group can take a held name: nothing moves, said (" .. tostring(j.status) .. ", "
       .. table.concat(j.result.already_held or {}, ",") .. ")")
+-- 33k3b. As read live on Bard L3 (2026-11-07, loads 4 and 5): the game took Persuasion, the room stage would have taken
+--        Performance, and the report names the one that left
+local bard3read = bard3()
+bard3read.expertise.takes = "Persuasion"
+openPage(bard3read)
+j = run({ uuid = "claude", plan = { skills = { "Arcana", "Perception", "Deception", "Acrobatics" } } })
+check(j.status == "done" and page.finished == true and classOn() == "Deception,Arcana,Perception"
+      and expertiseOn() == "Performance,Acrobatics" and offOf("expertise") == "Persuasion",
+      "Bard L3 as read: the row the game took is named (" .. classOn() .. ", " .. expertiseOn() .. ", "
+      .. offOf("expertise") .. ", " .. tostring(j.error) .. ")")
 -- 33k4. The bridge's rerun after spell clicks, keep_page on the same page: its result is the one the player reads, and
 --       it says what the first run took off. A rerun without keep_page starts from the page as it stands.
 openPage(bard3("replaces"))

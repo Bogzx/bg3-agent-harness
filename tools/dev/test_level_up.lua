@@ -81,6 +81,9 @@ TAB_LOG = {}
 
 -- page spec: {class, subclasses?, preselect?, feat_level?, primary?, scores?}
 function openPage(spec)
+    -- Names are cached by tostring(vm), an address: a new object on a collected one's address reads its old name, and
+    -- test 34's nameless items failed about 3% of runs by it. A new page starts with none.
+    BG3AI.Progression.vmNames = {}
     page = { spec = spec, finished = false, points = 0 }
     local p = {
         LevelUpStep = "Overview", IsMulticlassEnabled = true,
@@ -141,14 +144,16 @@ function openPage(spec)
     p.ClassProgressionDetails = obj("VMProgressionDetails", cpd)
     -- Skill groups (spec.expertise, spec.class_skills = {names, held = {name = true}, preset = {name = true},
     -- disabled = {name = true}, max, unread = true}): held are earlier picks (Enabled false); preset the page's own;
-    -- disabled can't be toggled. full: a toggle on a full group. Live, Rogue L6: from Deception, Sleight of Hand,
-    -- toggling Acrobatics then Athletics left Sleight of Hand, Athletics; how isn't read. "replaces" and "clears" (the
-    -- first own row goes, the toggled row on or not) each end there. Left out: nothing happens, as ProgressionCC reads
-    -- on a respec page, so the room stage's guards get work. unread: rows read Enabled nil, not seen live; a held one
-    -- comes off if toggled.
+    -- disabled can't be toggled. What a toggle does on a full group, read live 2026-11-07 and not explained: on a fresh
+    -- page, Rogue L6's Deception, Sleight of Hand lost Deception, and Bard L3's Performance, Persuasion lost
+    -- Persuasion; a later toggle on Acrobatics, Sleight of Hand changed nothing. takes = name: the first toggle takes
+    -- that row and doesn't land, later ones do nothing, which fits those reads and isn't shown to be the rule. full =
+    -- "replaces" or "clears" (the first own row goes, the toggled row on or not) fit only the fresh page's first two
+    -- toggles, and stay since nothing may rest on which. All left out: nothing happens, so the room stage's guards get
+    -- work. unread: rows read Enabled nil, not seen live; a held one comes off if toggled.
     local function skillGroup(e)
         local items = {}
-        local g = { items = items, max = e.max, full = e.full }
+        local g = { items = items, max = e.max, full = e.full, takes = e.takes }
         for i, n in ipairs(e.names) do
             items[i] = obj("ls.VM", { Name = n, Selected = (e.held or {})[n] or (e.preset or {})[n] or false,
                 Enabled = not ((e.held or {})[n] or (e.disabled or {})[n]), _g = g, _held = (e.held or {})[n] })
@@ -347,7 +352,13 @@ BG3AI.UI = {
             end
             if arg._p.Selected == true then arg._p.Selected = false
             elseif own < g.max then arg._p.Selected = true
-            elseif first and g.full then first._p.Selected, arg._p.Selected = false, g.full == "replaces" end
+            elseif first and g.full then first._p.Selected, arg._p.Selected = false, g.full == "replaces"
+            elseif g.takes then
+                for _, it in ipairs(g.items) do
+                    if it._p.Name == g.takes then it._p.Selected = false end
+                end
+                g.takes = nil
+            end
             g.recount()
             return true
         elseif name == "TogglePassive" then
