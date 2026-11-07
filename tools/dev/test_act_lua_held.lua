@@ -715,27 +715,27 @@ local function held_swing_charged()
     world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0
     return j
 end
-local function swing() return op("cast", { char = P1, spell = "Target_MainHandAttack", target = NPC }) end
+local function gap_swing() return op("cast", { char = P1, spell = "Target_MainHandAttack", target = NPC }) end
 local function refused_with(r, pat)
     local e = r.error or (r.job and r.job.error) or ""
     assert(e:find(pat, 1, true), tostring(e))
 end
 
-test("held cast: a weapon attack in the gap before its free status reads as still resolving, not out of action", function()
+test("held cast: a weapon attack before its free status reads as still resolving, not out of action", function()
     held_swing_charged()
-    refused_with(swing(), A.CAST_UNLANDED)
+    refused_with(gap_swing(), A.CAST_UNLANDED)
     assert(A.CAST_UNLANDED:find("not enough action yet", 1, true), A.CAST_UNLANDED)
     local plain = op("cast", { char = P1, spell = "Target_Bolt", target = NPC })
-    eq(plain.error or (plain.job and plain.job.error), "not enough action", "no free attack can pay a plain Action spell")
+    eq(plain.error or (plain.job and plain.job.error), "not enough action", "no free attack pays a plain Action spell")
     osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
-    eq(job(swing()).status, "running", "the free status on: it passes, landed or not, as #120")
+    eq(job(gap_swing()).status, "running", "the free status on: it passes, landed or not, as #120")
     osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
 end)
 
 test("held cast: after its landing, no status means no free attack: the plain refusal", function()
     held_swing_charged()
     A.dispatch("CastedSpell", { P1, "Target_MainHandAttack", "Target", "None", 0 })
-    local r = swing()
+    local r = gap_swing()
     local e = r.error or (r.job and r.job.error) or ""
     eq(e:find("yet", 1, true), nil, e)
     assert(e:find("not enough action", 1, true), e)
@@ -744,11 +744,11 @@ end)
 test("held cast: a failed with an outcome ends the wait; no outcome (a preview's) doesn't", function()
     local j = held_swing_charged()
     A.dispatch("CastSpellFailed", { P1, "Target_MainHandAttack", "Target", "None", 0 })
-    refused_with(swing(), A.CAST_UNLANDED)
+    refused_with(gap_swing(), A.CAST_UNLANDED)
     j.cast_entity.SpellCastOutcome = { Result = "Canceled" }
     A.dispatch("CastSpellFailed", { P1, "Target_MainHandAttack", "Target", "None", 0 })
     j.cast_entity.SpellCastOutcome = nil
-    local r = swing()
+    local r = gap_swing()
     local e = r.error or (r.job and r.job.error) or ""
     eq(e:find("yet", 1, true), nil, e)
 end)
