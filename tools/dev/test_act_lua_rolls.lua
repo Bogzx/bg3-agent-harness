@@ -592,7 +592,10 @@ local function hit(amount) A.dispatch("AttackedBy", { NPC, P1, P1, "Slashing", a
 test("held cast: its landing isn't the order queued behind it: that one reads its own swing, rolled", function()
     local k = extra_in_the_gap("none")
     hit(7) -- the held attack's damage
+    k.statuses[#k.statuses + 1] = { name = "the held attack's status" }
     attack_event("CastedSpell")
+    eq(k.last_hit, nil, "the wait for its own arrow isn't cut short by the held hit's time")
+    eq(#k.statuses, 0, "the held attack's status isn't this order's")
     tick(10)
     eq(k.status, "running", "still waiting for its own swing")
     create_hooks.SpellCastState({ SpellCastState = last_cast })

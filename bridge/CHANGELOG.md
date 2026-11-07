@@ -9,8 +9,10 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 
 - An Extra Attack ordered after the game charged a held attack and before it landed (s5-rx-3 312.7 s, 467.7 s, about
   0.5 s) took that landing as its own: `done`, `no_damage`, `unrolled=the game cast it without its roll`, then its real
-  swing went. It now stays running through the held attack's landing and reports its own swing, roll and damage. No new
-  wording. A swing that truly shows no cast state still reads `unrolled=`.
+  swing went. It now stays running through the held attack's landing and reports its own swing. No new wording. A swing
+  that truly shows no cast state still reads `unrolled=`, unless a lost held cast's entry claims its landing: then it
+  ends `timed out`. Known and open: a held arrow's hit that lands after its CastedSpell counts as the new order's, and
+  a held swing's CastSpellFailed still ends the order queued behind it.
 
 ## 2026-11-07: an order can't start while its character's last cast is still resolving after a reaction
 
