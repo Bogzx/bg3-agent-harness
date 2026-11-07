@@ -32,7 +32,41 @@ test("lost control: the read is the game's component, with the status that carri
     end)
     withGoaded(function()
         eq(G.lost_control(P1).name, nil, "no shown status")
-        eq(G.lost_control_text(G.lost_control(P1)), "can't control, the game runs its turn", "words without a name")
+        eq(G.lost_control_text(G.lost_control(P1)), "the game runs its turn", "words without a name")
+    end, true)
+end)
+
+-- live.md "## Goaded read 2": the component is there under all 5 statuses read; its LoseControl bool was false under
+-- Command: Approach and Confusion while the game's AI ran them. Presence is the read (orchestrator D319).
+test("lost control: the component's presence is the read, whatever its LoseControl bool says", function()
+    withGoaded(function()
+        world[P1].comps.StatusLoseControl = { LoseControl = false }
+        eq(G.lost_control(P1) ~= nil, true, "bool false: still the game's turn")
+        eq(G.is_my_turn(P1), false, "not the side's")
+        world[P1].comps.StatusLoseControl = { LoseControl = true }
+        eq(G.lost_control(P1) ~= nil, true, "bool true")
+    end)
+end)
+
+-- Fairness (D319): Minor Illusion carries the flag but hides from the portrait and shows no HUD bar; a status the
+-- visible filter drops is never named, and no other shown status is named in its place.
+test("lost control: a status a player can't see isn't named: the words are the fact alone", function()
+    withGoaded(function()
+        spell("BLESS", { StatusType = "BOOST" }) -- shown, no LoseControl flag
+        local savedV = BG3AI.Visibility
+        BG3AI.Visibility = setmetatable({ statuses = function() return { { id = "BLESS", name = "Blessed" } } end },
+            { __index = savedV })
+        local ok, err = pcall(function()
+            eq(G.lost_control(P1).name, nil, "not named after another status")
+            local j = job(op("cast", { char = P1, spell = "Target_MH", target = NPC }))
+            eq(j.error, "the game runs its turn", "refused, no name and no HUD words")
+            G._disabling = {}
+            local d = G.disabling(P1)
+            eq(d[#d].name, "the game runs its turn", "the DISABLED entry")
+            eq(d[#d].effect, nil, "said once")
+        end)
+        BG3AI.Visibility = savedV
+        if not ok then error(err, 0) end
     end, true)
 end)
 
@@ -92,7 +126,7 @@ test("lost control: a cast ordered before the status came fails in the same word
     tick(55) -- 3.3 s, past the combat no-start bound
     world[P1].comps.StatusLoseControl = nil
     eq(j.status, "failed", "never started")
-    eq(j.error, "can't control, the game runs its turn", "the words, not the order before it")
+    eq(j.error, "the game runs its turn", "the words, not the order before it")
     eq(#called("UseSpell"), u0, "not ordered again")
     eq(#called("PurgeOsirisQueue"), p0, "the game's cast not purged")
 end)
@@ -107,7 +141,7 @@ test("lost control: a walk ordered before the status came fails in the same word
     tick(43) -- past the 2.5 s no-start window
     world[P1].comps.StatusLoseControl = nil
     eq(j.status, "failed", "never started")
-    eq(j.error, "can't control, the game runs its turn", "the words")
+    eq(j.error, "the game runs its turn", "the words")
     eq(#called("PurgeOsirisQueue"), p0, "no purge")
 end)
 

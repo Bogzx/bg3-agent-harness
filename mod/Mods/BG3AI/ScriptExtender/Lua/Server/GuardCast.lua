@@ -588,9 +588,12 @@ end
 -- The game runs this character's turn itself, and a player gets the same (live.md "## Goaded read", on Goading Attack:
 -- casts, spending and the turn's end with no order, in a match and in normal play; the HUD's "Can't control: Goaded",
 -- its End Turn click ignored, hotbar cells can_use false). -> {name = the status, when one on it carries the stats'
--- LoseControl flag and is shown}, or nil. The one place this rule lives. It reads the game's own state,
--- eoc::status::LoseControlComponent by entity, which came and went with the turns on every sample: not the stats'
--- flag, which 45 statuses carry and whose effect is unread. A status arriving mid-turn reads the same.
+-- LoseControl flag and a player sees it on the character (V.statuses' filter)}, or nil. The one place this rule lives.
+-- It reads the game's own state: eoc::status::LoseControlComponent present by entity, which came and went with the
+-- game's turns on every sample of 5 statuses (live.md "## Goaded read 2"). Never its LoseControl bool, false under
+-- Command: Approach and Confusion while the game's AI ran, nor the stats' flag (45 statuses, effect unread). Every
+-- status counts: under Compelled Duel an order once ran as ordered, but a player's hotbar is grey (orchestrator D319).
+-- A status arriving mid-turn reads the same.
 function G.lost_control(char)
     local e = G.entity(char)
     if not (e and U.comp(e, "StatusLoseControl")) then return nil end
@@ -602,9 +605,11 @@ function G.lost_control(char)
     return {}
 end
 
--- The one wording, for the list, the guard and the order's result: the HUD's words and the fact.
+-- The one wording, for the list, the guard and the order's result: the HUD's words and the fact. A status a player
+-- can't see on the character goes unnamed, and the HUD shows no bar for it (Minor Illusion): the fact alone.
 function G.lost_control_text(lost)
-    return "can't control" .. (lost.name and (": " .. tostring(lost.name)) or "") .. ", the game runs its turn"
+    if not lost.name then return "the game runs its turn" end
+    return "can't control: " .. tostring(lost.name) .. ", the game runs its turn"
 end
 
 -- Refused while the game runs char's turn: an order would only cut the game's cast (live.md, case B: 0 of 3 orders ran
@@ -692,7 +697,7 @@ function G.disabling(char)
     end
     if lost and not lost.name then
         out = out or {}
-        out[#out + 1] = { name = "can't control", effect = G.lost_control_text(lost) }
+        out[#out + 1] = { name = G.lost_control_text(lost) }
     end
     return out
 end

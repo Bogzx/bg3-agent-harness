@@ -136,15 +136,18 @@ game unless it says so.
 - 0.13.0 (2026-11-07): what the agent sees changed: a character whose turn the game runs itself reads so, and nothing
   a client sends reaches the game for it. Live (Goading Attack, in a match and in normal play) the game's AI cast,
   spent and ended such a turn with no order, the HUD read `Can't control: Goaded`, a player's End Turn click did
-  nothing and the hotbar cells read can_use false. The mod reads the game's LoseControlComponent by entity, which came
-  and went with those turns on every sample, not the stats' LoseControl flag. The action list, the guard, end_turn,
-  stop and an order that never started now say `can't control: Goaded, the game runs its turn`; is_my_turn is false,
+  nothing and the hotbar cells read can_use false. The mod reads the game's LoseControlComponent by entity (present),
+  which came and went with the game's turns under all 5 statuses read, not its LoseControl bool (false under Command:
+  Approach and Confusion while the AI ran) nor the stats' flag. Every such status counts, Compelled Duel too, where an
+  order once ran but a player's hotbar is grey. The action list, the guard, end_turn, stop and an order that never
+  started now say `can't control: Goaded, the game runs its turn`, or `the game runs its turn` when a player can't see
+  the status on the character (Minor Illusion shows no HUD bar and is hidden from the portrait); is_my_turn is false,
   the state.combat row reads `game_turn`, not `ended`, the wait no longer says `now e1's turn` for it, and the side's
   own casts in it read `cast e1 Red Ash (game's turn): ...`. Before, the list offered actions, orders failed three
   ways (one naming an unrelated status as the cause) or cut the game's cast, and end_turn ended a turn a player can't
   (6 of 6, 2.15-2.18 s later). The mod's re-sent end for a dropped group end skips such a member. In a match the runner
   gives that phase no cap and no forfeit count and writes `arena_control_lost`, and one that hangs is the game's stall;
-  the grade lists `lost_control` and `valid` doesn't read it. Read live on Goaded only. Tool definitions and the bench
+  the grade lists `lost_control` and `valid` doesn't read it. Read live: the component under 5 statuses (live.md "## Goaded read 2"); the fix itself not yet. Tool definitions and the bench
   prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
