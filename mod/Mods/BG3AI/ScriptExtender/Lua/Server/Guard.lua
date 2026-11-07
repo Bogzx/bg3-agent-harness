@@ -518,6 +518,8 @@ function G.combat_gate(char, mode)
     end
     G.side_gate()
     if not G.is_my_turn(char) then G.refuse("it is not this character's turn") end
+    local A = BG3AI.Actions
+    if A and A.cast_unresolved(char) then G.refuse(A.CAST_UNRESOLVED) end
 end
 
 -- In an arena, a side's action once the match has ended (the mod's own end or the runner's arena.end): refused as a
