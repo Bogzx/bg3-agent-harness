@@ -580,7 +580,9 @@ RPC.register("ui.level_up", function(args)
         end },
         { "skills", skillsStage(get, ctx, plan.skills) },
         { "expertise", skillsStage(get, ctx, plan.expertise, "expertise") },
+        { "expertise_room", I.skillRoomStage(get, ctx, plan.expertise, "expertise") },
         { "skills?", skillsReport(get, ctx) },
+        { "picks?", I.levelPicksStage(get, ctx, plan) },
         { "passive_lists", I.passiveListsStage(get, ctx, plan.passive_lists) },
         { "passives", passivesStage(get, ctx, plan.passives, plan.allow_defaults) },
         { "passives?", passivesReport(get, ctx) },
@@ -618,6 +620,10 @@ RPC.register("ui.level_up", function(args)
                 end
                 return "fail", "spell picks pending (" .. table.concat(names, ", ")
                     .. "): the level_up tool clicks these itself; nothing to click by hand"
+            end
+            if ctx.unlanded then
+                return "fail", "the plan's picks aren't on the page, not finishing: "
+                    .. table.concat(ctx.unlanded, "; ")
             end
             if UI.prop(dc, "IsLevelUpComplete") == false then
                 local why = #ctx.result.problems > 0 and table.concat(ctx.result.problems, "; ") or P.luMissing(dc)
@@ -669,7 +675,7 @@ RPC.register("ui.level_up", function(args)
                 return "done"
             end
             return "wait", 300
-        end, 10000 },
+        end, 12000 }, -- Finishing's 9 s, then a next page's close and its ESCAPE
     }
     return runJob("ui.level_up", stages, ctx, 90000)
 end)

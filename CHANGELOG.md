@@ -283,8 +283,16 @@ game unless it says so.
 - Also in normal play: `level_up` closes the page the game opens after a finish even when that page's intro has already
   ended. It used to keep such a page for the next call, and that page could lack the next level's selectors for good: a
   Battle Master's level 7 stopped with its manoeuvres "not offered", and reopened by hand the same page offered them. A
-  page that ignores the close is still reported as `page_still_open`. Each level on a short intro now takes a reopen,
-  about 7 s more.
+  page that ignores the close is still reported as `page_still_open`, and a page the game opens later than the first look
+  is still carried, so a kept page remains possible. Each such level now takes a reopen: live, a 5.5-7.2 s intro on top of
+  the close. The `closed` stage allows 12 s, so a long Finishing and a close don't read as a failure after the level applied.
+- `level_up` reads the plan's skills and expertise back, and won't finish without them even when the game calls the page
+  complete. A level's expertise group can open full of the game's own picks, and a full group ignores a toggle and says
+  nothing: a Rogue's level 6 finished Sleight of Hand with `done` and `complete` where the plan said Acrobatics. Now, only
+  for a pick that didn't land, as many of the group's unnamed picks as it lacks come off (`set.expertise_off` names them),
+  never one the game shows as locked. A plan's skill the page doesn't offer is now a failure, no longer `done`.
+- A kit's subclass spell with no ability on its row or class reads the stats' ability, as a character's does (a Thief's
+  Shout_SupremeSneak read None on a twin, Intelligence on the reference).
 
 ### Benchmark (`packages/bench`)
 

@@ -138,6 +138,19 @@ local function openPage(spec)
         page.passiveSel = ps
     end
     p.ClassProgressionDetails = obj("VMProgressionDetails", cpd)
+    -- Expertise group (spec.expertise = {names, held = {name = true}, preset = {name = true}, max}): held are earlier
+    -- picks (Enabled false); preset the page's own; a full group ignores ToggleSkill and says nothing (live).
+    if spec.expertise then
+        local e, items = spec.expertise, {}
+        for i, n in ipairs(e.names) do
+            items[i] = obj("ls.VM", { Name = n, Selected = (e.held or {})[n] or (e.preset or {})[n] or false,
+                Enabled = not (e.held or {})[n] })
+        end
+        page.expertiseItems = items
+        page.expertiseMax = e.max
+        local group = obj("ls.VM", { Skills = items, MaxSelectedSkillCount = e.max })
+        p.AllSkills = obj("ls.VM", { ExpertiseSkills = group })
+    end
     dc = obj("ls.DCCharacterLevelUp", p)
     -- Selecting a feat fills SelectedFeatDetails (the feat panel's DataContext, as on the live page):
     -- FeatDetails.AbilitySelection + MaxSelectedAbilityCount (Ability Improvement 2 of six, Athlete 1 of Str/Dex),
@@ -211,7 +224,10 @@ local opened = 0
 local CLASS_OF = { gale = "clsWizard", wyll = "clsWarlock" }
 Ext = { Entity = { Get = function(u) return { ClientControl = true, Health = { Hp = 16, MaxHp = 16 }, EocLevel = { Level = 1 },
                                                Classes = { Classes = { { ClassUUID = CLASS_OF[u], Level = 1 } } } } end },
-        Input = { InjectKeyPress = function() if page and page.escape_closes then closePage() end end },
+        Input = { InjectKeyPress = function()
+            if page then page.escapes = (page.escapes or 0) + 1 end
+            if page and page.escape_closes then closePage() end
+        end },
         Stats = { Get = function(id) local st = STATS[id] if not st then return nil end
                       return { Level = st.Level, SpellSchool = st.SpellSchool, DisplayName = "h:" .. id } end },
         Loca = { GetTranslatedString = function(h) local st = STATS[h:sub(3)] return st and st.Name or "" end },
@@ -295,13 +311,23 @@ BG3AI.UI = {
             if page.chain then  -- the game opens the next member's page by itself, in its intro (S029)
                 local spec = page.spec
                 local chain, sticky, step = page.chain, page.chain_sticky, page.chain_step
-                local escape = page.chain_escape
+                local escape, tick = page.chain_escape, page.chain_tick
                 openPage(spec)
+                page.on_tick = tick
                 page.chain, page.sticky = chain, sticky   -- chain_sticky: the new page ignores the close too
                 page.escape_closes = escape               -- chain_escape: ... but not ESCAPE
                 dc._p.LevelUpStep = step or "Started"     -- chain_step: its intro already over
                 dc._p.LevelUpCharacter = chain
             end
+            return true
+        elseif name == "ToggleSkill" then
+            if page.expertiseStuck or arg._p.Enabled == false then return true end
+            local own = 0
+            for _, it in ipairs(page.expertiseItems) do
+                if it._p.Selected == true and it._p.Enabled ~= false then own = own + 1 end
+            end
+            if arg._p.Selected == true then arg._p.Selected = false
+            elseif own < page.expertiseMax then arg._p.Selected = true end
             return true
         elseif name == "TogglePassive" then
             arg._p.Value = arg._p.Value > 0 and 0.0 or 1.0
@@ -753,6 +779,27 @@ j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "C
 check(j.status == "done" and j.result.page_still_open == "another level up may be pending"
       and j.result.close_step == "IntroComplete",
       "own page past its intro that stays: pending, with its step (" .. tostring(j.result.close_step) .. ")")
+-- 33h. a page that stays in its Finishing template is the finished page closing, however long: never closed (T1)
+openPage(PAL)
+page.chain, page.chain_step = portrait, "Finishing"
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and page.closes == nil and j.result.next_page_closed == nil
+      and j.result.close_step == "Finishing" and j.result.page_still_open ~= nil,
+      "a page staying in Finishing: not closed (" .. tostring(page.closes) .. ", " .. tostring(j.result.close_step)
+      .. ")")
+local t33h
+-- 33i. Finishing for 8.4 s, then a next page: closed inside the stage's limit, not a FAILED after an applied level (R2)
+openPage(PAL)
+page.chain, page.chain_step = portrait, "Finishing"
+page.chain_sticky, page.chain_escape = true, true
+t33h = nil
+page.chain_tick = function()
+    t33h = t33h or now
+    if dc and now - t33h >= 8400 then dc._p.LevelUpStep = "IntroComplete" end
+end
+j = run({ uuid = "claude", plan = { feat = "Ability Improvement", abilities = "Charisma" } })
+check(j.status == "done" and widget == nil and j.result.next_page_closed ~= nil,
+      "Finishing 8.4 s, then a next page: closed, done (" .. tostring(j.status) .. ", " .. tostring(j.error) .. ")")
 -- 33g. the next call on a page that stayed and lacks the level's selector stops at the finish, naming the picks: it
 --      can't finish a level short of them, since the game's own IsLevelUpComplete is false
 openPage(PAL)
@@ -763,6 +810,44 @@ j = run({ uuid = "claude", plan = { passives = { "Feinting Attack" } } })
 check(j.status == "failed" and not page.finished and tostring(j.error):find("Feinting Attack", 1, true) ~= nil,
       "a stale page short of the plan's selector: stopped, not finished (" .. tostring(j.status) .. ", "
       .. tostring(j.error) .. ")")
+
+-- 33j. live 2026-11-07, Rogue L6: the group opens full of the page's own picks, ToggleSkill is ignored, the game calls
+--      the page complete. The plan's picks land, an earlier level's stay
+local ROGUE6 = { class = "Rogue", expertise = { max = 2,
+    names = { "Deception", "Acrobatics", "SleightOfHand", "Stealth", "Athletics", "Perception" },
+    held = { Stealth = true, Perception = true }, preset = { SleightOfHand = true, Athletics = true } } }
+local function expertiseOn()
+    local on = {}
+    for _, it in ipairs(page.expertiseItems) do
+        if it._p.Selected == true then on[#on + 1] = it._p.Name end
+    end
+    return table.concat(on, ",")
+end
+openPage(ROGUE6)
+j = run({ uuid = "claude", plan = { expertise = { "Acrobatics", "Athletics" } } })
+check(j.status == "done" and page.finished == true and expertiseOn() == "Acrobatics,Stealth,Athletics,Perception",
+      "a group full of the page's picks: the plan's land, held stay (" .. tostring(j.status) .. ", " .. expertiseOn()
+      .. ", " .. tostring(j.error) .. ")")
+check(j.result.set.expertise_off and j.result.set.expertise_off[1] == "SleightOfHand"
+      and #j.result.set.expertise_off == 1, "the one turned off is said")
+-- 33k. Bard L10's shape: nothing preset, both land by their own toggles, nothing turned off
+openPage({ class = "Bard", expertise = { max = 2, names = { "Performance", "Persuasion", "Insight", "Medicine" },
+    held = { Performance = true, Persuasion = true } } })
+j = run({ uuid = "claude", plan = { expertise = { "Medicine", "Insight" } } })
+check(j.status == "done" and expertiseOn() == "Performance,Persuasion,Insight,Medicine"
+      and j.result.set.expertise_off == nil, "a free group: toggled, nothing turned off")
+-- 33l. a plan's pick that can't land (the toggle does nothing): not finished, and the pick is named
+openPage(ROGUE6)
+page.expertiseStuck = true
+j = run({ uuid = "claude", plan = { expertise = { "Acrobatics", "Athletics" } } })
+check(j.status == "failed" and not page.finished
+      and tostring(j.error):find("skill Acrobatics: not on the page", 1, true),
+      "a pick that doesn't land: not finished (" .. tostring(j.status) .. ", " .. tostring(j.error) .. ")")
+-- 33m. a pick the group doesn't list: the same
+openPage(ROGUE6)
+j = run({ uuid = "claude", plan = { expertise = { "History" } } })
+check(j.status == "failed" and not page.finished and tostring(j.error):find("skill History", 1, true),
+      "a pick not offered: not finished (" .. tostring(j.status) .. ", " .. tostring(j.error) .. ")")
 
 -- 34. S032 Wyll L6 (Warlock, no feat): the multiclass items show "Lv 2" / nothing; options name the class from the
 --     character, drop the unnamed list, and the run never selects (or reports) the feat tab.
