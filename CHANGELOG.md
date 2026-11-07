@@ -125,8 +125,10 @@ game unless it says so.
   Frenzied Strike did; not read live. Tool definitions and the bench prompts don't change. bench-v0.11's release cited it until 0.11.0.
 - 0.11.0 (2026-11-07): what the agent sees changed: every status whose boost frees an Action counts as the free attack,
   in the guard, the action list and a Canceled swing's cost. An L12 Fighter had its second and third swings refused
-  `not enough action`, with EXTRA_ATTACK_2 on and read by nothing. An unarmed attack and a throw count as the game's
-  check does. Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
+  `not enough action`, with EXTRA_ATTACK_2 on and read by nothing; it now makes its 3 attacks, read live. An unarmed
+  attack and a throw count as the game's check does. A weapon action with an Action cost takes the free attack, read
+  live once. A hover preview's CastSpellFailed no longer ends the order, which had read `the game refused the cast (no
+  reason given)`. Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at

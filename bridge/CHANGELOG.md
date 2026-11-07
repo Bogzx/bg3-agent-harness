@@ -10,11 +10,21 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 - The guard, the action list and a Canceled swing's cost read one list of statuses, every one whose boost frees an
   Action: EXTRA_ATTACK_2, EXTRA_ATTACK, MAG_MARTIAL_EXERTION, WILDSTRIKE_EXTRA_ATTACK and its _2, STALKERS_FLURRY,
   EXTRA_ATTACK_THIRSTING_BLADE. Before, live.md L12 extra attack read: an L12 Fighter with EXTRA_ATTACK_2 on had its
-  second and third swings refused `not enough action`, 3 of 3 turns, one attack of the three, and get_actions showed
-  no `[Extra Attack: free]`. An unarmed attack, a throw and the game's five named spells now count as its
-  ExtraAttackSpellCheck does; by reading, not live. EXTRA_ATTACK_WAR_MAGIC and _WAR_PRIEST make the attack cost a bonus
-  action, so they stay refused `not enough action`. A weapon action stays outside it, as before; the game's check
-  doesn't name that exclusion, and it is unread.
+  second and third swings refused `not enough action`, 3 of 3 turns, and get_actions showed no `[Extra Attack: free]`.
+  Read live on the fix, live.md L12 three attacks: three attacks in a turn, ranged and by the switch, with the status
+  going EXTRA_ATTACK_2, EXTRA_ATTACK_Q, EXTRA_ATTACK inside the second swing. An unarmed attack, a throw and the game's
+  named spells now count as its ExtraAttackSpellCheck does; by reading, not live. EXTRA_ATTACK_WAR_MAGIC and
+  _WAR_PRIEST make the attack cost a bonus action, so they stay refused `not enough action`.
+- A weapon action with an Action cost takes the free attack, in the guard and the list. Before, it read `not enough
+  action` and UNAVAILABLE, a rule from 2026-10-10 with no read behind it and no match in the game's check. Read live
+  once, L5, through a test-only wrap: Hamstring Shot ran with no Action, taking EXTRA_ATTACK and its cooldown. L12 and
+  the unwrapped order aren't read yet.
+- A CastSpellFailed no longer ends a job whose own cast is alive with no outcome and hasn't reached its CastSpell.
+  Before, live.md Stray row read: an order starting cancels the caster's hover preview, whose failed names the preview's
+  spell. With the same id the job read `the game refused the cast (no reason given)` and our purge followed: 2 of 12
+  melee swings by the switch lost their attack, the first swing's id differing and so harmless. With the failed
+  dropped the swing landed, 2 of 2. A real failure with no outcome now ends at the no-start bound, in the same words.
+  A hover preview's cast state is no longer taken as the order's; by reading, nothing seen.
 
 ## 2026-11-07: a countered cast pays as a player's does, and a swing a Riposte answered reads as a miss
 
