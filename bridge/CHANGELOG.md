@@ -5,6 +5,22 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-07: react's definition and INTERRUPTED no longer state what wasn't so
+
+- `react`'s definition said Do Not React "has never closed" a prompt with one row per level, from S092 outside a match.
+  That is false in a match: live.md 03:51:42 (lone Shield I-III) and 06:00:20 (Cutting Words + Shield I-III), `react:
+  done`, 0 paused, the attack landed. Outside a match it hasn't been read since S092's TIMEOUT, and the definition is
+  served there too, so it now says only `use=false is Do Not React.` A decline that times out with the prompt up says
+  that it did (`the prompt is still up after Do Not React`), and no longer says never.
+- A cast paused for a reaction said `the cast goes on after it and its outcome shows in the events`. In S6 L5, 4 of 9
+  were countered, and one of those left its caster no event at all. It now says `the answer can change or stop the
+  cast, and the state here is from before it`.
+- An order the pause caught before it started said `the order wasn't cancelled, and whether it runs after shows in the
+  events`. It now says `read live, an order held this way didn't run after the answer and its action stayed`. Read in 4
+  held orders (live.md 05:52:45, 06:36:33, 06:38:40, 06:39:40): no roll for it, action 1 after, and in the last one
+  nothing fired that turn or the next. `act.stop` counted 1 task right after one decline and 0 about 28 s after another,
+  without naming it, so whether the order's task was cancelled isn't read, and the line no longer says.
+
 ## 2026-11-05: a potion aimed at someone else is refused
 
 - `use_ability` with a potion and another character as target answers `<potion> is drunk by whoever uses it: X would

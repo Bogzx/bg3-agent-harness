@@ -164,7 +164,8 @@ class HandedOn(unittest.TestCase):
 class AttackLanded(unittest.TestCase):
     PAUSED = (
         "use_ability: INTERRUPTED — the cast started and the game paused it for a reaction decision (a reaction prompt "
-        "is open): answer it (react); the cast goes on after it and its outcome shows in the events"
+        "is open): answer it (react) if it is yours; the answer can change or stop the cast, and the state here is "
+        "from before it"
     )
 
     def _landed(self, out: str, rows: list[dict], foe: dict | None = None) -> tuple[bool, list]:
