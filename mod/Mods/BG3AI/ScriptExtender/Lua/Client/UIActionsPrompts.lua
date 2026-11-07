@@ -206,7 +206,7 @@ RPC.register("ui.react", function(args)
         -- multi-binding (decision, interruptor); bg3le reads converter-bound parameters as nil (DonateBtn, live D10),
         -- so the press most likely ran the command with nil, and Lua can't build that pair. A click on the row is
         -- what answers it: the bridge clicks. A row already chosen (checked) is accepted by command below, as before.
-        if #roots <= 1 and (#btns > 1 or (#btns == 1 and UI.prop(btns[1], "IsChecked") ~= true)) then
+        if #roots <= 1 and (#btns > 1 or (#btns == 1 and not S.rowChosen(btns[1]))) then
             local i = tonumber(args.which) or 1
             if not btns[i] then error("no reaction option " .. tostring(args.which) .. " (" .. #btns .. " shown)") end
             return { needs_click = i, rows = #btns }
@@ -217,7 +217,7 @@ RPC.register("ui.react", function(args)
         if #roots > 1 then
             local i = tonumber(args.which) or 1
             if not btns[i] then error("no reaction option " .. tostring(args.which) .. " (" .. #btns .. " shown)") end
-            if UI.prop(btns[i], "IsChecked") ~= true then return { needs_click = i, rows = #btns, confirm = true } end
+            if not S.rowChosen(btns[i]) then return { needs_click = i, rows = #btns, confirm = true } end
         end
     end
     if args.use == false then
@@ -260,9 +260,10 @@ end)
 
 RPC.register("ui.react_probe", function(args)
     local w = reactionPopup()
-    -- a side's click walks by this: the other side's prompt reads as none, so a click can't land on it
+    -- a side's click walks by this: the other side's prompt reads as none, so a click can't land on it. Not on a watch:
+    -- it reads no rows while the game takes the popup down, and it clicks nothing (reactclick._watch)
     local side = RPC.side and RPC.side()
-    if w and side and S.promptSide(S.reactionRows(w), S.heldInterrupt()) ~= side then w = nil end
+    if w and side and not args.watch and S.promptSide(S.reactionRows(w), S.heldInterrupt()) ~= side then w = nil end
     local dc = w and try(function() return w.DataContext end)
     local n = dc and UI.count(UI.path(dc, "Data.InterruptEvents")) or 0
     local out = { open = w ~= nil and n > 0, events = n }

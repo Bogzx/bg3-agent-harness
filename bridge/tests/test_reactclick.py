@@ -187,21 +187,47 @@ class ReactTool(Base):
                JobResult("done", {"needs_click": 2, "rows": 4, "confirm": True})]
         self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: seq.pop(0)
         self.p.answers = False
-        self.assertIn("react: FAILED — the click chose no row", dialogue.react(True, "2"))
+        out = dialogue.react(True, "2")
+        self.assertIn("react: FAILED — the row doesn't read chosen after the click", out)
 
-    def test_done_with_nothing_spent_is_failed(self):
-        saved = self.g.rpc
-        totals = [{"uuids": ["u"], "total": 5}]
-        self.g.rpc = lambda op, args=None, context="server", **kw: (
-            totals[0] if op == "ui.react_spent" else saved(op, args, context, **kw))
+    def _spend_reads(self, totals, shown=False):
+        """ui.react answers done; ui.react_spent reads `totals` in turn, the last repeating; the prompt shows or not."""
+        saved, seq = self.g.rpc, list(totals)
+
+        def rpc(op, args=None, context="server", **kw):
+            if op == "ui.react_spent":
+                return seq.pop(0) if len(seq) > 1 else seq[0]
+            if op == "ui.react_probe":
+                return {"open": shown, "events": int(shown)}
+            return saved(op, args, context, **kw)
+        self.g.rpc = rpc
         self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult("done", {})
-        with mock.patch.object(dialogue, "REACT_SPENT_S", 0.0):
-            out = dialogue.react(True, "1")
-            self.assertTrue(out.startswith("react: FAILED — the prompt closed and nothing was spent"), out)
-            seq = [{"uuids": ["u"], "total": 5}, {"uuids": ["u"], "total": 4}]
-            self.g.rpc = lambda op, args=None, context="server", **kw: (
-                seq.pop(0) if op == "ui.react_spent" else saved(op, args, context, **kw))
-            self.assertIn("react: done", dialogue.react(True, "1"))
+        patcher = mock.patch.object(dialogue, "REACT_SPENT_S", 0.0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_done_with_nothing_spent_says_what_was_read_and_not_failed(self):
+        # pQ N1: 5 interrupts have no cost, Reckless Attack among them, so nothing dropped can't mean nothing happened
+        self._spend_reads([{"uuids": ["u"], "total": 5}])
+        out = dialogue.react(True, "1")
+        self.assertEqual(out.split("\n")[0], "react: done — the prompt closed and no resource of its observers dropped"
+                         " in 0 s: a reaction with a cost didn't happen; one with no cost may have")
+        self.assertNotIn("FAILED", out)
+
+    def test_done_with_a_spend_is_plain_done(self):
+        self._spend_reads([{"uuids": ["u"], "total": 5}, {"uuids": ["u"], "total": 4}])
+        self.assertEqual(dialogue.react(True, "1").split("\n")[0], "react: done")
+
+    def test_a_total_of_zero_or_none_is_unread(self):
+        # pQ N2: resourceTotal gives 0 for a failed read, and nothing can drop below 0
+        for mark in ({"uuids": ["u"], "total": 0}, {"uuids": ["u"]}):
+            self._spend_reads([mark])
+            self.assertEqual(dialogue.react(True, "1").split("\n")[0], "react: done", mark)
+
+    def test_a_prompt_still_up_leaves_the_answer(self):
+        # pQ: if the next prompt holds the first reaction, its spend can't have landed yet
+        self._spend_reads([{"uuids": ["u"], "total": 5}], shown=True)
+        self.assertEqual(dialogue.react(True, "1").split("\n")[0], "react: done")
 
     def test_a_single_row_prompt_is_untouched(self):
         self.g.run_job = lambda op, args, context="server", wait_s=25.0, **kw: JobResult("done", {})
