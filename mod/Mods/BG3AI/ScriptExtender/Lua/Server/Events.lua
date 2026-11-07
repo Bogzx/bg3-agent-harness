@@ -429,7 +429,10 @@ listen("CastedSpell", 5, function(caster, spell, _, _, _)
     end)
     -- spell: the engine id, only for our own casters (the hotbar's spell, what a plan names). An enemy's cast shows
     -- a player only its display name; its id can carry hints the name doesn't (audit ACT-14, as for status ids).
-    RPC.push("cast", { caster = ref(u), spell = ctx().is_party[u] and spell or nil, name = name, roll = roll })
+    -- turn "game's": own casters only, cast in a turn the game runs (Guard.lost_control); the other side's as before
+    local Gl = ctx().is_party[u] and BG3AI.Guard
+    RPC.push("cast", { caster = ref(u), spell = ctx().is_party[u] and spell or nil, name = name, roll = roll,
+        turn = Gl and Gl.lost_control and Gl.lost_control(u) and "game's" or nil })
     if not ctx().is_party[u] then E.note_spell(u, spell) end
 end)
 

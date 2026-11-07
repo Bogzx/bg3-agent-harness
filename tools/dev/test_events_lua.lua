@@ -88,6 +88,20 @@ do
     check("party cast: roll", d and d.roll == "attack", d and d.roll)
 end
 
+-- live.md "## Goaded read": an own cast in a turn the game runs is tagged for its side; an enemy's isn't.
+do
+    local saved = BG3AI.Guard
+    BG3AI.Guard = { lost_control = function() return {} end }
+    listeners.CastedSpell("S_Player_" .. SH, "Target_FireBolt", "", "", 0)
+    check("own cast in the game's turn: tagged", last("cast").turn == "game's", last("cast").turn)
+    listeners.CastedSpell("Goblin_" .. GOB, "Projectile_GOB_SecretHint", "", "", 0)
+    check("enemy cast: never tagged", last("cast").turn == nil, last("cast").turn)
+    BG3AI.Guard = nil
+    listeners.CastedSpell("S_Player_" .. SH, "Target_FireBolt", "", "", 0)
+    check("own cast, no guard loaded: untagged", last("cast").turn == nil)
+    BG3AI.Guard = saved
+end
+
 -- ACT-15: unseeded, the first change after a load used to be dropped.
 do
     E.approval = {}

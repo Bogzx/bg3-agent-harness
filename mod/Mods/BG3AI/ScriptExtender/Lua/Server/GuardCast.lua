@@ -585,6 +585,35 @@ local function flagset(v)
     return out
 end
 
+-- The game runs this character's turn itself, and a player gets the same (live.md "## Goaded read", on Goading Attack:
+-- casts, spending and the turn's end with no order, in a match and in normal play; the HUD's "Can't control: Goaded",
+-- its End Turn click ignored, hotbar cells can_use false). -> {name = the status, when one on it carries the stats'
+-- LoseControl flag and is shown}, or nil. The one place this rule lives. It reads the game's own state,
+-- eoc::status::LoseControlComponent by entity, which came and went with the turns on every sample: not the stats'
+-- flag, which 45 statuses carry and whose effect is unread. A status arriving mid-turn reads the same.
+function G.lost_control(char)
+    local e = G.entity(char)
+    if not (e and U.comp(e, "StatusLoseControl")) then return nil end
+    local V = BG3AI.Visibility
+    for _, s in ipairs(V and V.statuses and V.statuses(e) or {}) do
+        local ok, flags = pcall(function() return Ext.Stats.Get(s.id).StatusPropertyFlags end)
+        if ok and flagset(flags).LoseControl then return { name = s.name } end
+    end
+    return {}
+end
+
+-- The one wording, for the list, the guard and the order's result: the HUD's words and the fact.
+function G.lost_control_text(lost)
+    return "can't control" .. (lost.name and (": " .. tostring(lost.name)) or "") .. ", the game runs its turn"
+end
+
+-- Refused while the game runs char's turn: an order would only cut the game's cast (live.md, case B: 0 of 3 orders ran
+-- as ordered, one cut the AI's cast) and its EndTurn would end a turn a player can't (6 of 6 against a player's click).
+function G.lost_control_gate(char)
+    local lost = G.lost_control(char)
+    if lost then G.refuse(G.lost_control_text(lost)) end
+end
+
 -- Prone (KNOCKED_DOWN, SG_Prone): BG3 lets a prone creature do nothing until it stands up at its turn start, which
 -- costs half its movement (REVIEW-5 F4; in a match Arena.lua's phase start does the standing up, REVIEW-12 (a)).
 
@@ -649,13 +678,21 @@ function G.disabling(char)
     local e = V and V.statuses and G.entity(char)
     if not e then return nil end
     local out
+    local lost = G.lost_control(char)
     for _, s in ipairs(V.statuses(e) or {}) do
         local ok, info = pcall(G.disabling_info, s.id)
-        if ok and info then
+        local mine = lost and lost.name == s.name
+        if (ok and info) or mine then
+            local d = ok and info or {}
             out = out or {}
-            out[#out + 1] = { name = s.name, turns = s.turns, effect = info.effect, fix = info.fix, prone = info.prone,
-                prone_half = info.prone_half, id = s.id }
+            out[#out + 1] = { name = s.name, turns = s.turns,
+                effect = mine and G.lost_control_text(lost) or d.effect, fix = d.fix, prone = d.prone,
+                prone_half = d.prone_half, id = s.id }
         end
+    end
+    if lost and not lost.name then
+        out = out or {}
+        out[#out + 1] = { name = "can't control", effect = G.lost_control_text(lost) }
     end
     return out
 end

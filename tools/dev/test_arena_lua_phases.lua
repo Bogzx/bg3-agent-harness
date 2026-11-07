@@ -572,6 +572,20 @@ test("arena.status's turn is the recorded phase, not the burst's last TurnStarte
     eq(enc({ t.side, t.uuid, t.phase }), enc({ "B", B1, 2 }), "B1's phase")
 end)
 
+-- live.md "## Goaded read": the game runs a Goaded character's turn; the runner reads it here for its clock.
+test("arena.status's turn says when the game runs that phase's character (its LoseControlComponent)", function()
+    begin()
+    fire("CombatRoundStarted", "combat1", 3)
+    order = { { A1, B1, A2, B2 } }
+    openAll({ A1, B1, A2, B2 })
+    burst({ A1, B1, A2, B2 })
+    tick() -- A [A1]
+    eq(rpc("arena.status").result.turn.lost_control, nil, "A1 played by its side")
+    world[A1].comps.StatusLoseControl = { LoseControl = true }
+    eq(type(rpc("arena.status").result.turn.lost_control), "table", "A1's turn is the game's")
+    world[A1].comps.StatusLoseControl = nil
+end)
+
 -- Live check 12 (2026-11-02, 2v2 twins, setup2v2/drive12.jsonl): the group B1 | A1 | B2 | A2, phases of one, one end
 -- every ~15.8 s. Ends 1-3 were pending (the rest still to act); the game changed no flag for them (03-turnflags: all
 -- four IsActiveCombatTurn, none RequestedEndTurn) and the last end failed 'ignored' at 20 s: round 1 never closed.

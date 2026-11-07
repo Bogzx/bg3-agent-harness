@@ -415,6 +415,8 @@ def render_combat(res: dict, H: Handles) -> str:
             # an ended row was in the current group (the mod sets ended only there): "current" on it read as acting
             # (arena live 8: every member of the one shared group showed "ended current" next to COMBAT current=e2)
             drop = ("disabled", "is_current") if o.get("ended") else ("disabled",)  # disabled: the DISABLED lines
+            if o.get("game_turn"):  # the mod marks it ended so nobody waits on it; it is running, and not the side's
+                drop = (*drop, "ended")
             lines.append("  " + compact({k: v for k, v in o.items() if k not in drop}, H))
     if objs:
         lines.append("OBJECTS on the turn order (props): "

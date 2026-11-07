@@ -92,6 +92,8 @@ from pathlib import Path
 from typing import Any, TypeGuard
 
 from bg3bench import conditions, scenario, stats
+from bg3bench.arena_control import events as _events
+from bg3bench.arena_control import lost_control
 from bg3bench.results import validity
 
 SCHEMA = "arena.v1"
@@ -395,10 +397,6 @@ def team_names(arena: Mapping[str, Any]) -> dict[str, list[str]]:
 # ---------------------------------------------------------------------------------------------------- the grader
 
 
-def _events(records: Iterable[dict], ev: str) -> list[dict]:
-    return [r for r in records if r.get("kind") == "event" and r.get("ev") == ev]
-
-
 def _other(side: Any) -> str | None:
     return {"A": "B", "B": "A"}.get(side)
 
@@ -594,7 +592,8 @@ def grade(
     (A, B, draw; None when invalid), reason, forfeit {side, cause} or None, fault {side, cause} (a client_fault end:
     the side whose client failed) or None, over_budget (an over_budget end: the sides over their cap, both for an end
     from before `capped`) or None, rounds, hp_left {A, B}, turns {A, B}, forced {A, B}, r1_pattern (round 1's
-    phases: r1_pattern), first_actor and favoured (of r1_pattern), round_first (round_first), luck (None without rolls or arena_start uuids)}."""
+    phases: r1_pattern), first_actor and favoured (of r1_pattern), round_first (round_first), luck (None without rolls or arena_start uuids),
+    lost_control (bg3bench.arena_control: the turns the game ran itself; `valid` doesn't read it)}."""
     records = list(records)
     valid, why = validity(dict(record), arena["seed"]) if record is not None else (True, None)
     if valid:
@@ -628,6 +627,7 @@ def grade(
         "favoured": favoured(r1_pattern(records)),
         "round_first": round_first(records),
         "luck": luck(rolls, uuids) if rolls is not None and isinstance(uuids, dict) else None,
+        "lost_control": lost_control(records, rolls, end.get("t", math.inf)),
     }
 
 

@@ -456,7 +456,7 @@ function G.still_to_act(uuid)
 end
 
 function G.is_my_turn(uuid)
-    if not G.still_to_act(uuid) then return false end
+    if not G.still_to_act(uuid) or G.lost_control(uuid) then return false end
     local Ar = BG3AI.Arena
     local g = G.guid(uuid) or uuid
     return not (Ar and Ar.active() and g and Ar.side_of(g) and Ar.held(g))
@@ -517,6 +517,7 @@ function G.combat_gate(char, mode)
         G.refuse_ui("not available during combat through this action")
     end
     G.side_gate()
+    G.lost_control_gate(char)
     if not G.is_my_turn(char) then G.refuse("it is not this character's turn") end
     local A = BG3AI.Actions
     if A and A.cast_unresolved(char) then G.refuse(A.CAST_UNRESOLVED) end

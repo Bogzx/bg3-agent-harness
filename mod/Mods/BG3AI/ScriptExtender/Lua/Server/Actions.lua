@@ -283,6 +283,15 @@ function A.held_action(char)
     return { tid = okt and tid or nil }
 end
 
+-- A cast that never started because the game took the character's turn meanwhile: failed in G.lost_control's words,
+-- not whatever came just before it (live.md case B: "after the caster's Bardic Inspiration ending"). -> true then.
+function A.lost_control_fail(job, char)
+    local lost = G.lost_control(char)
+    if not lost then return false end
+    RPC.finish_job(job, "failed", nil, G.lost_control_text(lost))
+    return true
+end
+
 -- The fact a failed start adds when the game holds the character that way ("" otherwise).
 function A.held_text(char)
     local h = A.held_action(char)
