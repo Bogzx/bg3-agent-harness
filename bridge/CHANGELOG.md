@@ -5,6 +5,19 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-07: a free attack still coming isn't called out of action
+
+- In the moment after the game charges a held swing and before its free status is on, a weapon attack with no Action
+  read `not enough action`, and the list read `no action: all 14 [A] ones`, while a free attack was coming. live.md L12
+  on main 807dce16: 2 orders refused, sent 104 and 118 ms before the swing's CastedSpell; and 3 of 6 wait_for lists read
+  no free attack, with get_combat_state reading it 60-90 ms later. Now, until that cast has landed or failed with an
+  outcome (at most 5 s unpaused), that order reads `not enough action yet: this character's last cast is still resolving
+  after a reaction, and any free attack it gives shows by its landing`, and those rows' reason is `last cast still
+  resolving`. Rendered: `UNAVAILABLE: no action: all 4 [A] ones; last cast still resolving: Throw, ...`. No order runs
+  or stops that didn't: a plain Action spell keeps `not enough action`, and with the free status on the swing passes,
+  landed or not. A character with no Extra Attack reads the same words in that moment, then the plain refusal. wait_for
+  doesn't wait for it. Offline only so far; the failed's outcome on a held Canceled isn't read on this route.
+
 ## 2026-11-07: every free attack the game gives
 
 - The guard, the action list and a Canceled swing's cost read one list of statuses, every one whose boost frees an

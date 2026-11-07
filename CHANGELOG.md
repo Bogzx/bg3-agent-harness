@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.11.0 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.12.0 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -128,7 +128,11 @@ game unless it says so.
   `not enough action`, with EXTRA_ATTACK_2 on and read by nothing; it now makes its 3 attacks, read live. An unarmed
   attack and a throw count as the game's check does. A weapon action with an Action cost takes the free attack, read
   live on L12. A hover preview's CastSpellFailed no longer ends the order, which had read `the game refused the cast (no
-  reason given)`. Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
+  reason given)`. Tool definitions and the bench prompts don't change. bench-v0.11's release cited it until 0.12.0.
+- 0.12.0 (2026-11-07): what the agent sees changed: words only, no order runs or stops that didn't. Until a held cast
+  has landed, a weapon attack with no Action and no free status reads `not enough action yet: ...`, and the list gives
+  it `last cast still resolving`. Before, they read `not enough action` and `no action` while a free attack was coming.
+  Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
