@@ -329,6 +329,33 @@ test("Do Not React on a chosen row unchooses it first, and waits for that", func
     eq(#UI.commands, 2, "one decline")
 end)
 
+test("Do Not React on a chosen row: an event gone before the first tick is declined by nobody (U1)", function()
+    prompt("Ana")
+    local data = pages.ReactionDecisionPopup.DataContext.Data
+    data.InterruptEvents = { { id = "ana" }, { id = "bo" } }
+    pages.ReactionDecisionPopup.children[1].children[1].DataContext = { Decision = "Use" }
+    rpc("ui.react", "{use=false}", "A")
+    data.InterruptEvents = { { id = "bo" } } -- Ana's left with the unchoosing: Bo's prompt is up
+    pages.ReactionDecisionPopup.children[1].children[1].DataContext = { Decision = "Undecided" }
+    eq(tickJob().status, "done", "closed")
+    eq(#UI.commands, 1, "only the unchoosing: Bo's prompt isn't declined, nor Ana's stale event sent")
+end)
+
+test("Do Not React on a chosen row: the decline reads the event afresh (U1)", function()
+    prompt("Ana")
+    local data = pages.ReactionDecisionPopup.DataContext.Data
+    data.InterruptEvents = { { id = "old" } }
+    local row = pages.ReactionDecisionPopup.children[1].children[1]
+    row.DataContext = { Decision = "Use" }
+    rpc("ui.react", "{use=false}", "A")
+    local now = { id = "now" }
+    data.InterruptEvents = { now }
+    row.DataContext.Decision = "Undecided"
+    tickJob()
+    eq(UI.commands[2], "InterruptDontReactPlayerCommand", "the decline")
+    eq(UI.params[2], now, "today's event")
+end)
+
 test("Do Not React with nothing chosen: only the decline", function()
     prompt("Ana")
     pages.ReactionDecisionPopup.children[1].children[1].DataContext = { Decision = "Undecided" }

@@ -169,6 +169,9 @@ class ArenaModel(GameModel):
     def reply_side(self, ctx: str, op: str, args: dict[str, Any], side: str) -> Any:
         if (refused := wrong_context(ctx, op)) is not None:
             return refused
+        if op == "guard.side_gate":
+            held = self.reaction is not None or self.held_reaction is not None or self.refuse_end == HELD_REFUSAL
+            return {"ok": False, "error": HELD_REFUSAL} if held else {"ok": True, "result": {"ok": True}}
         if op == "act.end_turn" and (self.reaction is not None or self.held_reaction is not None):
             return {"ok": True, "result": self.failed_job(op, HELD_REFUSAL, side)}
         if op == "act.end_turn" and self.refuse_end:
