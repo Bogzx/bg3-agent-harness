@@ -319,15 +319,26 @@ function A.hold_audit(job, char, matches, audit, check)
         began = job.began and true or nil, check = check }
 end
 
+-- Before the jobs in A.dispatch, so A.held_landing can tell them this CastedSpell is a held cast's.
 function A.held_cast_landed(caster, spell)
+    A.held_claimed = false
     local now = RPC.now_ms()
     for _, h in ipairs(A.held_audits) do
         local lost = h.free_ms and now - h.free_ms >= A.HELD_LANDS_MS
         if not lost and not h.landed_ms and h.matches({ caster, spell }) then
             h.landed_ms = now
+            A.held_claimed = true
             return
         end
     end
+end
+
+-- s5-rx-3 312.7, 467.7: an Extra Attack ordered after the game charged a held attack and before it landed took that
+-- landing as its own: done, no_damage, "without its roll", then its real swing went. A job with no cast state yet
+-- hasn't started, so a landing a held cast claims isn't its. With a state it is, whatever the entry says: a held cast
+-- that was lost still has an entry for HELD_LANDS_MS.
+function A.held_landing(job)
+    return A.held_claimed and job.roll and job.roll.state == "pending"
 end
 
 -- live.md 01:11:51: a Counterspell set to always raises no prompt and no pause, and the cast ends failed, reason
