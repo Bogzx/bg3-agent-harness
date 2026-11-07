@@ -154,7 +154,16 @@ function openPage(spec)
                 Enabled = not ((e.held or {})[n] or (e.disabled or {})[n]), _g = g, _held = (e.held or {})[n] })
             if e.unread then items[i]._p.Enabled = nil end
         end
-        return obj("ls.VM", { Skills = items, MaxSelectedSkillCount = e.max }), items
+        g.vm = obj("ls.VM", { Skills = items, MaxSelectedSkillCount = e.max })
+        function g.recount()
+            local n = 0
+            for _, it in ipairs(items) do
+                if it._p.Selected == true and not it._p._held then n = n + 1 end
+            end
+            g.vm._p.SelectedSkillCount = n
+        end
+        g.recount()
+        return g.vm, items
     end
     local all = {}
     if spec.expertise then all.ExpertiseSkills, page.expertiseItems = skillGroup(spec.expertise) end
@@ -339,6 +348,7 @@ BG3AI.UI = {
             if arg._p.Selected == true then arg._p.Selected = false
             elseif own < g.max then arg._p.Selected = true
             elseif first and g.full then first._p.Selected, arg._p.Selected = false, g.full == "replaces" end
+            g.recount()
             return true
         elseif name == "TogglePassive" then
             arg._p.Value = arg._p.Value > 0 and 0.0 or 1.0

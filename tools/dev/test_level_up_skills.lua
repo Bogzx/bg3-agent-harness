@@ -164,6 +164,15 @@ j = run({ uuid = "claude", plan = { skills = { "Acrobatics", "Performance" } }, 
 check(j.status == "done" and expertiseOn() == "Performance,Acrobatics" and offOf("expertise") == "Persuasion",
       "keep_page's rerun reads the page now, not the first run's list (" .. expertiseOn() .. ", " .. offOf("expertise")
       .. ", " .. tostring(j.error) .. ")")
+-- 33k5. live 2026-11-07, Bard L3 with no class pick in the plan: the game's page isn't complete. The refusal names the
+--       group short of its max, here class at 0 of 3, not "nothing open", and not the expertise group, which is full
+openPage(bard3("replaces"))
+page.never_complete = true
+j = run({ uuid = "claude", plan = { skills = { "Acrobatics" } } })
+check(j.status == "failed" and not page.finished and tostring(j.error):find("3 class skills (plan.skills)", 1, true)
+      and not tostring(j.error):find("nothing open", 1, true)
+      and not tostring(j.error):find("expertise skill", 1, true),
+      "not complete: the skill group short of its max is named (" .. tostring(j.error) .. ")")
 -- 33l. a plan's pick that can't land (the toggle does nothing): not finished, and the pick is named
 openPage(rogue6())
 page.expertiseStuck = true

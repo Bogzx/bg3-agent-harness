@@ -274,6 +274,12 @@ function P.luMissing(dc)
     for _, v in ipairs(passivesView(dc)) do
         if v.complete == false then out[#out + 1] = "'" .. (v.title or "passives") .. "' (plan.passives)" end
     end
+    for _, g in ipairs(I.skillGroups(dc)) do
+        local short = (tonumber(g.max) or 0) - (tonumber(g.selected) or tonumber(g.max) or 0)
+        if short > 0 then
+            out[#out + 1] = short .. " " .. g.key .. " skill" .. (short == 1 and "" or "s") .. " (plan.skills)"
+        end
+    end
     if #out == 0 then return "the page shows nothing open (see get_level_up_options)" end
     return "still to choose: " .. table.concat(out, ", ")
 end
