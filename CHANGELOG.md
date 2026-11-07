@@ -111,8 +111,8 @@ game unless it says so.
   finish even past that page's intro; it won't finish without the plan's skills, expertise and passives even when the
   game calls the page complete; `plan.skills` reaches the expertise group; a held name no later group can take comes
   back as `already_held`; `set.<group>_off` names picks that left the page; a refusal names a skill group short of its
-  max, where it said nothing was open. Neither refusal has a live read yet. Tool definitions and the bench prompts don't
-  change. bench-v0.11's release cites it.
+  max, where it said nothing was open. The read-back's refusal has no live read yet. Tool definitions and the bench
+  prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
