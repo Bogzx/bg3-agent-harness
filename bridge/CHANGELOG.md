@@ -5,6 +5,17 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-07: every free attack the game gives
+
+- The guard, the action list and a Canceled swing's cost read one list of statuses, every one whose boost frees an
+  Action: EXTRA_ATTACK_2, EXTRA_ATTACK, MAG_MARTIAL_EXERTION, WILDSTRIKE_EXTRA_ATTACK and its _2, STALKERS_FLURRY,
+  EXTRA_ATTACK_THIRSTING_BLADE. Before, live.md L12 extra attack read: an L12 Fighter with EXTRA_ATTACK_2 on had its
+  second and third swings refused `not enough action`, 3 of 3 turns, one attack of the three, and get_actions showed
+  no `[Extra Attack: free]`. An unarmed attack, a throw and the game's five named spells now count as its
+  ExtraAttackSpellCheck does; by reading, not live. EXTRA_ATTACK_WAR_MAGIC and _WAR_PRIEST make the attack cost a bonus
+  action, so they stay refused `not enough action`. A weapon action stays outside it, as before; the game's check
+  doesn't name that exclusion, and it is unread.
+
 ## 2026-11-07: a countered cast pays as a player's does, and a swing a Riposte answered reads as a miss
 
 - An Osiris-ordered cast that is countered, on a prompt or with none (an enemy's Counterspell, or one set to always),

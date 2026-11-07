@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.10.0 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.11.0 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -122,7 +122,11 @@ game unless it says so.
   spell slot only. A swing a Riposte answered reads as a miss, `done ... no_damage`, when every die on its own cast
   read below its dc and none is a natural 20; otherwise its text keeps the true words and drops `what came of it shows
   in the events`. A weapon attack with no Action among its costs no longer says `extra_attack` in its result, which
-  Frenzied Strike did; not read live. Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
+  Frenzied Strike did; not read live. Tool definitions and the bench prompts don't change. bench-v0.11's release cited it until 0.11.0.
+- 0.11.0 (2026-11-07): what the agent sees changed: every status whose boost frees an Action counts as the free attack,
+  in the guard, the action list and a Canceled swing's cost. An L12 Fighter had its second and third swings refused
+  `not enough action`, with EXTRA_ATTACK_2 on and read by nothing. An unarmed attack and a throw count as the game's
+  check does. Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
