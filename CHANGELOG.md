@@ -127,7 +127,7 @@ game unless it says so.
   in the guard, the action list and a Canceled swing's cost. An L12 Fighter had its second and third swings refused
   `not enough action`, with EXTRA_ATTACK_2 on and read by nothing; it now makes its 3 attacks, read live. An unarmed
   attack and a throw count as the game's check does. A weapon action with an Action cost takes the free attack, read
-  live once. A hover preview's CastSpellFailed no longer ends the order, which had read `the game refused the cast (no
+  live on L12. A hover preview's CastSpellFailed no longer ends the order, which had read `the game refused the cast (no
   reason given)`. Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most

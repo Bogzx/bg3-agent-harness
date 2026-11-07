@@ -595,6 +595,50 @@ test("stray failed: with no CastSpell after it, the job ends at the bound in the
     osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
 end)
 
+local function stray_swing()
+    free_attack_setup()
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
+    local j = swing()
+    eq(j.status, "running", "ordered " .. tostring(j.error))
+    world[P1].comps.ServerCharacter = { OsirisController = { Tasks = { { Type = "Spell" } } } }
+    attack_event("CastSpellFailed")
+    return j
+end
+
+test("stray failed: with the game paused, the job reads held, not refused, and nothing is purged", function()
+    local j = stray_swing()
+    world[P1].comp_names = { PAUSED }
+    tick(math.ceil(A.CAST_PAUSED_MS / 60) + 2)
+    eq(j.status, "interrupted", "held " .. tostring(j.error))
+    eq(j.result.paused, true, "paused")
+    eq(#called("PurgeOsirisQueue"), 0, "no purge")
+    world[P1].comp_names = nil
+end)
+
+test("stray failed: a pause that starts late in the bound still reads held", function()
+    local j = stray_swing()
+    local bound = math.floor(A.CAST_NO_START_COMBAT_MS / 60)
+    tick(bound - 5)
+    eq(j.status, "running", "inside the bound")
+    world[P1].comp_names = { PAUSED }
+    tick(8)
+    eq(j.status, "running", "past the bound, paused: not failed " .. tostring(j.error))
+    tick(math.ceil(A.CAST_PAUSED_MS / 60))
+    eq(j.status, "interrupted", "held " .. tostring(j.error))
+    eq(#called("PurgeOsirisQueue"), 0, "no purge")
+    world[P1].comp_names = nil
+end)
+
+test("stray failed: a second stray doesn't restart the bound", function()
+    local j = stray_swing()
+    local bound = math.floor(A.CAST_NO_START_COMBAT_MS / 60)
+    tick(bound - 8)
+    attack_event("CastSpellFailed")
+    eq(j.status, "running", "still inside the bound")
+    tick(12)
+    eq(j.status, "failed", "on the first one's time")
+end)
+
 test("stray failed: after its CastSpell, with an outcome or with no entity, a failed ends the job at once", function()
     free_attack_setup()
     world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
