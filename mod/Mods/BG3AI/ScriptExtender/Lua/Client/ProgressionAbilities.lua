@@ -176,8 +176,9 @@ end
 -- A level's skill group can open full of the game's own picks (live 2026-11-07, Rogue L6: Deception, Sleight of Hand).
 -- Toggling the plan's Acrobatics then Athletics left Sleight of Hand, Athletics with no error: Deception gone,
 -- Acrobatics not on; how the game did that isn't read. Only for a named pick that didn't land: off with as many of its
--- group's unnamed picks as it lacks, then on with it. Its group is the one skillsStage toggled it in: `only`, else the
--- first holding the name. Only a row reading Enabled true comes off, as the page's own read on Rogue L6 and Bard L3:
+-- group's unnamed picks as the picks lacking exceed the group's free room, then on with them. A pick's group is the one
+-- skillsStage toggled it in, by skillRow. Only a row reading Enabled true comes off, as the page's own read on Rogue L6
+-- and Bard L3:
 -- false is an earlier level's or another source's (read on Rogue L6, Bard L10), and one reading anything else may be
 -- one too and stays; the named pick then doesn't land and the read-back refuses. A name the game shows disabled can't
 -- land, so it costs nothing and the read-back names it.
@@ -194,7 +195,7 @@ local function skillRoomStage(getDC, ctx, wanted, only)
         for _, g in ipairs(groups) do g.keep, g.lacks = {}, 0 end
         for _, name in ipairs(wantList(wanted) or {}) do
             for _, g in ipairs(groups) do
-                local item = (only == nil or g.key == only) and pick(g.skills, name) or nil
+                local item = I.skillRow(g, name, only)
                 if item then
                     g.keep[label(item)] = true
                     if UI.prop(item, "Selected") ~= true and UI.prop(item, "Enabled") ~= false then
@@ -206,9 +207,13 @@ local function skillRoomStage(getDC, ctx, wanted, only)
             end
         end
         for _, g in ipairs(groups) do
-            local off = 0
+            local off, own = 0, 0
             for _, it in ipairs(list(g.skills)) do
-                if off < g.lacks and UI.prop(it, "Selected") == true and UI.prop(it, "Enabled") == true
+                if UI.prop(it, "Selected") == true and UI.prop(it, "Enabled") == true then own = own + 1 end
+            end
+            local need = g.lacks - math.max(0, (tonumber(g.max) or own) - own)
+            for _, it in ipairs(list(g.skills)) do
+                if off < need and UI.prop(it, "Selected") == true and UI.prop(it, "Enabled") == true
                     and not g.keep[label(it)] then
                     UI.command(dc, "ToggleSkill", it)
                     off = off + 1
@@ -223,7 +228,7 @@ end
 P.inner.skillRoomStage = skillRoomStage
 
 -- What a level's toggles took off, whoever took it: the game can take a row too (above). skillsOpenStage reads every
--- group's selected rows before them, skillsOffStage names in result.set.<group>_off those on the page and no longer
+-- group's selected rows before them, skillsOffStage names in result.set.<group>_off those still listed and no longer
 -- selected after them.
 local function skillsOpenStage(getDC, ctx)
     return function()

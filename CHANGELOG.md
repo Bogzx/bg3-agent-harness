@@ -299,8 +299,11 @@ game unless it says so.
   the page complete. A level's expertise group can open full of the game's own picks, and the plan's toggles don't all land: a
   Rogue's level 6 opened on Deception and Sleight of Hand, and toggling Acrobatics then Athletics left Sleight of Hand and
   Athletics, with `done` and `complete`, where the plan said Acrobatics. How the game moved them isn't read. Now, only for a
-  pick that didn't land, as many of the group's unnamed picks as it lacks come off, never one the game shows as locked.
-  `set.<group>_off` names every row that was selected before the toggles and isn't after them, including one the game took. A plan's skill or passive the page doesn't offer is now a failure, no longer `done`.
+  pick that didn't land, the group's unnamed picks come off as far as the picks lacking exceed its free room, never one the
+  game shows as locked. `set.<group>_off` names the rows still listed that were selected before the toggles and aren't after
+  them, including one the game took. `plan.skills` now reaches the expertise group: a row the game shows disabled and
+  unselected no longer stops the search for a name, so a name no group offers is reported as `not offered`. That search is
+  shared with character creation's `plan.skills`. A plan's skill or passive the page doesn't offer is now a failure, no longer `done`.
 - A kit's subclass spell with no ability on its row or class reads the stats' ability, as a character's does (a Thief's
   Shout_SupremeSneak read None on a twin, Intelligence on the reference).
 

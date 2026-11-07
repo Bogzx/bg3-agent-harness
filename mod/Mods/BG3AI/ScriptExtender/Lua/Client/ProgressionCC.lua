@@ -371,8 +371,9 @@ local function wantList(v)
     return v
 end
 
--- Skills: toggle each wanted skill on (searching class, race, expertise and feat groups in that order; `only` names
--- one group: expertise's skills are proficient ones, so the class group lists them too and would stop the search).
+-- Skills: toggle each wanted skill on (searching class, race, expertise and feat groups in that order, by skillRow;
+-- `only` names one group: expertise's skills are proficient ones, so the class group lists them too and would stop the
+-- search).
 -- moves (a plan that is the group's whole pick list, on a page that opens with someone's picks in it): first turn off
 -- the group's own picks the plan doesn't name, since a full group ignores ToggleSkill (live 2026-11-06: a hireling's
 -- Rogue kept every pick, no error). Selected with Enabled false is a pick of another source (background, race).
@@ -409,7 +410,7 @@ local function skillsStage(getDC, ctx, wanted, only, moves)
             for _, name in ipairs(want) do
                 local done = false
                 for _, g in ipairs(groups) do
-                    local item = (only == nil or g.key == only) and pick(g.skills, name) or nil
+                    local item = I.skillRow(g, name, only)
                     if item then
                         if UI.prop(item, "Selected") ~= true then
                             local ok, err = UI.command(dc, "ToggleSkill", item)
