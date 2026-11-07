@@ -5,6 +5,20 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-07: a turn the game runs itself reads so
+
+- A character whose turn the game runs (live.md "## Goaded read": Goading Attack in a match and in normal play; the
+  game's AI cast, spent and ended the turn, the HUD read `Can't control: Goaded`, a player's End Turn click did
+  nothing) had its actions listed, `my_turn`, a combat row that read `current`, and the wait said `now e1's turn`. Its
+  orders failed as `the game never started it ... twice: ordered again after the caster's Bardic Inspiration ending`,
+  `the game refused the cast: the cast was cancelled` or `(no reason given)`, and end_turn ended it (6 of 6). Now the
+  list gives every action the reason `can't control: Goaded, the game runs its turn`, and use_ability, move_to,
+  end_turn and stop fail at once with those words, sending nothing. The DISABLED line carries them, the row reads
+  `game_turn`, the wait doesn't return for it, and the side's own casts in it read `cast e1 Red Ash (game's turn):
+  Pommel Strike (attack)`. The other side reads what it read before. A reaction prompt the side owns is answered as
+  before. Read live on Goaded only; whether every status with the game's LoseControlComponent behaves the same is part
+  2's read (lost-control-fix.md).
+
 ## 2026-11-07: a free attack still coming isn't called out of action
 
 - In the moment after the game charges a held swing and before its free status is on, a weapon attack with no Action

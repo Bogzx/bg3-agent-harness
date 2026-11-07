@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.12.0 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.13.0 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -132,7 +132,20 @@ game unless it says so.
 - 0.12.0 (2026-11-07): what the agent sees changed: words only, no order runs or stops that didn't. Until a held weapon
   attack has landed, a weapon attack with no Action and no free status reads `not enough action yet: ...`, and the list
   gives it `last cast still resolving`. Before, they read `not enough action` and `no action` while a free attack was coming.
-  Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
+  Tool definitions and the bench prompts don't change. bench-v0.11's release cited it until 0.13.0.
+- 0.13.0 (2026-11-07): what the agent sees changed: a character whose turn the game runs itself reads so, and nothing
+  a client sends reaches the game for it. Live (Goading Attack, in a match and in normal play) the game's AI cast,
+  spent and ended such a turn with no order, the HUD read `Can't control: Goaded`, a player's End Turn click did
+  nothing and the hotbar cells read can_use false. The mod reads the game's LoseControlComponent by entity, which came
+  and went with those turns on every sample, not the stats' LoseControl flag. The action list, the guard, end_turn,
+  stop and an order that never started now say `can't control: Goaded, the game runs its turn`; is_my_turn is false,
+  the state.combat row reads `game_turn`, not `ended`, the wait no longer says `now e1's turn` for it, and the side's
+  own casts in it read `cast e1 Red Ash (game's turn): ...`. Before, the list offered actions, orders failed three
+  ways (one naming an unrelated status as the cause) or cut the game's cast, and end_turn ended a turn a player can't
+  (6 of 6, 2.15-2.18 s later). The mod's re-sent end for a dropped group end skips such a member. In a match the runner
+  gives that phase no cap and no forfeit count and writes `arena_control_lost`, and one that hangs is the game's stall;
+  the grade lists `lost_control` and `valid` doesn't read it. Read live on Goaded only. Tool definitions and the bench
+  prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
