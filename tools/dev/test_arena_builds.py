@@ -306,7 +306,7 @@ class TierTest(unittest.TestCase):
         for lv in (2, 5, 12):
             with self.subTest(level=lv):
                 d = ab.check_builds(tier(lv))
-                self.assertEqual("draft" in d, lv == 2)  # L5's and L12's references are in
+                self.assertEqual("draft" in d, lv != 5)  # L5's references are in
                 healer = "Cleric" if lv == 2 else "Bard"
                 self.assertEqual([b["class"] for b in d["builds"]], ["Fighter", healer, "Wizard", "Rogue"])
                 schema = json.loads((REPO / "packages/bench/schema/arena-builds.v1.schema.json").read_text())

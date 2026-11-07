@@ -14,6 +14,7 @@
  "name": "builds-l12-4v4-v1",
  "title": "Level 12: Fighter (Battle Master), Bard (Lore), Wizard (Evocation), Rogue (Thief); each its hireling's race and background",
  "about": "The build file l12_4v4_v1 (tools/dev/make_arena_save.py builds-arena), each pair's twins made per match, on crash-mirror-v1's save.",
+ "draft": "S4 passes on all four references (live.md 'L12 Rogue rerun and S4'), but nothing has played a match at this tier: unplayable until S5 and read 5 pass at L12 (orchestrator, 2026-11-07)",
  "location": {
   "level": "WLD_Main_A",
   "spawns": {
