@@ -236,6 +236,29 @@ game unless it says so.
   permissions.allow entry from .claude/settings.json: this workspace has not been trusted"), so in a clone nobody
   had opened interactively every `mcp__bg3__*` call was refused and the session ended at once. The allow, the deny
   list and `--tools ToolSearch` are the same as before; the bg3 tools served don't change.
+- 4v4 arenas with built teams, at levels 2, 5 and 12. A build file (`packages/bench/builds/`) generates its arena; both
+  sides of a pair are copies given the same stats and kit. A rated arena compares
+  each pair with a reference: a real hireling respecced and levelled through the game's own pages to that build
+  (`tools/dev/arena_reference.py`, `probe_route_h.py`) and read live. `arena.setup` fails on any difference that isn't
+  listed, row by row, in the build's `reference.accepted`, and on a host outside the tier's XP window
+  (`mirror.party_xp`). Only a draft arena may lack references. Rated: `builds-l2-4v4-v1` (Fighter, Rogue, Barbarian,
+  Ranger) and `builds-l5-4v4-v1` (Fighter, Bard, Wizard, Rogue). Drafts with no references that can't be played:
+  `builds-l12-4v4-v1` and `builds-l5-4v4-team2-v1`. Every builds arena has a 90 s turn cap and can set its members'
+  gap along the line (`location.line_gap`, default 1.5 m; these four use 1.25 m), with the fairness limits unchanged.
+- The kit gives a copy its spell abilities, and the upcast rows a character's book gets from the game, up to its highest
+  slot (`UnlockSpell(X,AddChildren,..)`). It waits out the copy's rebuild, so no passive lands twice, and fails when a
+  part didn't land. `tools/dev/arena_scan.py` walks what every build can reach (items, class rows, kit, race, passives)
+  over a checked-in stat graph, `tools/dev/arena_stat_graph.json`, of stats entry ids, their references and what each
+  does against the arena's bar. `test_arena_scan.py` fails on a knock-down or side-changing spell. Chromatic Orb and
+  the Quarterstaff (it unlocks Topple) left the Wizard builds, and a Wizard twin holds only its prepared spells, so
+  what a reference learned beyond them (5 spells at level 5, with their upcasts) is accepted, row by row.
+- Respec and level-up, which the references drive through the mod's character pages: a respec now applies its point
+  buy, skills, expertise, passives, spell picks and equipment selector, and reads every pick back. Normal play's
+  level-up changes too: `ui.level_up` waits up to 15 s for the intro (was 5 s; live, a Wizard's 5 s wasn't enough and
+  the page stayed without panels), and it returns to the overview after the subclass and deity tabs, as it did after
+  the feat tab. No tool, description or rules text changed, so the served tool definitions and their digests stay
+  and the harness version stays. `releases/bench-v0.11.json` moves `mod_sha1` and `code_sha1`; its game and bg3le pins
+  don't change.
 
 ### Benchmark (`packages/bench`)
 
