@@ -117,9 +117,9 @@ game unless it says so.
   `the character does not have that action`, where it read `choose a variant:` with variants that were then refused.
   So does a raw id of a call-allies container not held. For an order behind a held cast, a hit or status before its own
   CastSpell no longer counts in its result: a held arrow's late hit had read `damage=[6; 6]` where the order's own was
-  6; offline only so far. An Osiris-ordered cast that is countered pays every cost but the four turn resources, on a
+  6; read live, part 5a. An Osiris-ordered cast that is countered pays every cost but the four turn resources, on a
   prompt or with none, as a hotbar cast did for its slot; it had paid the action alone (a30-read). Read live for a
-  spell slot only. A swing a Riposte answered reads as any miss, `done ... no_damage`, when every die on its own cast
+  spell slot only. A swing a Riposte answered reads as a miss, `done ... no_damage`, when every die on its own cast
   read below its dc and none is a natural 20; otherwise its text keeps the true words and drops `what came of it shows
   in the events`. Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else

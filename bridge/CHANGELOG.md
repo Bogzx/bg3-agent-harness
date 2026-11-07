@@ -13,7 +13,7 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   through +15 s by this route, and 3 -> 2 by hotbar. The FAILED result's text doesn't change, and its `after=` still
   reads from before the charge. No order but `end_turn` starts until it has been paid. Only the outcome Countered: no
   cost read by 10 s charges nothing, and a Canceled pays what the game took.
-- A swing a Riposte answered reads as any miss, `use_ability: done — cast=... target=... no_damage`, when every die on
+- A swing a Riposte answered reads as a miss, `use_ability: done — cast=... target=... no_damage`, when every die on
   its own cast read below its dc and none is a natural 20. Before: `FAILED — the game took the action, then cancelled
   the cast (the game's Canceled); it wasn't refused: what came of it shows in the events`. With no die read, a die at
   or over its dc, or a natural 20, those words stay, without `what came of it shows in the events`: none of the 8
@@ -29,9 +29,9 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   Shout_FireShield_Chill, Shout_FireShield_Warm`, each then refused. A holder's `choose a variant` is unchanged.
 - For an order behind a held cast, a hit or status before the order's own CastSpell isn't in its result. Before, live.md
   gapranged3: a held arrow's hit, 201 ms after its CastedSpell and 730 ms before the queued order's CastSpell, read
-  `damage=[6; 6]`, total 12, where its own was 6. Offline only so far: the ranged read on this code is owed. AttackedBy
-  has no cast id, so a held hit that comes after that CastSpell still counts as the order's. A held swing's
-  CastSpellFailed still ends the order queued behind it.
+  `damage=[6; 6]`, total 12, where its own was 6. Read live, part 5a of the countered read: `damage=` 4 beside hits 3
+  and 4, 7 beside hits 6 and 7. AttackedBy has no cast id, so a held hit that comes after that CastSpell still counts as
+  the order's. A held swing's CastSpellFailed still ends the order queued behind it.
 
 ## 2026-11-07: an order queued behind a held attack reads its own swing
 

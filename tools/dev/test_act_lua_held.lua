@@ -57,6 +57,18 @@ test("held cast: a queued order that never shows a state still reports its own l
     assert(tostring(k.result.unrolled):find("no cast state", 1, true), tostring(k.result.unrolled))
 end)
 
+test("held cast: a straggler after a landing with no CastSpell is its own hit", function()
+    local k = extra_in_the_gap("none")
+    attack_event("CastedSpell") -- the held attack's
+    tick(10)
+    attack_event("CastedSpell") -- its own, no CastSpell seen
+    hit(5)
+    tick(10)
+    eq(k.status, "done", "reported " .. tostring(k.error))
+    eq(k.result.no_damage, nil, "it hit")
+    eq(k.result.damage[1].amount, 5, "the straggler counts")
+end)
+
 test("held cast: a held cast that never lands can't take the next order's landing from it", function()
     local k = extra_in_the_gap("state") -- the held swing was lost: the next order's state comes at once
     attack_event("CastSpell")
@@ -364,8 +376,8 @@ test("held cast on a prompt: another spell's failed by the caster isn't this cas
 end)
 
 -- live.md 05:50 and S5 s5-l12-m1: a swing rolled and missed, a Riposte, Canceled, the action gone. Players see a miss.
-local function dice(total, dc, nat)
-    return { { type = "MeleeWeaponAttack", natural = nat or 5, total = total, dc = dc } }
+local function dice(total, dc, nat, kind)
+    return { { type = kind or "MeleeWeaponAttack", natural = nat or 5, total = total, dc = dc } }
 end
 local function canceled_swing(rolls)
     local saved = BG3AI.RollLog -- the read itself is RollLog's own suite's
@@ -383,7 +395,7 @@ local function canceled_swing(rolls)
     return j, res
 end
 
-test("Riposted miss: reads as any miss, done and no_damage, and charges nothing", function()
+test("Riposted miss: reads as a miss, done and no_damage, and charges nothing", function()
     local j, res = canceled_swing(dice(16, 18))
     eq(j.status, "done", "done " .. tostring(j.error))
     eq(j.result.no_damage, true, "no_damage")
@@ -404,15 +416,46 @@ test("Riposted miss: a die at its dc, a natural 20 below it, or no die read, isn
     end
 end)
 
+test("Riposted miss: a save die below its dc isn't a miss, alone or beside an attack die below its own", function()
+    local save = dice(10, 18, nil, "SavingThrow")[1]
+    for _, rolls in ipairs({ { save }, { dice(16, 18)[1], save } }) do
+        local j = canceled_swing(rolls)
+        eq(j.status, "failed", "not a miss")
+        eq(j.error, string.format(A.CAST_CANCELED_SPENT, "action"), "the cost's words")
+        reset()
+    end
+end)
+
+test("Riposted miss: a free attack's says so, done and no_damage", function()
+    combat_setup(9)
+    world[NPC].pos = { 1.5, 0, 0 }
+    spell("Target_MainHandAttack", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1",
+        Level = 0, SpellFlags = { "IsMelee", "IsHarmful", "IsAttack" },
+        SpellRoll = { Default = "Attack(AttackType.MeleeWeaponAttack)" } })
+    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 0
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
+    local k = job(op("cast", { char = P1, spell = "Target_MainHandAttack", target = NPC }))
+    eq(k.status, "running", "started " .. tostring(k.error))
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil -- the game's, as the swing went
+    local saved, entity = BG3AI.RollLog, { SpellCastOutcome = { Result = "Canceled" } }
+    BG3AI.RollLog = { castDice = function() return dice(16, 18) end }
+    k.cast_entity, cast_outcome = entity, "Canceled"
+    attack_event("CastSpellFailed")
+    cast_outcome, BG3AI.RollLog = nil, saved
+    eq(k.status, "done", "done " .. tostring(k.error))
+    eq(k.result.no_damage, true, "no_damage")
+    eq(k.result.extra_attack, true, "the free attack")
+end)
+
 -- GuardCast's linked box branch: a call-allies box reads every group in the game data when nothing of it is in the
 -- character's own book or containers, which is also so for one who doesn't hold it. Same flaw as Shout_FireShield's.
 local BOX = "Shout_END_AllyAbilities_MultipleSummon"
-local function allies_box(book)
+local function allies_box(book, container)
     combat_setup(9)
     spell(BOX, { SpellType = "Shout", UseCosts = "", SpellFlags = { "IsLinkedSpellContainer", "CallAlliesSpell" } })
     spell("Target_Group", { SpellType = "Target", UseCosts = "ActionPoint:1", SpellContainerID = BOX })
     G.boxData[BOX] = { "Target_Group" }
-    world[P1].comps.SpellBook, world[P1].comps.SpellContainer = { Spells = book }, { Spells = {} }
+    world[P1].comps.SpellBook, world[P1].comps.SpellContainer = { Spells = book }, { Spells = container or {} }
     return job(op("cast", { char = P1, spell = BOX }))
 end
 
@@ -420,6 +463,13 @@ test("linked box: a call-allies box the character doesn't hold reads does not ha
     local j = allies_box({})
     G.boxData = {}
     eq(j.error, "the character does not have that action", "not its groups")
+end)
+
+test("linked box: a holder through its container alone, with no book row, gets its groups, not the refusal", function()
+    local j = allies_box({}, { { ContainerSpell = BOX, SpellId = { OriginatorPrototype = "Target_Group" } } })
+    G.boxData = {}
+    assert(j.error:find("casts nothing by itself", 1, true), j.error)
+    assert(not j.error:find("from the game data", 1, true), j.error)
 end)
 
 test("linked box: a holder whose groups don't read still gets the game data's list", function()
