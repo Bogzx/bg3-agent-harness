@@ -17,6 +17,7 @@
 -- unrolled = true (and a referee record), never as failed: the agent must not order it again.
 
 local RPC = BG3AI.RPC
+local U = BG3AI.Util
 local G = BG3AI.Guard
 local A = BG3AI.Actions
 
@@ -281,13 +282,60 @@ end
 A.CAST_PAUSED_COMP = "ls::anubis::PausedComponent"
 A.CAST_PAUSED_MS = 1000
 A.CAST_PAUSED = "the cast started and the game paused it for a reaction decision (a reaction prompt is open):"
-    .. " answer it (react); the cast goes on after it and its outcome shows in the events"
+    .. " answer it (react) if it is yours; the cast goes on after it and its outcome shows in the events"
 
 function A.cast_paused(char)
     local ok, names = pcall(function() return Ext.Entity.Get(char):GetAllComponentNames() end)
     if not ok or type(names) ~= "table" then return false end
     for _, n in ipairs(names) do if n == A.CAST_PAUSED_COMP then return true end end
     return false
+end
+
+-- L5 scratch (ops/logs/live.md, 00:39:40): a paused cast's job ends `interrupted`, so on_finish's resource audit never
+-- saw it land: Blue Birch's released Healing Word healed and left its slots at 4/4. Normal play goes the same way. The
+-- job leaves its audit here, and the cast's CastedSpell runs it once the game has settled, as a finished job's does.
+-- A lost cast's entry has to expire (REVIEW-reactions.md M1): its snapshot is the old order's, so a rest and a later
+-- cast of the spell would read as slots owed. It goes once the caster has stood unpaused for HELD_LANDS_MS. Too short
+-- leaves a slow landing unpaid; too long only keeps an entry through an immediate recast, which regains nothing.
+A.HELD_LANDS_MS = 5000
+A.held_audits = A.held_audits or {}
+
+function A.hold_audit(job, char, matches, audit)
+    A.held_audits[#A.held_audits + 1] = { char = char, matches = matches, audit = audit, side = job.side }
+end
+
+function A.held_cast_landed(caster, spell)
+    for _, h in ipairs(A.held_audits) do
+        if not h.landed_ms and h.matches({ caster, spell }) then
+            h.landed_ms = RPC.now_ms()
+            return
+        end
+    end
+end
+
+function A.held_audit_tick()
+    for i = #A.held_audits, 1, -1 do
+        local h = A.held_audits[i]
+        if h.landed_ms then
+            if RPC.now_ms() - h.landed_ms >= A.CAST_SETTLE_MS then
+                table.remove(A.held_audits, i)
+                U.with_side(h.side, h.audit)
+            end
+        elseif A.cast_paused(h.char) then
+            h.free_ms = nil
+        else
+            h.free_ms = h.free_ms or RPC.now_ms()
+            if RPC.now_ms() - h.free_ms >= A.HELD_LANDS_MS then table.remove(A.held_audits, i) end
+        end
+    end
+end
+
+if not A.held_audit_subscribed then
+    A.held_audit_subscribed = true
+    Ext.Events.Tick:Subscribe(function()
+        local ok, err = pcall(A.held_audit_tick)
+        if not ok then Ext.Utils.PrintWarning("[BG3AI] held cast audit: " .. tostring(err)) end
+    end)
 end
 
 -- CastedSpell of the job's cast: true = report it as cast. A cast whose state was never seen, or whose clear failed

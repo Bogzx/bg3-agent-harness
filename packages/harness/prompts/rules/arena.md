@@ -13,16 +13,15 @@ text never reach you, only their effects do.
 - `set_reactions` selects the character first, so it is refused like any action while the other side is acting.
 - Actions with the other team's characters and polling or cancelling its jobs are refused ("<name> is not on your
   side", "not your job").
-- Both sides share one game screen. The other side's reaction prompt is theirs to answer: while it is open your
-  results show WAITING and the game waits; answering it is refused ("not your reaction").
+- Both sides share one game screen. A reaction prompt belongs to the side of the character it asks: only that side
+  sees it and answers it with `react`. While the other side's is open your results show WAITING and the game waits;
+  answering it is refused ("not your reaction"). A prompt left unanswered for {turn_cap_s} s or more is declined.
 - The match ends at a turn boundary when one side's characters are all downed or dead: the other side wins. At the
   round cap it is a draw. A turn gets {turn_cap_s} s of model time per character in it (the model's own time, not the
   tools'); past that it is ended for that side, and three such turns in a row lose the match.
 - Durations count down at each round's end, for everyone: an N-turn status lasts the rest of its round plus N-1
   rounds. A prone character can't act or move; it stands up at its turn start for half its movement, if it has that
   much.
-- A reaction prompt with a row per slot level (e.g. Shield) needs a click, which a match never makes: `react` with
-  use=true fails on it; declining works; other prompts work as usual.
 - Spells cast through a second pick (Dimension Door's landing, Revivify) are refused, and a cast takes at most two
   targets.
 - A match removes these tools, which the rules above may name: the memory and note tools, the wiki, saves and reloads,

@@ -188,7 +188,7 @@ RPC.register("ui.react", function(args)
     local w = reactionPopup() or error("no reaction prompt on screen")
     -- an arena side answers only a prompt for its own characters (one that names nobody of its team is not its own)
     local side = RPC.side and RPC.side()
-    if side and S.reactionSide(S.reactionRows(w)) ~= side then error("not your reaction", 0) end
+    if side and S.promptSide(S.reactionRows(w), S.heldInterrupt()) ~= side then error("not your reaction", 0) end
     local dc = try(function() return w.DataContext end)
     local ev = UI.path(dc, "Data.InterruptEvents.1") or error("no pending interrupt")
     if args.use ~= false then
@@ -211,25 +211,58 @@ RPC.register("ui.react", function(args)
             if not btns[i] then error("no reaction option " .. tostring(args.which) .. " (" .. #btns .. " shown)") end
             return { needs_click = i, rows = #btns }
         end
+        -- L5 reads (live.md 02:00:05): several interruptors (Cutting Words + Shield): the press chose nothing, Confirm
+        -- stayed grey, and InterruptAcceptPlayerCommand closed the prompt with no reaction, read as done. The same
+        -- click chooses the row; the bridge then asks again, and a row that reads chosen is accepted here.
+        if #roots > 1 then
+            local i = tonumber(args.which) or 1
+            if not btns[i] then error("no reaction option " .. tostring(args.which) .. " (" .. #btns .. " shown)") end
+            if UI.prop(btns[i], "IsChecked") ~= true then return { needs_click = i, rows = #btns, confirm = true } end
+        end
     end
     if args.use == false then
         check(UI.command(dc, "InterruptDontReactPlayerCommand", ev, args.dry))
     else
-        if args.which then
-            -- ReactButton toggles, in display order; their CommandParameter
-            -- is the PassThrough (decision, interruptor) object.
-            local btns = reactRows(w)
-            local b = btns[tonumber(args.which)] or error("no reaction option " .. tostring(args.which) .. " (" .. #btns .. " shown)")
-            if UI.prop(b, "IsChecked") ~= true then check(UI.press(b, args.dry)) end
-        end
         check(UI.command(dc, "InterruptAcceptPlayerCommand", ev, args.dry))
     end
     if args.dry then return { can = true } end
     return reactWait(dc)
 end)
 
+-- What a prompt's observers hold, all resources summed. A reaction that happened spent something; the prompt closing
+-- says nothing (L5 reads: two "done" answers with nobody reacting). No uuids: the open prompt's observers, once.
+-- A side reads only its own characters. -> {uuids, total}
+local function resourceTotal(uuids)
+    local total = 0
+    for _, u in ipairs(uuids) do
+        local e = try(Ext.Entity.Get, u)
+        local res = e and try(function() return e.ActionResources.Resources end)
+        for _, list in pairs(res or {}) do
+            for _, r in pairs(list) do total = total + (tonumber(r.Amount) or 0) end
+        end
+    end
+    return total
+end
+
+RPC.register("ui.react_spent", function(args)
+    local side = RPC.side and RPC.side()
+    local uuids, seen = {}, {}
+    local held = not args.uuids and S.heldInterrupt() or nil
+    for _, r in ipairs(args.uuids or (held and held.rows) or {}) do
+        local u = type(r) == "table" and r.uuid or r
+        if not seen[u] and (not side or BG3AI.Arena.member_side(u) == side) then
+            seen[u] = true
+            uuids[#uuids + 1] = u
+        end
+    end
+    return { uuids = uuids, total = resourceTotal(uuids) }
+end)
+
 RPC.register("ui.react_probe", function(args)
     local w = reactionPopup()
+    -- a side's click walks by this: the other side's prompt reads as none, so a click can't land on it
+    local side = RPC.side and RPC.side()
+    if w and side and S.promptSide(S.reactionRows(w), S.heldInterrupt()) ~= side then w = nil end
     local dc = w and try(function() return w.DataContext end)
     local n = dc and UI.count(UI.path(dc, "Data.InterruptEvents")) or 0
     local out = { open = w ~= nil and n > 0, events = n }

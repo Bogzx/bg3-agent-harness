@@ -918,6 +918,7 @@ function S.state(args)
     if #panels > 0 then res.panels_open = panels end
 
     local scr = res.screen
+    res.held_reaction = S.heldReaction() -- Client/UIStateArena.lua
     if scr == "dialogue" then
         res.dialogue = S.dialogue(wmap)
     elseif scr == "roll" then

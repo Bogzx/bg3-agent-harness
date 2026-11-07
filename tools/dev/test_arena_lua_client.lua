@@ -184,6 +184,108 @@ test("ui.react: the other side's prompt is 'not your reaction'; its own goes on"
     eq(UI.commands[1], "InterruptDontReactPlayerCommand", "A's answer")
 end)
 
+-- L5 reads (live.md 01:03:22): the popup's rows don't name a twin; the game's own InterruptActionState does.
+local function held(...)
+    local actions = {}
+    for _, o in ipairs({ ... }) do
+        actions[#actions + 1] = { Observer = { Uuid = { EntityUuid = o } },
+            Interrupt = { InterruptData = { Interrupt = "Interrupt_Counterspell" } } }
+    end
+    entities[#entities + 1] = { InterruptActionState = { SpellCastGuid = "g1", Actions = actions } }
+end
+local function nameless_prompt()
+    prompt("Ana")
+    pages.ReactionDecisionPopup.children[1].DataContext.Character.Name = nil
+end
+
+test("a twin's prompt with no name on its rows is the observer's side's, shown only to it", function()
+    nameless_prompt()
+    held(B1)
+    local a = rpc("ui.state", "{}", "A").result
+    eq(a.reaction.other_side, true, "A: the other side's")
+    eq(a.reaction.unowned, nil, "A: owned")
+    eq(a.reaction.options, nil, "A: no rows")
+    eq(a.reaction.prompt, nil, "A: no text")
+    local b = rpc("ui.state", "{}", "B").result
+    eq(b.reaction.other_side, nil, "B: its own")
+    eq(b.reaction.options[1].who, "Bo", "B: who, from the observer")
+    local h = rpc("ui.state", "{}").result
+    eq(h.reaction.owner, "B", "the harness reads the owner")
+    eq(h.reaction.unowned, nil, "not unowned")
+end)
+
+test("react: the observer's side answers, the other is refused", function()
+    nameless_prompt()
+    held(B1)
+    eq(rpc("ui.react", "{use=false}", "A").error, "not your reaction", "A")
+    eq(rpc("ui.react", "{use=false}", "B").ok, true, "B")
+    eq(UI.commands[1], "InterruptDontReactPlayerCommand", "B's answer")
+end)
+
+test("the observer outranks a row's name; observers on both sides fall back to the rows", function()
+    prompt("Ana")
+    held(B1)
+    eq(rpc("ui.react", "{use=false}", "A").error, "not your reaction", "the observer's, not the row's")
+    entities = {}
+    nameless_prompt()
+    held(A1, B1)
+    eq(rpc("ui.state", "{}").result.reaction.unowned, true, "both sides, no name: nobody's")
+end)
+
+test("held_reaction: the harness reads a hold with no popup; a side never does", function()
+    held(B1)
+    local h = rpc("ui.state", "{}").result.held_reaction
+    eq(h.side, "B", "side")
+    eq(h.interrupts[1], "Interrupt_Counterspell", "what")
+    assert(h.key:find("g1", 1, true), h.key)
+    eq(rpc("ui.state", "{}", "A").result.held_reaction, nil, "A")
+    eq(rpc("ui.state", "{}", "B").result.held_reaction, nil, "B")
+    entities = {}
+    eq(rpc("ui.state", "{}").result.held_reaction, nil, "nothing held")
+end)
+
+-- L5 reads (live.md 02:00:05): Cutting Words + Shield: use=true read done, nobody reacted, Confirm stayed grey.
+test("two interruptors: use=true hands the row to the bridge; only a row that reads chosen is accepted", function()
+    prompt("Bo", "Bo")
+    held(B1)
+    local r = rpc("ui.react", "{use=true,which=2}", "B")
+    eq(r.result.needs_click, 2, "the row")
+    eq(r.result.confirm, true, "and a confirm after")
+    eq(#UI.commands, 0, "nothing accepted")
+    pages.ReactionDecisionPopup.children[2].children[1].IsChecked = true
+    rpc("ui.react", "{use=true,which=2}", "B")
+    eq(UI.commands[1], "InterruptAcceptPlayerCommand", "accepted")
+    local bad = rpc("ui.react", "{use=true,which=9}", "B").error
+    assert(tostring(bad):find("no reaction option 9 (2 shown)", 1, true), bad)
+end)
+
+test("ui.react_spent: the observers' total, a side's own only; ui.react_probe hides the other side's prompt", function()
+    nameless_prompt()
+    held(B1)
+    local ent = { ActionResources = { Resources = { a = { { Amount = 1 } }, b = { { Amount = 2 }, { Amount = 3 } } } } }
+    local get = Ext.Entity.Get
+    Ext.Entity.Get = function(u) return u == B1 and ent or nil end
+    local m = rpc("ui.react_spent", "{}", "B").result
+    eq(m.total, 6, "summed")
+    eq(m.uuids[1], B1, "the observer")
+    eq(#rpc("ui.react_spent", "{}", "A").result.uuids, 0, "A gets nobody")
+    eq(rpc("ui.react_spent", '{uuids={"' .. B1 .. '"}}', "A").result.total, 0, "nor by asking for it")
+    ent.ActionResources.Resources.a[1].Amount = 0
+    eq(rpc("ui.react_spent", '{uuids={"' .. B1 .. '"}}', "B").result.total, 5, "after the spend")
+    Ext.Entity.Get = get
+    eq(rpc("ui.react_probe", "{}", "A").result.open, false, "A: no prompt")
+    eq(rpc("ui.react_probe", "{}", "B").result.open, true, "B: its own")
+end)
+
+test("the hold's key doesn't follow the order of the game's list", function()
+    held(B1)
+    entities[1].InterruptActionState.SpellCastGuid = "z"
+    held(B1)
+    local one = rpc("ui.state", "{}").result.held_reaction.key
+    entities[1], entities[2] = entities[2], entities[1]
+    eq(rpc("ui.state", "{}").result.held_reaction.key, one, "same key")
+end)
+
 test("a prompt naming both sides, or someone of neither, is nobody's", function()
     prompt("Ana", "Bo")
     eq(S.reactionSide(S.reactionRows(pages.ReactionDecisionPopup)), nil, "both")

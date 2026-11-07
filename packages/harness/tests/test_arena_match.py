@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import types
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -65,6 +66,8 @@ class ArenaModel(GameModel):
 
     def __init__(self, clock: FakeClock, caps: bool = True, order: list[str] | None = None) -> None:
         super().__init__(clock=clock)
+        self.held_reaction: dict[str, Any] | None = None  # ui.state with no side: a hold with no popup
+        self.decline_sticks = False  # ui.react leaves the prompt up
         self.order = order
         self.phase: tuple[int, str | None, int] = (0, None, 0)  # (round, character or side, phase index), last record
         self.ended: dict[str, Any] | None = None
@@ -166,7 +169,7 @@ class ArenaModel(GameModel):
     def reply_side(self, ctx: str, op: str, args: dict[str, Any], side: str) -> Any:
         if (refused := wrong_context(ctx, op)) is not None:
             return refused
-        if op == "act.end_turn" and self.reaction is not None:
+        if op == "act.end_turn" and (self.reaction is not None or self.held_reaction is not None):
             return {"ok": True, "result": self.failed_job(op, "a reaction prompt is open", side)}
         if op == "act.end_turn" and self.refuse_end:
             return {"ok": True, "result": self.failed_job(op, self.refuse_end, side)}
@@ -223,6 +226,11 @@ class ArenaModel(GameModel):
             self.cameras += 1
             r = {"moved": False, "skipped": "side A's input"} if self.cameras <= self.camera_skips else {"moved": True}
             return {"ok": False, "error": self.camera_error} if self.camera_error else {"ok": True, "result": r}
+        if op == "ui.state" and self.held_reaction is not None and self.reaction is None:
+            ui = super().reply(ctx, op, args)
+            assert ui is not None
+            ui["result"]["held_reaction"] = self.held_reaction
+            return ui
         if op == "ui.state" and self.reaction is not None and self.arena is not None:
             ui = super().reply(ctx, op, args)
             assert ui is not None
@@ -231,7 +239,8 @@ class ArenaModel(GameModel):
             return ui
         if op == "ui.react" and self.reaction is not None:
             self.reacted.append((self.reaction["options"][0]["who"], bool(args.get("use"))))
-            self.reaction = None
+            if not self.decline_sticks:
+                self.reaction = None
             return {"ok": True, "result": self.settled_job("ui.react", {"answered": "skip"})}
         return super().reply(ctx, op, args)
 
@@ -513,6 +522,74 @@ def test_a_reaction_prompt_a_team_owns_is_left_to_that_side(tmp_path):
     assert model.reacted == [("Wyll", True)]
     assert ("ui.react", None) not in game.calls
     assert not [e for e in arena_events(tmp_path) if e["ev"] == "arena_reaction_unowned"]
+
+
+def test_a_prompt_its_owner_leaves_open_is_declined_within_the_bound(tmp_path):
+    """Live L5: an unanswered prompt holds all 8. The runner declines it for its side, and the match goes on."""
+    model, game, clock, agents, spec = setup({"A": patient, "B": patient})
+    clock.tick_hooks.insert(0, open_at_round_2(model, "Wyll"))
+    opened: list[float] = []
+    declined: list[float] = []
+
+    def timing() -> None:
+        if model.reaction is not None and not opened:
+            opened.append(clock.now())
+        if model.reacted and not declined:
+            declined.append(clock.now())
+
+    clock.tick_hooks.append(timing)
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert model.reacted == [("Wyll", False)]
+    rows = [e for e in arena_events(tmp_path) if e["ev"] == "arena_reaction_declined"]
+    assert [(e["round"], e["side"]) for e in rows] == [(2, "B")]
+    assert spec.turn_cap_s <= declined[0] - opened[0] <= am.UNOWNED_CHECK_S + spec.turn_cap_s + 5
+    assert not [e for e in arena_events(tmp_path) if e["ev"] == "arena_reaction_unowned"]
+    assert out.end is not None and out.end["reason"] == "round_cap" and out.invalid is None
+    assert grade(tmp_path)["valid"]
+
+
+def test_a_hold_with_no_prompt_on_screen_ends_the_match_as_a_fault(tmp_path):
+    model, game, clock, agents, spec = setup({"A": patient, "B": patient})
+
+    def hold() -> None:
+        if model.arena is not None and model.mod_round == 2:
+            model.held_reaction = {"key": "g1|b:Interrupt_Counterspell", "side": "B", "interrupts": ["x"]}
+
+    clock.tick_hooks.insert(0, hold)
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.invalid is not None and "reaction held the game" in out.invalid
+    assert ("ui.react", None) not in game.calls  # no popup: nothing to send
+
+
+def test_an_answer_after_the_stuck_time_with_the_hold_lingering_is_no_fault(tmp_path):
+    """REVIEW-reactions M1: an owner answers at 65 s and the hold outlives the popup by one read. Time with the prompt
+    on screen isn't stuck time: it read fault at 66, an invalid end for the slow models the bound is there for."""
+    read = {"reaction": {"prompt": "x", "owner": "B", "options": []}, "screen": "reaction"}
+    key = {"held_reaction": {"key": "k", "side": "B", "interrupts": ["x"]}}
+    replies = [{**read, **key}] * 2 + [key]
+
+    class Reads:
+        def rpc(self, op, args=None, context="server"):
+            assert op == "ui.state"
+            return replies.pop(0)
+
+    spec = types.SimpleNamespace(name="a", turn_cap_s=90.0)
+    hold = am._Hold()
+    for now in (0.0, 64.0, 66.0):
+        assert am._reaction_check(spec, Reads(), None, print, hold, now) == "B"  # type: ignore[arg-type]
+    replies.append(key)
+    with pytest.raises(am._Ended):  # still stuck 60 s after the prompt's last read
+        am._reaction_check(spec, Reads(), None, print, hold, 124.0)  # type: ignore[arg-type]
+
+
+def test_a_prompt_a_decline_doesnt_close_ends_the_match_as_a_fault(tmp_path):
+    """S092: Do Not React left a prompt with a row per level up. Whatever does that can't hang a match."""
+    model, game, clock, agents, spec = setup({"A": patient, "B": patient})
+    model.decline_sticks = True
+    clock.tick_hooks.insert(0, open_at_round_2(model, "Wyll"))
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert model.reacted == [("Wyll", False)]  # declined once, not once a poll
+    assert out.invalid is not None and "reaction held the game" in out.invalid
 
 
 def test_an_end_of_the_mods_own_before_the_runners_is_the_one_written(tmp_path):
