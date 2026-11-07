@@ -719,6 +719,8 @@ function G.check_cast(char, spell, target, pos, upcast, force)
     end
     if G.linked_box(st) then
         local ids, from = G.box_variants(char, spell)
+        -- from = game data: nothing of this box read in char's own book or containers, so it may not hold the box
+        if from and not G.holds_any(char, spell, ids) then G.refuse("the character does not have that action") end
         local free = {}
         for _, id in ipairs(ids) do if not G.variant_used(char, id) then free[#free + 1] = id end end
         local shown = G.spell_facts(spell)

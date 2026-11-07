@@ -403,3 +403,28 @@ test("Riposted miss: a die at its dc, a natural 20 below it, or no die read, isn
         reset()
     end
 end)
+
+-- GuardCast's linked box branch: a call-allies box reads every group in the game data when nothing of it is in the
+-- character's own book or containers, which is also so for one who doesn't hold it. Same flaw as Shout_FireShield's.
+local BOX = "Shout_END_AllyAbilities_MultipleSummon"
+local function allies_box(book)
+    combat_setup(9)
+    spell(BOX, { SpellType = "Shout", UseCosts = "", SpellFlags = { "IsLinkedSpellContainer", "CallAlliesSpell" } })
+    spell("Target_Group", { SpellType = "Target", UseCosts = "ActionPoint:1", SpellContainerID = BOX })
+    G.boxData[BOX] = { "Target_Group" }
+    world[P1].comps.SpellBook, world[P1].comps.SpellContainer = { Spells = book }, { Spells = {} }
+    return job(op("cast", { char = P1, spell = BOX }))
+end
+
+test("linked box: a call-allies box the character doesn't hold reads does not have that action", function()
+    local j = allies_box({})
+    G.boxData = {}
+    eq(j.error, "the character does not have that action", "not its groups")
+end)
+
+test("linked box: a holder whose groups don't read still gets the game data's list", function()
+    local j = allies_box({ { Id = { Prototype = BOX } } })
+    G.boxData = {}
+    assert(j.error:find("casts nothing by itself", 1, true), j.error)
+    assert(j.error:find("from the game data", 1, true), j.error)
+end)
