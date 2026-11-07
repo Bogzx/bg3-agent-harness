@@ -67,6 +67,13 @@ timed("state.status", function()
     if anyCombat then
         local c = S.combat(ctx)
         out.combat = { round = c.round, current = c.current }
+        -- the game runs the current member's turn (S.combat's game_turn row): the list's and guard's words beside it
+        local Gl = BG3AI.Guard
+        for _, o in ipairs(c.order or {}) do
+            if o.game_turn and o.uuid == c.current and Gl and Gl.lost_control_text then
+                out.combat.game_turn = Gl.lost_control_text(Gl.lost_control(o.uuid) or {})
+            end
+        end
     end
     out.camp = S.campRoster(ctx)
     return out

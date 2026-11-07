@@ -577,6 +577,8 @@ function S.actions(uuid)
         end
     end)
     local out = {}
+    local Gl = BG3AI.Guard
+    local lost = Gl and Gl.lost_control and Gl.lost_control(uuid)
     local extra -- a free attack's status on uuid (read once, on the first action-cost entry)
     for _, id in ipairs(order) do
         local info = byId[id].info
@@ -628,6 +630,7 @@ function S.actions(uuid)
         local Gi = BG3AI.Guard
         local ik = Gi and Gi.item_cd_key and Gi.item_cd_key(uuid, id)
         if ik and Gi.item_uses()[ik] then ok, why = false, "used until the next rest (once per rest, its item)" end
+        if lost then ok, why = false, Gl.lost_control_text(lost) end
         a.available = ok
         if not ok then a.reason = why end
         out[#out + 1] = a

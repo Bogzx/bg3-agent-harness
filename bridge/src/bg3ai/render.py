@@ -150,7 +150,8 @@ def render_status(s: dict, ui: dict | None, H: Handles) -> str:
         c = s.get("combat") or {}
         cur = c.get("current")
         cur_s = H.get(cur) if isinstance(cur, str) and UUID_RE.search(cur) else cur
-        mode.append(f"COMBAT round {c.get('round', '?')} turn={cur_s or '?'}")
+        mode.append(f"COMBAT round {c.get('round', '?')} turn={cur_s or '?'}"
+                    + (f" ({c['game_turn']})" if c.get("game_turn") else ""))  # the mod's lost-control words
     if s.get("turn_based"):
         mode.append("turn-based")
     if s.get("in_dialogue"):
@@ -415,6 +416,8 @@ def render_combat(res: dict, H: Handles) -> str:
             # an ended row was in the current group (the mod sets ended only there): "current" on it read as acting
             # (arena live 8: every member of the one shared group showed "ended current" next to COMBAT current=e2)
             drop = ("disabled", "is_current") if o.get("ended") else ("disabled",)  # disabled: the DISABLED lines
+            if o.get("game_turn"):  # the mod marks it ended so nobody waits on it; it is running, and not the side's
+                drop = (*drop, "ended")
             lines.append("  " + compact({k: v for k, v in o.items() if k not in drop}, H))
     if objs:
         lines.append("OBJECTS on the turn order (props): "

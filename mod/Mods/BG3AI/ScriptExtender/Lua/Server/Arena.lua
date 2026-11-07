@@ -798,6 +798,8 @@ function Ar.status()
     local ph = st.phase
     local turn = ph and { side = ph.side, uuid = ph.character, members = ph.members, round = ph.round,
         phase = ph.phase } or nil
+    -- lost_control: the game runs this phase's character (Guard.lost_control), {name = its status} (the runner's clock)
+    if turn then turn.lost_control = BG3AI.Guard.lost_control(ph.character) end
     return { active = Ar.active(), teams = st.teams, round = st.round, turn = turn,
         hp = { A = hpLeft("A"), B = hpLeft("B") }, ended = st.ended }
 end

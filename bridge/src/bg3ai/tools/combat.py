@@ -352,7 +352,8 @@ def _peer_requested(cs: dict, char: str) -> str | None:
         return None
     for o in cs.get("order") or []:
         u = o.get("uuid")
-        if u and u != char and u in party and o.get("is_current") and o.get("ended") and not o.get("dead"):
+        if u and u != char and u in party and o.get("is_current") and o.get("ended") and not o.get("dead") \
+                and not o.get("game_turn"):
             return u
     return None
 

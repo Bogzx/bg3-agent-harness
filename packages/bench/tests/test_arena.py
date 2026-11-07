@@ -483,6 +483,7 @@ def test_the_fixture_match_fits_the_facts_schemas_and_grades():
         "favoured": None,  # no pair in round 1
         "round_first": [{"round": 1, "first": "A", "how": None}, {"round": 2, "first": "A", "how": None}],
         "luck": None,
+        "lost_control": [],  # no turn the game ran itself
     }
 
 

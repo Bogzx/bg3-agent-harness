@@ -37,11 +37,18 @@ G.BLOCK = {
     SetCanJoinCombat = true, RequestGatherAtCamp = true, EndCombat = true, LeaveCombat = true, Die = true,
 }
 
+-- What a client's order sends to a character, first argument first. While the game runs that character's turn
+-- (G.lost_control) none of them reaches the game: the gates refuse before a job starts, and this holds for a job begun
+-- before the status came (a walk that ends in a swing, a re-order, a job's own purge, which would cut the game's cast).
+G.ORDERS_A_CHARACTER = { UseSpell = true, UseSpellAtPosition = true, EndTurn = true, CharacterMoveToPosition = true,
+    PurgeOsirisQueue = true, Use = true, Pickup = true, Equip = true, Unequip = true, SetWeaponUnsheathed = true }
+
 function G.osi(name, ...)
     if G.BLOCK[name] or not G.ALLOW[name] then
         error("guard: Osiris call '" .. tostring(name) .. "' is not permitted", 0)
     end
     if name:sub(1, 3) == "DB_" then error("guard: database writes are not permitted", 0) end
+    if G.ORDERS_A_CHARACTER[name] then G.lost_control_gate((...)) end
     return Osi[name](...)
 end
 

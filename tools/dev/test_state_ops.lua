@@ -146,6 +146,21 @@ test("a fight: in_combat, turn_based and the round/current from state.combat", f
     eq(row(st, TAV).in_combat, nil, "Tav's row")
 end)
 
+-- live.md "## Lost control fix live": get_status read turn=e1 on a turn the game ran, without the list's words.
+test("a fight whose current member's turn the game runs: the guard's words beside current", function()
+    osi.combat[GALE] = true
+    local rows = { { uuid = TAV }, { uuid = GALE, game_turn = true, ended = true } }
+    S.combat = function() return { active = true, round = 3, current = GALE, order = rows } end
+    local saved = BG3AI.Guard
+    BG3AI.Guard = { lost_control = function(u) return u == GALE and { name = "Goaded" } or nil end,
+        lost_control_text = function(l) return "can't control: " .. l.name .. ", the game runs its turn" end }
+    local st = status()
+    eq(st.combat.game_turn, "can't control: Goaded, the game runs its turn", "the list's words")
+    rows[2].game_turn, rows[1].game_turn = nil, true
+    eq(status().combat.game_turn, nil, "current's own turn the side runs, another's the game's: no words")
+    BG3AI.Guard = saved
+end)
+
 test("forced turn-based out of combat is turn_based, not in_combat", function()
     osi.ftb[TAV] = true
     local st = status()

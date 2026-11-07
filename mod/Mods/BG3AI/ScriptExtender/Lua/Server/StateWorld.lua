@@ -487,6 +487,14 @@ function S.combat(ctx)
                                     and not pending and not over and BG3AI.Guard and BG3AI.Guard.turn_passes
                                     and BG3AI.Guard.turn_passes(u)
                                 if passes then o.passes = passes; pending = true end
+                                -- the game runs this member's turn (Guard.lost_control): not `passes`, whose open
+                                -- turn the bridge ends after 5 s; nobody but the game ends this one
+                                local Gl = BG3AI.Guard
+                                local lost = ctx.is_party[u] and Gl and Gl.lost_control and Gl.lost_control(u)
+                                if lost and tb.IsActiveCombatTurn and not tb.RequestedEndTurn and not over then
+                                    o.game_turn = true
+                                    pending = true
+                                end
                                 if tb.IsActiveCombatTurn and not over then
                                     o.is_current = true
                                     if tb.RequestedEndTurn or pending then
@@ -503,7 +511,7 @@ function S.combat(ctx)
                                 -- arena, one held for another's phase or whose turn moved on (O1 audit S3)
                                 local open_end = tb.IsActiveCombatTurn and (tb.RequestedEndTurn or pending)
                                 if ctx.is_party[u] and tb.CanActInCombat and not tb.ActedThisRoundInCombat
-                                    and not o.downed and not open_end and not (over and U.side()) then
+                                    and not o.downed and not open_end and not (over and U.side()) and not lost then
                                     o.can_act = true
                                     out.party_can_act = out.party_can_act or {}
                                     table.insert(out.party_can_act, u)

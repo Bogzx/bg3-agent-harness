@@ -387,6 +387,8 @@ local function combat_walk_stop(job)
         -- a walk that never started while the game is paused: the purge would cancel the mover's own paused cast
         if not A.cast_paused(job.char) then pcall(G.osi, "PurgeOsirisQueue", job.char) end
         local blk = G.blocking_status(job.char, true)
+        local lost = G.lost_control(job.char)
+        if lost then why = G.lost_control_text(lost) end
         RPC.finish_job(job, "failed", job.partial, why .. (blk and ("; the character is " .. tostring(blk.name))
             or ""))
         return true
@@ -918,6 +920,7 @@ end)
 
 reg("stop", function(args)
     local char = G.actor(args.char)
+    G.lost_control_gate(char) -- its purge would cut the game's cast
     local job = A.active[char]
     local stopped = job and job.status == "running" and job.id or nil
     local n = osi_tasks(char)

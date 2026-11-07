@@ -140,7 +140,7 @@ def _turn(s: dict, H: Handles) -> str:
     if isinstance(cur, str) and render.UUID_RE.search(cur):
         h = H.get(cur)
         cur = f"{h} {H.names[h]}" if H.names.get(h) else h
-    return f"round {c.get('round', '?')} turn={cur or '?'}"
+    return f"round {c.get('round', '?')} turn={cur or '?'}" + (f" ({c['game_turn']})" if c.get("game_turn") else "")
 
 
 def _mode(s: dict, ui: dict | None, H: Handles) -> str:
