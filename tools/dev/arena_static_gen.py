@@ -13,8 +13,9 @@ What it writes into the static file (merged, never dropping a key it doesn't mak
   subclasses = how many subclasses the row offers, plus AllowImprovement / PassivesRemoved where the row has them),
   equipment (EQP_CC_<C>: item, type, root), casting (ClassDescription's SpellCastingAbility, by name);
 - subclasses[S] for every subclass of CLASSES: class, uuid, table, levels (the rows it has);
-- races[R] for the hirelings' races: race (the most specific id: the subrace's, else the race's) and rows (the parent
-  race's level-1 row first, then the subrace's);
+- races[R] for the hirelings' races: race (the most specific id: the subrace's, else the race's), rows (the parent
+  race's level-1 row first, then the subrace's) and above (only when it has any: the rows of those tables above level
+  1 that hold something, by level, a Drow's spells at 3 and 5);
 - backgrounds, feats (name, uuid, selectors, passives, boosts, repeatable), lists (uuid -> {kind, name, ids}) for
   every list a written row or feat selects from, xp (total XP per level), items (each EQP_CC item and its _1/_2
   entries, the healing potions: type, root, rarity), hirelings (new classes only: origin, race, background; their
@@ -298,7 +299,8 @@ def generate(files: Files, classes: tuple[str, ...] = CLASSES) -> dict[str, Any]
         bg = bgs[o["BackgroundUUID"]]
         bname = bg["Passives"].removeprefix("Background_")
         out["hirelings"][c] = {"origin": o["UUID"], "race": rname, "background": bname}
-        rows = []
+        rows: list[dict[str, Any]] = []
+        above: list[dict[str, Any]] = []
         for r in (race, sub):
             if r is None:
                 continue
@@ -317,7 +319,21 @@ def generate(files: Files, classes: tuple[str, ...] = CLASSES) -> dict[str, Any]
                         "Selectors": row.get("Selectors") or "",
                     }
                 )
-        out["races"][rname] = {"race": (sub or race)["UUID"], "rows": rows}
+            for p in prog.values():
+                held = p.get("Boosts") or p.get("PassivesAdded") or p.get("Selectors")
+                if held and p.get("TableUUID") == r.get("ProgressionTableUUID") and int(p["Level"]) > 1:
+                    above.append(
+                        {
+                            "race": r["Name"],
+                            "level": int(p["Level"]),
+                            "uuid": p["UUID"],
+                            "Boosts": p.get("Boosts") or "",
+                            "PassivesAdded": p.get("PassivesAdded") or "",
+                            "Selectors": p.get("Selectors") or "",
+                        }
+                    )
+        above.sort(key=lambda x: x["level"])
+        out["races"][rname] = {"race": (sub or race)["UUID"], "rows": rows, **({"above": above} if above else {})}
         out["backgrounds"][bname] = {"uuid": bg["UUID"], "passive": bg["Passives"]}
     out["feats"] = {
         f["Name"]: {
@@ -337,7 +353,7 @@ def generate(files: Files, classes: tuple[str, ...] = CLASSES) -> dict[str, Any]
     used = set()
     texts = [r["Selectors"] for c in out["classes"].values() for r in c["levels"].values()]
     texts += [r["Selectors"] for s in out["subclasses"].values() for r in s["levels"].values()]
-    texts += [r["Selectors"] for x in out["races"].values() for r in x["rows"]]
+    texts += [r["Selectors"] for x in out["races"].values() for r in [*x["rows"], *x.get("above", [])]]
     texts += [f["selectors"] for f in out["feats"].values()]
     for t in texts:
         used |= {u for _, u in SELECTOR_LIST.findall(t)}

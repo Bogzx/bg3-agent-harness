@@ -577,7 +577,9 @@
        "FeyAncestry"
       ],
       "spells": [
-       "Target_DancingLights"
+       "Target_DancingLights",
+       "Target_FaerieFire_DrowMagic",
+       "Target_Darkness_DrowMagic"
       ]
      },
      "player": {
@@ -720,6 +722,8 @@
      },
      "spell_abilities": {
       "Target_DancingLights": "Charisma",
+      "Target_FaerieFire_DrowMagic": "Charisma",
+      "Target_Darkness_DrowMagic": "Charisma",
       "Target_HuntersMark": "Wisdom",
       "Target_CureWounds": "Wisdom",
       "Projectile_EnsnaringStrike_Container": "Wisdom",

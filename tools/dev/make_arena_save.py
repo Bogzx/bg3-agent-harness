@@ -468,7 +468,7 @@ def kit_plan(
         x["from_pool"] = x.pop("pool")
         if x["from_pool"]:
             pool += x["ids"]
-    race, rpart, rchoices, fixed = race_plan(kit, static, what, c["casting"])
+    race, rpart, rchoices, fixed = race_plan(kit, static, what, c["casting"], level)
     abilities.update(rpart.pop("spell_abilities", {}))
     book_only = cls in PICKS_ARE_ITS_BOOK and kit.get("prepared") is not None
     pool_picks = [x for x in choices if x.pop("from_pool", False)]
@@ -576,17 +576,18 @@ def _upcasts(held: list[str], rows: list[dict[str, Any]], static: dict[str, Any]
 
 
 def race_plan(
-    kit: dict[str, Any], static: dict[str, Any], what: str, casting: str | None = None
+    kit: dict[str, Any], static: dict[str, Any], what: str, casting: str | None = None, level: int = 1
 ) -> tuple[str, dict[str, Any], list[dict[str, Any]], list[tuple[str, str]]]:
     """The kit's race part from the race's level-1 rows, its parent race's first (A1, D411: a build's race, so a Wood
-    Half-Elf also gets the subrace's Movement and Stealth). -> (race id, the kit's race part {race, boosts, passives,
+    Half-Elf also gets the subrace's Movement and Stealth), then its rows above level 1 up to `level` (a Drow's spells
+    at 3 and 5: a copy gets a race's rows only from here). -> (race id, the kit's race part {race, boosts, passives,
     spells?, spell_abilities?}, the race's choices (Human: one skill, from kit.race_skills), [(skill, where from)] the
     rows give). `casting`: the class's, for a row that names no ability."""
     name = kit.get("race")
     race = static["races"].get(name)
     if race is None:
         raise SpecError(f"{what}: race must be one of {', '.join(static['races'])}")
-    rows = race.get("rows") or [race["levels"]["1"]]
+    rows = [*(race.get("rows") or [race["levels"]["1"]]), *(r for r in race.get("above", []) if r["level"] <= level)]
     boosts = [b for r in rows for b in (r["Boosts"] or "").split(";") if b]
     passives = [x for r in rows for x in (r["PassivesAdded"] or "").split(";") if x]
     spells: list[str] = []

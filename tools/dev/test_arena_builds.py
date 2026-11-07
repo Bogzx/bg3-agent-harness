@@ -69,6 +69,35 @@ class RaceTest(unittest.TestCase):
         self.assertEqual((r["race"], r["spells"]), (SELDARINE, ["Target_DancingLights"]))
         self.assertIn("ProficiencyBonus(Skill,Perception)", r["boosts"])
 
+    def test_a_race_row_above_level_1_counts_from_its_level(self):
+        # The game's Drow table: Faerie Fire at 3, Darkness at 5. A real Drow of that level has them, so its twin must.
+        lights, fire, dark = "Target_DancingLights", "Target_FaerieFire_DrowMagic", "Target_Darkness_DrowMagic"
+        for level, want in ((2, [lights]), (3, [lights, fire]), (4, [lights, fire]), (5, [lights, fire, dark])):
+            with self.subTest(level=level):
+                part = mas.race_plan(kit("Ranger", "Drow_Seldarine"), STATIC, "x", "Wisdom", level)[1]
+                self.assertEqual(part["spells"], want)
+                self.assertEqual(part["spell_abilities"], dict.fromkeys(want, "Charisma"), "the row's own")
+
+    def test_a_race_row_above_level_1_with_a_choice_a_kit_cant_make_is_refused(self):
+        st = copy.deepcopy(STATIC)
+        st["races"]["Drow_Seldarine"]["above"][0]["Selectors"] = "SelectPassives(aaaaaaaa,1)"
+        self.assertEqual(
+            mas.race_plan(kit("Ranger", "Drow_Seldarine"), st, "x", None, 2)[1]["spells"], ["Target_DancingLights"]
+        )
+        with self.assertRaisesRegex(mas.SpecError, r"race Drow_Seldarine has SelectPassives\(aaaaaaaa"):
+            mas.race_plan(kit("Ranger", "Drow_Seldarine"), st, "x", None, 3)
+
+    def test_a_kit_of_a_tier_holds_its_races_spells_of_that_tier(self):
+        r = mas.kit_plan(kit("Ranger", "Drow_Seldarine"), "Ranger", 2, STATIC)["kit"]["race"]
+        self.assertEqual(r["spells"], ["Target_DancingLights"], "L2's Ranger has no row above")
+        pair = next(p for p in json.loads((REPO / "packages/bench/arenas/builds-l5-4v4-team2-v1.json").read_text())
+                    ["mirror"]["pairs"] if p["class"] == "Ranger")  # fmt: skip
+        self.assertEqual(
+            pair["kit"]["race"]["spells"],
+            ["Target_DancingLights", "Target_FaerieFire_DrowMagic", "Target_Darkness_DrowMagic"],
+        )
+        self.assertEqual(pair["kit"]["spell_abilities"]["Target_Darkness_DrowMagic"], "Charisma")
+
     def test_a_spell_keeps_the_ability_its_row_gives_else_its_classs(self):
         doc = json.loads((REPO / "packages/bench/builds/l2_hirelings_v1.json").read_text())
         b = next(x for x in doc["builds"] if x["class"] == "Ranger")
