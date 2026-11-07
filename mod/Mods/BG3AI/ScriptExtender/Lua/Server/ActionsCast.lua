@@ -274,14 +274,18 @@ end
 -- the status it spends goes on the cast.
 A.CAST_CANCELED_SPENT = "the game took the %s, then cancelled the cast (the game's Canceled); it wasn't refused:"
     .. " what came of it shows in the events"
-function A.canceled_cost(job, char, check)
-    if select(2, A.engine_refusal(job)) ~= "Canceled" then return nil end
+function A.cost_taken(char, check)
     local spent = A.cost_spent(char, check)
     if spent then return spent end
     if check and check.extra_attack and not G.b(G.q("HasActiveStatus", char, G.EXTRA_ATTACK_STATUS)) then
         return "extra attack"
     end
     return nil
+end
+
+function A.canceled_cost(job, char, check)
+    if select(2, A.engine_refusal(job)) ~= "Canceled" then return nil end
+    return A.cost_taken(char, check)
 end
 
 local NULL_GUID = "NULL_00000000-0000-0000-0000-000000000000"
@@ -658,6 +662,9 @@ reg("cast", function(args)
                     RPC.finish_job(job, "failed", nil, string.format(A.CAST_CANCELED_SPENT, spent))
                     return
                 end
+                if not job.ui and select(2, A.engine_refusal(job)) == "Countered" then
+                    A.hold_countered(job, char, check)
+                end
                 RPC.finish_job(job, "failed", nil, why)
             end,
             -- AttackedBy(defender, attackerOwner, attacker, damageType, amount, cause, storyActionId)
@@ -968,7 +975,9 @@ reg("cast", function(args)
                 return charged
             end
             if not job.casted then
-                if type(job.result) == "table" and job.result.paused then A.hold_audit(job, char, matches, audit) end
+                if type(job.result) == "table" and job.result.paused then
+                    A.hold_audit(job, char, matches, audit, check)
+                end
                 return
             end
             local charged = audit()

@@ -348,7 +348,7 @@ end)
 
 test("cast start: a paused cast that never lands pays nothing, and a later one pays once (L5 scratch)", function()
     local res = held_heal(4)
-    tick(100)
+    tick(math.ceil(A.HELD_RESOLVE_MS / 60) + 5) -- nothing charged here, so the next order waits for the bound
     eq(res.SpellSlot[1].Amount, 4, "a lost cast is free")
     res.BonusActionPoint[1].Amount = 1
     local j = job(op("cast", { char = P1, spell = "Target_HeldHeal", target = NPC }))
@@ -362,7 +362,7 @@ end)
 
 test("cast start: a lost cast's audit expires: a rest and a later cast pay for that cast only (M1)", function()
     local res = held_heal(2)
-    tick(100) -- unpaused past HELD_LANDS_MS: the cast is lost
+    tick(math.ceil(A.HELD_RESOLVE_MS / 60) + 5) -- unpaused past HELD_LANDS_MS and the order's bound: the cast is lost
     res.SpellSlot[1].Amount, res.BonusActionPoint[1].Amount = 4, 1 -- a rest
     local j = job(op("cast", { char = P1, spell = "Target_HeldHeal", target = NPC }))
     eq(j.status, "running", "cast again " .. tostring(j.error))
@@ -389,6 +389,193 @@ test("cast start: a cast still held past the expiry keeps its audit, and a landi
     A.dispatch("CastedSpell", { P1, "Target_HeldHeal", "Target", "None", 0 })
     tick(10)
     eq(res.SpellSlot[1].Amount, 3, "paid")
+end)
+
+-- Section 16 read A (live.md, 08:03:05): after a Counterspell the caster read Action 1/1 until about +6 s. An order
+-- sent at +1 s ran after the hold: one action bought the countered cast and a full second cast. The pause component had
+-- gone with the answer and the job had ended, so nothing held it; a player can't order there, as the game's UI is busy.
+local function held_order() return op("cast", { char = P1, spell = "Target_HeldHeal", target = NPC }) end
+-- an op's refusal comes back as a failed job
+local function failed_with(r, pat)
+    local j = job(r)
+    eq(j.status, "failed", "refused " .. tostring(j.error))
+    assert(tostring(j.error):find(pat, 1, true), j.error)
+end
+
+test("held cast: an order 1 s after the answer is refused, nothing ordered (section 16 read A)", function()
+    held_heal(4)
+    tick(16) -- +1 s, unpaused, nothing charged yet
+    local orders = #called("UseSpell")
+    failed_with(held_order(), "still resolving")
+    eq(#called("UseSpell"), orders, "no second order reached the game")
+end)
+
+test("held cast: a walk or another spell of that character waits for it too; the words hold no promise", function()
+    held_heal(4)
+    tick(16)
+    spell("Target_Other", { TargetRadius = "18", SpellType = "Target", Level = 0, UseCosts = "BonusActionPoint:1" })
+    failed_with(op("cast", { char = P1, spell = "Target_Other", target = NPC }), "still resolving")
+    failed_with(op("move_to", { char = P1, target = NPC }), "still resolving")
+    assert(A.CAST_UNRESOLVED:find("its cost may not show yet", 1, true), A.CAST_UNRESOLVED)
+end)
+
+test("held cast: once the game charges a countered cast, the refusal is the plain one, nothing wedged", function()
+    local res = held_heal(4)
+    tick(16)
+    res.BonusActionPoint[1].Amount = 0 -- the game's charge: live, between +4 s and +6 s
+    failed_with(held_order(), "not enough")
+    spell("Target_Act", { TargetRadius = "18", SpellType = "Target", Level = 0, UseCosts = "ActionPoint:1" })
+    local j = job(op("cast", { char = P1, spell = "Target_Act", target = NPC }))
+    eq(j.status, "running", "the action is still its own " .. tostring(j.error))
+    eq(res.SpellSlot[1].Amount, 4, "a countered cast keeps its slot, as read")
+end)
+
+test("held cast: a cast the game never charges can't wedge its caster: past the bound the order runs", function()
+    held_heal(4)
+    tick(math.floor((A.HELD_RESOLVE_MS - 200) / 60))
+    failed_with(held_order(), "still resolving")
+    tick(10)
+    local j = job(held_order())
+    eq(j.status, "running", "ran " .. tostring(j.error))
+end)
+
+test("held cast: a landing lifts it and pays once; the clock stops and a charge doesn't count while paused", function()
+    local res = held_heal(4)
+    world[P1].comp_names = { PAUSED } -- the next prompt of the same cast
+    tick(math.floor(A.HELD_RESOLVE_MS / 60) + 20)
+    res.BonusActionPoint[1].Amount = 0
+    failed_with(held_order(), "still resolving")
+    res.BonusActionPoint[1].Amount = 1
+    world[P1].comp_names = nil
+    tick(16)
+    failed_with(held_order(), "still resolving")
+    res.BonusActionPoint[1].Amount = 0
+    A.dispatch("CastedSpell", { P1, "Target_HeldHeal", "Target", "None", 0 })
+    tick(10)
+    eq(res.SpellSlot[1].Amount, 3, "paid once")
+    res.BonusActionPoint[1].Amount = 1
+    local j = job(held_order())
+    eq(j.status, "running", "lifted " .. tostring(j.error))
+end)
+
+-- live.md 01:11:51, Counterspell always: no prompt, no pause, `reason Countered`, action 1 after.
+local function countered_no_prompt()
+    combat_setup(9)
+    spell("Target_Bolt", { TargetRadius = "18", SpellType = "Target", Level = 0, UseCosts = "ActionPoint:1" })
+    world[NPC].pos = { 1.5, 0, 0 }
+    cast_outcome = "Countered"
+    local j = job(op("cast", { char = P1, spell = "Target_Bolt", target = NPC }))
+    eq(j.status, "running", "started " .. tostring(j.error))
+    A.dispatch("CastSpellFailed", { P1, "Target_Bolt", "Target", "None", 0 })
+    eq(j.status, "failed", "ended " .. tostring(j.error))
+    assert(j.error:find("a reaction countered it", 1, true), j.error)
+    cast_outcome = nil
+    return world[P1].comps.ActionResources.Resources
+end
+local function next_order() return op("cast", { char = P1, spell = "Target_Bolt", target = NPC }) end
+
+test("held cast: a cast countered with no prompt holds its caster's next order too (Counterspell always)", function()
+    local res = countered_no_prompt()
+    tick(16)
+    local orders = #called("UseSpell")
+    failed_with(next_order(), "still resolving")
+    eq(#called("UseSpell"), orders, "no second order reached the game")
+    res.ActionPoint[1].Amount = 0 -- the game's charge
+    failed_with(next_order(), "not enough")
+end)
+
+test("held cast: a cast countered with no prompt can't wedge its caster either", function()
+    countered_no_prompt()
+    tick(math.ceil(A.HELD_RESOLVE_MS / 60) + 5)
+    eq(job(next_order()).status, "running", "past the bound")
+end)
+
+test("held cast: another refusal holds nothing back", function()
+    combat_setup(9)
+    spell("Target_Bolt", { TargetRadius = "18", SpellType = "Target", Level = 0, UseCosts = "ActionPoint:1" })
+    world[NPC].pos = { 1.5, 0, 0 }
+    cast_outcome = "InvalidTarget"
+    job(op("cast", { char = P1, spell = "Target_Bolt", target = NPC }))
+    A.dispatch("CastSpellFailed", { P1, "Target_Bolt", "Target", "None", 0 })
+    cast_outcome = nil
+    eq(job(next_order()).status, "running", "not gated")
+end)
+
+test("held cast: an Extra Attack whose status went has resolved: no cost to read, no wait", function()
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = 1
+    local h = { began = true, char = P1, check = { extra_attack = true } }
+    A.held_audits = { h }
+    eq(A.cast_unresolved(P1), true, "status still on")
+    osiv[key("HasActiveStatus", P1, "EXTRA_ATTACK")] = nil
+    eq(A.cast_unresolved(P1), false, "status gone")
+end)
+
+test("held cast: end_turn isn't held, and the refusal says so", function()
+    held_heal(4)
+    tick(16)
+    failed_with(held_order(), "still resolving")
+    assert(A.CAST_UNRESOLVED:find("no order but end_turn starts for this character", 1, true), A.CAST_UNRESOLVED)
+    eq(job(op("end_turn", { char = P1 })).status, "running", "the turn can end inside the window")
+end)
+
+test("held cast: another character's order in the window runs: only the caster is held", function()
+    held_heal(4)
+    tick(16)
+    osiv[key("IsCharacter", P2)] = 1
+    osiv[key("IsOnStage", P2)] = 1
+    osiv[key("IsInCombat", P2)] = 1
+    world[P2] = { pos = { -1, 0, 0 }, comps = { TurnBased = { IsActiveCombatTurn = true }, ActionResources = {
+        Resources = { Movement = { { Level = 0, Amount = 9 } } } } } }
+    local saved = Osi.DB_PartyMembers
+    Osi.DB_PartyMembers = { Get = function() return { { "S_Player_" .. P1 }, { "S_Player_" .. P2 } } end }
+    local j = job(op("move_to", { char = P2, target = NPC }))
+    Osi.DB_PartyMembers = saved
+    eq(j.status, "running", "not held " .. tostring(j.error))
+    failed_with(held_order(), "still resolving")
+end)
+
+test("held cast: a new prompt on the cast starts the bound again", function()
+    held_heal(4)
+    tick(134) -- 8 s unpaused
+    world[P1].comp_names = { PAUSED }
+    tick(5)
+    world[P1].comp_names = nil
+    tick(84) -- 5 s since that prompt closed, 13 s since the first
+    failed_with(held_order(), "still resolving")
+end)
+
+test("held cast: the refusal's words state the bound in the constant", function()
+    local bound = math.floor(A.HELD_RESOLVE_MS / 1000) .. " s"
+    assert(A.CAST_UNRESOLVED:find(bound, 1, true), A.CAST_UNRESOLVED)
+end)
+
+test("held cast: a hotbar cast countered with no prompt holds nothing: the game's own UI orders there", function()
+    combat_setup(9)
+    spell("Target_Bolt", { TargetRadius = "18", SpellType = "Target", Level = 0, UseCosts = "ActionPoint:1" })
+    world[NPC].pos = { 1.5, 0, 0 }
+    local j = job(op("cast", { char = P1, spell = "Target_Bolt", target = NPC, ui = true }))
+    eq(j.status, "running", "started " .. tostring(j.error))
+    A.dispatch("CastSpell", { P1, "Target_Bolt", "Target", "None", 0 })
+    j.cast_entity = { SpellCastOutcome = { Result = "Countered" } }
+    A.dispatch("CastSpellFailed", { P1, "Target_Bolt", "Target", "None", 0 })
+    eq(j.status, "failed", "ended " .. tostring(j.error))
+    assert(j.error:find("a reaction countered it", 1, true), j.error)
+    eq(#A.held_audits, 0, "no entry")
+end)
+
+test("held cast: an order that never began holds nothing back: read live, it doesn't run later", function()
+    cast_seen = "none"
+    local j = swing()
+    tick(15)
+    world[P1].comp_names = PAUSED_NAMES
+    tick(20)
+    eq(j.status, "interrupted", "status " .. tostring(j.error))
+    eq(j.error, A.ORDER_PAUSED, "held before it started")
+    world[P1].comp_names = nil
+    tick(16)
+    cast_seen = "state"
+    local k = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
+    eq(k.status, "running", "not gated " .. tostring(k.error))
 end)
 
 test("cast start: a short pause that clears lets the cast finish as usual", function()

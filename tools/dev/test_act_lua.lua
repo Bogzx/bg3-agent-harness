@@ -185,6 +185,7 @@ function reset()
     if G then G.turn_open, G.end_owed, G.combat_round = {}, {}, {} end -- the TurnStarted/TurnEnded pairing too
     turn_pushes = {}
     if A then A.hit_ms = {} end -- AttackedBy on a party member (cast re-order window) is per test
+    if A then A.held_audits = {} end -- a paused cast's audit and its order gate are per test
     if A then A.casts, A.hits, A.interrupts = {}, {}, {} end -- a move's reactions: casts, hits, interrupts per test
     -- the stub world moves in synthetic multi-metre steps per 60 ms tick: NAV-8's small-step rule off (own tests)
     if A then A.TELEPORT_SMALL_M = 1e9 end
