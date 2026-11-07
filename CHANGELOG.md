@@ -303,7 +303,9 @@ game unless it says so.
   game shows as locked. `set.<group>_off` names the rows still listed that were selected before the toggles and aren't after
   them, including one the game took. `plan.skills` now reaches the expertise group: a row the game shows disabled and
   unselected no longer stops the search for a name, so a name no group offers is reported as `not offered`. That search is
-  shared with character creation's `plan.skills`. A plan's skill or passive the page doesn't offer is now a failure, no longer `done`.
+  shared with character creation's `plan.skills`. On a level-up, a `plan.skills` name a group holds as an earlier pick moves
+  on to a later group that can take it, so naming a proficient skill at a Bard's level 3 takes an expertise pick; if none
+  can, nothing changes and the result's `already_held` names it. Character creation still stops at the held row. A plan's skill or passive the page doesn't offer is now a failure, no longer `done`.
 - A kit's subclass spell with no ability on its row or class reads the stats' ability, as a character's does (a Thief's
   Shout_SupremeSneak read None on a twin, Intelligence on the reference).
 

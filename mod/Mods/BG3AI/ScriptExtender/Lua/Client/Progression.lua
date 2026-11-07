@@ -434,6 +434,22 @@ local function skillRow(g, name, only)
     return item
 end
 
+-- The group and row taking a pick of `name`, and whether it's only held. pastHeld (level-up only): a row selected and
+-- disabled is an earlier pick, so a later group that can take the name comes first (live 2026-11-07, Bard L3's class
+-- group shows proficient rows so, and expertise takes them). None can: the held row, `true`. Character creation stops
+-- at the held row: a background's skill there mustn't spend an expertise pick.
+local function skillTarget(groups, name, only, pastHeld)
+    local heldG, heldItem
+    for _, g in ipairs(groups) do
+        local item = skillRow(g, name, only)
+        if item then
+            if not (pastHeld and UI.prop(item, "Enabled") == false) then return g, item end
+            if not heldItem then heldG, heldItem = g, item end
+        end
+    end
+    return heldG, heldItem, heldItem ~= nil
+end
+
 local function skillsView(dc)
     local out = {}
     for _, g in ipairs(skillGroups(dc)) do
@@ -798,7 +814,7 @@ end
 P.inner = { try = try, isObj = isObj, same = same, str = str, label = label, ident = ident, set = set,
     list = list, norm = norm, pick = pick, view = view, abilityName = abilityName, abilityOf = abilityOf,
     visibleWidget = visibleWidget, widgetDC = widgetDC, pages = pages, selectTab = selectTab,
-    tabStage = tabStage, skillGroups = skillGroups, skillRow = skillRow, skillsView = skillsView,
+    tabStage = tabStage, skillGroups = skillGroups, skillTarget = skillTarget, skillsView = skillsView,
     passiveSelectors = passiveSelectors, passivesView = passivesView, spellSelectors = spellSelectors,
     selectorState = selectorState, spellsView = spellsView, validity = validity }
 

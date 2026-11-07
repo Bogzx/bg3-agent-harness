@@ -433,6 +433,15 @@ do
         check(probs:find(want, 1, true) ~= nil, "end check names " .. want)
     end
 
+    -- character creation's plan.skills stops at a held row: a background's skill doesn't spend an expertise pick,
+    -- though a level-up's would move on (test_level_up_skills 33k3)
+    q = skillPage()
+    q.own.expertise.Stealth = nil
+    q.sync()
+    r = applySkills(q, { class = "Fighter", skills = { "Stealth" } })
+    check(#r.result.problems == 0 and q.own.expertise.Stealth == nil and r.result.already_held == nil,
+        "plan.skills: held in the class group, expertise untouched (" .. table.concat(r.result.problems, ";") .. ")")
+
     -- a full selector ignores the toggle as a skill group does: the Ranger's favoured enemy
     Ext.StaticData = { Get = function() return nil end, GetAll = function() return {} end }
     q = skillPage()

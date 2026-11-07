@@ -93,12 +93,12 @@ end
 -- 33k2. Bard L3's page with the subclass taken: the class group has picks and shows earlier ones selected and disabled.
 --       plan.skills goes to the first group offering the name. A name the plan gives to expertise stays there, though
 --       the class group offers it first: the room is made in the group the expertise stage toggled in.
-local function bard3(full)
+local function bard3(full, open)
     return { class = "Bard", race_skills = closed(),
         class_skills = { max = 3, names = NAMES,
             held = set({ "Performance", "Persuasion", "Acrobatics", "Insight", "Medicine" }) },
         expertise = rows18({ max = 2, full = full, preset = { Performance = true, Persuasion = true },
-            open = { "Deception", "Acrobatics", "Arcana", "Insight", "Medicine", "Perception" } }) }
+            open = open or { "Deception", "Acrobatics", "Arcana", "Insight", "Medicine", "Perception" } }) }
 end
 local function classOn()
     local on = {}
@@ -110,7 +110,7 @@ end
 openPage(bard3("replaces"))
 j = run({ uuid = "claude", plan = { skills = { "Arcana", "Perception", "Deception", "Persuasion", "Performance" } } })
 check(j.status == "done" and classOn() == "Deception,Arcana,Perception" and expertiseOn() == "Performance,Persuasion"
-      and offOf("expertise") == "" and offOf("class") == "",
+      and offOf("expertise") == "" and offOf("class") == "" and j.result.already_held == nil,
       "Bard L3, plan.skills: class picks in the class group, presets kept (" .. classOn() .. ", " .. expertiseOn()
       .. ", " .. tostring(j.error) .. ")")
 openPage(bard3())
@@ -119,6 +119,31 @@ check(j.status == "done" and expertiseOn() == "Deception,Persuasion" and classOn
       and offOf("expertise") == "Performance",
       "plan.expertise: room made in expertise, not in the group offering it first (" .. expertiseOn() .. ", "
       .. classOn() .. ", " .. tostring(j.error) .. ")")
+-- 33k3. Bard L3, a name the class group shows held and expertise can take: it moves on and takes the expertise pick,
+--       in each fit and where the toggle does nothing
+for _, full in ipairs({ "replaces", "clears", "none" }) do
+    openPage(bard3(full ~= "none" and full or nil))
+    j = run({ uuid = "claude", plan = { skills = { "Acrobatics" } } })
+    check(j.status == "done" and page.finished == true and expertiseOn() == "Persuasion,Acrobatics" and classOn() == ""
+          and offOf("expertise") == "Performance" and j.result.already_held == nil,
+          "plan.skills, held in class: moves on to expertise (" .. full .. ", " .. tostring(j.status) .. ", "
+          .. expertiseOn() .. ", " .. offOf("expertise") .. ", " .. tostring(j.error) .. ")")
+end
+-- the held class row can't stand in for a toggle that didn't land
+openPage(bard3())
+page.expertiseStuck = true
+j = run({ uuid = "claude", plan = { skills = { "Acrobatics" } } })
+check(j.status == "failed" and not page.finished
+      and tostring(j.error):find("skill Acrobatics: not on the page", 1, true) ~= nil,
+      "plan.skills, held in class, the toggle lost: refused (" .. tostring(j.status) .. ", " .. tostring(j.error)
+      .. ")")
+-- no later group can take it: nothing's lost, and the result says it's held
+openPage(bard3("replaces", { "Insight", "Medicine" }))
+j = run({ uuid = "claude", plan = { skills = { "Acrobatics" } } })
+check(j.status == "done" and expertiseOn() == "Performance,Persuasion" and offOf("expertise") == ""
+      and table.concat(j.result.already_held or {}, ",") == "Acrobatics",
+      "plan.skills, no group can take a held name: nothing moves, said (" .. tostring(j.status) .. ", "
+      .. table.concat(j.result.already_held or {}, ",") .. ")")
 -- 33l. a plan's pick that can't land (the toggle does nothing): not finished, and the pick is named
 openPage(rogue6())
 page.expertiseStuck = true
@@ -139,8 +164,9 @@ end
 openPage(rogue6("replaces"))
 j = run({ uuid = "claude", plan = { skills = { "Stealth", "Acrobatics" } } })
 check(j.status == "done" and expertiseOn() == "Acrobatics,SleightOfHand,Stealth,Perception"
-      and offOf("expertise") == "Deception" and #(j.result.problems or {}) == 0,
-      "plan.skills, a held name: kept, no problem said (" .. expertiseOn() .. ", " .. tostring(j.error) .. ")")
+      and offOf("expertise") == "Deception" and #(j.result.problems or {}) == 0
+      and table.concat(j.result.already_held or {}, ",") == "Stealth",
+      "plan.skills, a held name: kept, said, no problem (" .. expertiseOn() .. ", " .. tostring(j.error) .. ")")
 
 -- The tests below leave the toggle doing nothing on a full group, so the room stage's guards are what's held.
 -- 33n. F1: an earlier level's picks ahead of the page's own in the list: only the page's own comes off
