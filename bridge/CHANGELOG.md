@@ -5,6 +5,14 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-07: a cast countered with no prompt pays its slot
+
+- An Osiris-ordered cast countered with no prompt (an enemy's Counterspell, or one set to always) reads its slot gone
+  once the game has taken the action, after `a reaction countered it`. Before, live.md a30-read: Gale's Haste read L3
+  3 through +15 s by this route, and 3 -> 2 by hotbar. The result's own text doesn't change, and its
+  `after=` still reads from before the charge. Only the outcome Countered: a Canceled pays what the game took. No cost
+  read by 10 s charges nothing. A cast countered on a prompt still keeps its slot, until its live read.
+
 ## 2026-11-07: a container nobody holds, and hits before an order has started
 
 - A raw id of a container spell the character doesn't hold (neither the container nor a variant in its book) reads `the
