@@ -163,6 +163,11 @@ test("cast start: a cast held paused for a reaction is reported as paused, its t
     tick(10) -- 1.2 s paused
     eq(j.status, "interrupted", "status " .. tostring(j.error))
     eq(j.error, A.CAST_PAUSED, "says paused")
+    -- S6 L5: 4 of 9 such casts were countered, one with no event at all: it promises neither that it goes on nor events
+    eq(j.error:find("goes on", 1, true), nil, "no promise the cast goes on")
+    eq(j.error:find("shows in the events", 1, true), nil, "no promise of an event")
+    assert(j.error:find("can change or stop the cast", 1, true), j.error)
+    assert(j.error:find("the state here is from before it", 1, true), j.error)
     eq(j.result.began, true, "began"); eq(j.result.paused, true, "paused")
     eq(#called("PurgeOsirisQueue"), 0, "the held cast is not purged")
     world[P1].comp_names = nil
@@ -184,6 +189,11 @@ test("cast start: an order still unstarted when the game pauses is reported as h
     tick(10)
     eq(j.status, "interrupted", "status " .. tostring(j.error))
     eq(j.error, A.ORDER_PAUSED, "says the order hadn't started")
+    -- live.md 05:52:45, 06:36:33, 06:38:40, 06:39:40: none of 4 ran after the answer: what was read, no promise
+    eq(j.error:find("wasn't cancelled", 1, true), nil, "no claim on the order's task: act.stop counts, doesn't name")
+    eq(j.error:find("shows in the events", 1, true), nil, "no promise of an event")
+    assert(j.error:find("read live, an order held this way didn't run after the answer", 1, true), j.error)
+    assert(j.error:find("and its action stayed", 1, true), j.error)
     eq(j.result.began, nil, "not begun"); eq(j.result.paused, true, "paused")
     eq(#called("PurgeOsirisQueue"), 0, "the paused cast is not purged")
     world[P1].comp_names = nil

@@ -278,8 +278,18 @@ class ReactTool(Base):
                                                                     else saved(op, args, context))
         out = dialogue.react(False)
         self.assertIn("react: TIMEOUT", out)
-        self.assertIn("Do Not React has never closed a prompt with one row per level", out)
+        self.assertIn("the prompt is still up after Do Not React", out)
+        self.assertNotIn("never closed", out)
         self.assertIn('set_reactions {"<name>": "never"}', out)
+
+    def test_the_definition_makes_no_claim_on_whether_a_decline_closes_it(self):
+        # S6 L5: a model quoted "has never closed" while weighing a decline, and a decline closes one in a match
+        # (live.md 03:51:42, 06:00:20). Unread outside a match since S092's TIMEOUT, and this is served there too: no
+        # claim either way. A decline that fails says so in its own result.
+        doc = dialogue.react.__doc__ or ""
+        self.assertNotIn("never closed", doc)
+        self.assertNotIn("closes the prompt", doc)
+        self.assertIn("use=false is Do Not React.", doc)
 
 if __name__ == "__main__":
     unittest.main()
