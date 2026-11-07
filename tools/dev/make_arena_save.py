@@ -73,6 +73,9 @@ PAIR_DIST_TOL_M = 0.1
 CLASSES = ("Fighter", "Rogue", "Barbarian", "Ranger", "Cleric", "Wizard", "Bard")
 LEVELS = (1, 2)  # the arena's level: what the twins read after MakePlayer (setup fails on any other)
 TIERS = (2, 5, 12)  # a build file's level (arena-4v4-builds.md; arena.setup's tier-XP step: mirror.party_xp)
+# Every stat entry reads this, _Hero's (live 2026-11-06, D74). A subclass row and a class that name no ability give a
+# real character's spell the stats' (S4, live 2026-11-07: a Thief's Shout_SupremeSneak); AddSpell gives a twin's None.
+STATS_CASTING = "Intelligence"
 PREPARERS = ("Cleric", "Wizard")  # prepare casting-modifier + level spells (min 1) from what they have
 # A preparer whose spells are all selector picks (no class row AddSpells a spell list): its kit adds only the prepared
 # picks, so a copy's book is what the build plays. A Cleric's class rows add its whole list, which no call removes (S1
@@ -415,8 +418,8 @@ def kit_plan(
                 if r["source"] == "subclass":
                     ids = _spells_of(args[0], static)  # the class's own: the game's (stat entry)
                     grants["spells"] += ids
-                    if spell_ab := _row_ability(args, 2) or c["casting"]:
-                        abilities.update(dict.fromkeys(ids, spell_ab))
+                    spell_ab = _row_ability(args, 2) or c["casting"] or STATS_CASTING
+                    abilities.update(dict.fromkeys(ids, spell_ab))
                 else:
                     class_spells += _spells_of(args[0], static)
                     if not (len(args) > 4 and args[4] == "AlwaysPrepared"):
