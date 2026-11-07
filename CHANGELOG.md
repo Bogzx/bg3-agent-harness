@@ -159,7 +159,8 @@ game unless it says so.
   EXTRA_ATTACK_STATUSES) is on at that read, the words get_actions tags the attack with. With none on, in a held
   weapon attack's landing gap at Action 0, it reads `last cast still resolving`, the list's reason there. Otherwise
   nothing: absence claims nothing either way. Before, a swing's result read `action=0` alone, and in the L12 S6 rerun
-  7 free attacks went unused, all after the turn's last paid swing with no list read in between (extra-attack-read.md).
+  7 free attacks went unused by pM's count (3 attacks per action), inferred, all after the turn's last paid swing with
+  no list read in between (extra-attack-read.md).
   A Canceled swing's status comes 43-137 ms after its return (pK's reads), so its result stays as before. Tool
   definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else

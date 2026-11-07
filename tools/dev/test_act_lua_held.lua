@@ -856,7 +856,8 @@ test("held cast: one failed ends every matching entry with a readable outcome", 
     eq(a.countered, true, "h.failed only ends the words: what a cast pays reads as it did before")
 end)
 
--- extra-attack-read.md (4) and its L12 S6 rerun (7 free attacks unused after the paid swing; orchestrator D331): an
+-- extra-attack-read.md (4) and its L12 S6 rerun (7 free attacks unused by pM's count of 3 per action, inferred;
+-- orchestrator D331): an
 -- order's after= states the free attack while the game's status is on at that read; in the landing gap it says what
 -- the list says; otherwise nothing, never a guess.
 test("summary: the free status on reads extra_attack_ready, the landing gap cast_unlanded, else neither", function()

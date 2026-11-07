@@ -8,8 +8,8 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 ## 2026-11-08: a free attack shows in the order's result
 
 - An order's `after={...}` in combat read `action=0` and nothing about a free attack, which only get_actions showed
-  (`[Extra Attack: free]`); in the L12 S6 rerun 7 free attacks went unused after the turn's last paid swing, with no
-  list read in between. Now it reads `after={hp=44/44 action=0 Extra Attack: free bonus=1 ...}` while the game's
+  (`[Extra Attack: free]`); in the L12 S6 rerun 7 free attacks went unused by pM's count (3 attacks per action),
+  inferred, after the turn's last paid swing, with no list read in between. Now it reads `after={hp=44/44 action=0 Extra Attack: free bonus=1 ...}` while the game's
   free-attack status is on at that read, and `last cast still resolving` (the list's reason) in a held weapon
   attack's landing gap at Action 0 with no status on. Otherwise nothing.
 

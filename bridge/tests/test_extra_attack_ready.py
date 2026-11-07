@@ -1,8 +1,9 @@
 """An order's after= states a free attack in the list's words (extra-attack-read.md (4); orchestrator D331).
 
-The L12 S6 rerun left 7 free attacks unused, all after the turn's last paid swing, with no list read in between: the
-swing's result said action=0 and nothing else. The mod sends the game's free status as it reads at the result
-(extra_attack_ready), or, in a held swing's landing gap, cast_unlanded; the bridge prints them as get_actions does.
+In the L12 S6 rerun 7 free attacks went unused by pM's count (3 attacks per action), inferred, all after the turn's
+last paid swing, with no list read in between: the swing's result said action=0 and nothing else. The mod sends the
+game's free status as it reads at the result (extra_attack_ready), or, in a held swing's landing gap, cast_unlanded;
+the bridge prints them as get_actions does.
 """
 
 from __future__ import annotations
