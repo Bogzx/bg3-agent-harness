@@ -5,6 +5,14 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-08: a dropped cast is never sent again by the mod
+
+- A combat cast the game never started (no cast state, no step at 3 s) right after a hit on the caster, a shown status
+  ending on it, or an enemy's reaction cast was ordered once more by the mod, and a second drop read `the game never
+  started it (3 s, no cast, no step) twice: ordered again after ...`. Now there is one order: the result reads `the
+  game never started it (3 s, no cast, no step): a hit on the caster 1.0 s before the order` (or the status ending, or
+  `someone's reaction cast 0.4 s after the order`, named as a player sees it). The countered words are unchanged.
+
 ## 2026-11-08: a free attack shows in the order's result
 
 - An order's `after={...}` in combat read `action=0` and nothing about a free attack, which only get_actions showed
