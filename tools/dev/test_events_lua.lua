@@ -31,8 +31,9 @@ Ext = {
             TooltipStatusApply = "ApplyStatus(CLOUDKILL,100,10)", SpellRoll = { Default = "" },
             SpellFlags = { "IsSpell", "IsHarmful", "IsConcentration" } },
         Projectile_Unnamed = { DisplayName = "", SpellRoll = { Default = "" } },
+        Throw_Throw = { DisplayName = "hThrow", SpellRoll = { Default = "Attack(AttackType.RangedUnarmedAttack)" } },
     })[id] end },
-    Loca = { GetTranslatedString = function(h) return ({ hFire = "Fire Bolt", hScimitar = "Scimitar Slash",
+    Loca = { GetTranslatedString = function(h) return ({ hFire = "Fire Bolt", hScimitar = "Scimitar Slash", hThrow = "Throw",
         hCK = "Cloudkill",
         hCKd = "Create a cloud of poison that deals [1] each turn to creatures inside it.<br>It moves away from you.",
         hCKx = "The cloud moves <LSTag Type=\"Tooltip\" Tooltip=\"Distance\">3m</LSTag> each turn." })[h] end },
@@ -555,6 +556,55 @@ do
     n = #pushed
     E.turn("turn_started", "Hidden_dddddddd-0000-0000-0000-000000000004", 2)
     check("turn_started: nothing for a character out of sight", #pushed == n)
+end
+
+-- What dealt the hit: only what the side can see, facts as the log names them.
+do
+    local V = BG3AI.Visibility
+    local realEntity, realName, realVisible = V.entity, V.name, V.characterVisible
+    local BOMB, HIDDEN = "bbbbbbbb-0000-0000-0000-000000000001", "dddddddd-0000-0000-0000-000000000005"
+    V.entity = function(u) return u ~= BOMB and { ServerCharacter = {}, _u = u } or { _u = u } end
+    V.name = function(u) return u == BOMB and "Bomb" or u == HIDDEN and "Hidden Imp" or realName(u) end
+    V.characterVisible = function(c, u) return u ~= HIDDEN and realVisible(c, u) end
+    local function hit(owner, attacker, cause, story)
+        listeners.AttackedBy(HOST, owner, attacker, "Force", 15, cause, story)
+        return last("damage")
+    end
+
+    local d = hit(GOB, BOMB, "Attack", 7)
+    check("damage: an item that isn't its owner names the hit", d and d.by == "Bomb", d and d.by)
+    check("damage: the source stays its owner", d and d.source and d.source.uuid == GOB)
+
+    listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 11)
+    listeners.RemovedFrom(BOMB, GOB)
+    d = hit(GOB, GOB, "Attack", 11)
+    check("damage: a Throw's hit names the item that left the thrower", d and d.by == "Bomb", d and d.by)
+    listeners.CastedSpell(GOB, "Throw_Throw", "Throw", "None", 11)
+    check("cast: a Throw names its item", last("cast") and last("cast").thrown == "Bomb")
+
+    listeners.CastSpell(HOST, "Target_FireBolt", "Target", "None", 12)
+    d = hit(HOST, HOST, "Attack", 12)
+    check("damage: the cast with the story action names the spell", d and d.by == "Fire Bolt", d and d.by)
+    listeners.RemovedFrom(BOMB, HOST)
+    listeners.CastedSpell(HOST, "Target_FireBolt", "Target", "None", 12)
+    check("cast: no item on a cast that isn't a Throw", last("cast") and last("cast").thrown == nil)
+
+    d = hit(GOB, GOB, "Surface", 99)
+    check("damage: a plain damageCause when nothing else names it", d and d.by == "Surface", d and d.by)
+    for _, cause in ipairs({ "Trap_Hidden_01", "None", "", 3 }) do
+        d = hit(GOB, GOB, cause, 99)
+        check("damage: no name from cause " .. tostring(cause), d and d.by == nil, d and d.by)
+    end
+
+    d = hit(HIDDEN, HIDDEN, "Attack", 11)
+    check("damage: an unseen source is named by nothing", d and d.source.name == "Someone" and d.by == nil, d and d.by)
+    listeners.CastSpell(HIDDEN, "Target_FireBolt", "Target", "None", 13)
+    d = hit(GOB, GOB, "None", 13)
+    check("damage: a cast the side didn't see names nothing", d and d.by == nil, d and d.by)
+    d = hit(GOB, HIDDEN, "None", 99)
+    check("damage: a hidden summon of a visible owner isn't named", d and d.by == nil, d and d.by)
+
+    V.entity, V.name, V.characterVisible = realEntity, realName, realVisible
 end
 
 print(string.format("%d passed, %d failed", passed, failures))

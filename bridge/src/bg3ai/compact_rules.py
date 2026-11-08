@@ -263,12 +263,15 @@ def event_line(line: str, names: _Names) -> str:
     kv, bare = _parse_event(rest)
     keys = set(kv)
     out = None
-    if kind == "damage" and keys <= {"target", "source", "type", "amount"} and "amount" in kv and not bare:
+    if kind == "damage" and keys <= {"target", "source", "type", "amount", "by"} and "amount" in kv and not bare:
         src = names(kv["source"]) + " -> " if kv.get("source") else ""
-        out = f"damage {src}{names(kv.get('target', '?'))} {kv['amount']}" + (f" {kv['type']}" if kv.get("type") else "")
-    elif kind == "cast" and keys <= {"caster", "roll", "name", "spell", "turn"} and "name" in kv and not bare:
+        out = (f"damage {src}{names(kv.get('target', '?'))} {kv['amount']}" + (f" {kv['type']}" if kv.get("type") else "")
+               + (f" by {kv['by']}" if kv.get("by") else ""))
+    elif kind == "cast" and keys <= {"caster", "roll", "name", "spell", "turn", "thrown"} and "name" in kv and not bare:
         by = f" ({kv['turn']} turn)" if kv.get("turn") else ""  # Events.lua: turn=game's, a cast the game ran
-        out = (f"cast {names(kv.get('caster', '?'))}{by}: {kv['name']}" + (f" ({kv['roll']})" if kv.get("roll") else ""))
+        thrown = f" of {kv['thrown']}" if kv.get("thrown") else ""  # Events.lua: the item a Throw threw
+        out = (f"cast {names(kv.get('caster', '?'))}{by}: {kv['name']}{thrown}"
+               + (f" ({kv['roll']})" if kv.get("roll") else ""))
     elif kind == "used" and keys <= {"item", "char"} and "item" in kv:
         out = f"used {names(kv.get('char', '?'))}: {names(kv['item'])}" + (f" {bare}" if bare else "")
     elif kind in ("status_applied", "status_removed") and keys == {"target", "name"} and not bare:
@@ -468,7 +471,7 @@ def implied_turn_ends(lines: list[str]) -> list[str]:
 
 
 _N_CAST = re.compile(r"^(\s+)cast (e\d+)((?: [^:]+)?): (.+)$")
-_N_DMG = re.compile(r"^(\s+)damage (e\d+)((?: [^>]+?)?) -> (e\d+)((?: [^;]+?)?) (\d+)(?: ([A-Z]\w*))?$")
+_N_DMG = re.compile(r"^(\s+)damage (e\d+)((?: [^>]+?)?) -> (e\d+)((?: [^;]+?)?) (\d+)(?: ([A-Z]\w*))?( by .+)?$")
 _N_TURN = re.compile(r"^(\s+)turn_started (e\d+)((?: [^;]+)?)$")
 _N_BOUND = re.compile(r"^\s+(?:turn_started|round_started)\b")
 
@@ -506,7 +509,7 @@ def _narrate(block: list[str]) -> list[str]:
                 name = name or dm.group(3)
                 h = hits.setdefault(dm.group(4), [dm.group(5), []])
                 h[0] = h[0] or dm.group(5)
-                h[1].append(dm.group(6) + (f" {dm.group(7)}" if dm.group(7) else ""))
+                h[1].append(dm.group(6) + (f" {dm.group(7)}" if dm.group(7) else "") + (dm.group(8) or ""))
                 drop.add(d)
             tail = (" -> " + "; ".join(f"{t}{n} " + " + ".join(a) for t, (n, a) in hits.items())) if hits else ""
             if turn and turn.group(2) == who and ix[0] == first_cast:

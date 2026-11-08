@@ -19,6 +19,8 @@ E.openContainer = E.openContainer or nil
 E.approval = E.approval or {}
 E.approvalAsked = E.approvalAsked or {}
 E.combats = E.combats or {}
+E.actions = E.actions or {} -- storyActionID -> the cast it belongs to (CastSpell)
+E.removed = E.removed or {} -- holder -> the item that just left its inventory (RemovedFrom)
 
 -- Per-event visibility context, cached for one game tick's worth of events.
 local ctxCache, ctxTime = nil, 0
@@ -115,14 +117,67 @@ function E.turn(kind, char, round)
     if not ok then Ext.Utils.PrintWarning("[BG3AI] event " .. kind .. ": " .. tostring(err)) end
 end
 
+-- What dealt a hit, as a player reads it in the combat log. A side only remembers what it saw: a visible caster's casts
+-- (by the game's storyActionID, which AttackedBy repeats) and what just left a visible character's inventory.
+local ACTION_KEEP_MS = 60000
+local THROW_ITEM_MS = 6000 -- a Throw's windup and flight, around the moment the item leaves the inventory
+
+local function isThrow(spell)
+    return tostring(spell):find("^Throw_") ~= nil
+end
+
+-- CastSpell(caster, spell, spellType, spellElement, storyActionID)
+listen("CastSpell", 5, function(caster, spell, _, _, story)
+    local u = visibleChar(caster)
+    if not u or not story or story == 0 then return end
+    local actions, t = U.sided(E, "actions"), Ext.Utils.MonotonicTime()
+    for k, v in pairs(actions) do
+        if t - v.t > ACTION_KEEP_MS then actions[k] = nil end
+    end
+    local st = osi(Ext.Stats.Get, spell)
+    actions[story] = { t = t, caster = u, name = st and U.loca(st.DisplayName) or nil, throw = isThrow(spell) }
+end)
+
+-- RemovedFrom(object, inventoryHolder): the name is read now, a bomb is gone by the time it has hit
+listen("RemovedFrom", 2, function(item, holder)
+    local h, i = visibleChar(holder), V.uuid(item)
+    if h and i then U.sided(E, "removed")[h] = { t = Ext.Utils.MonotonicTime(), name = V.name(i) } end
+end)
+
+local function thrownItem(caster)
+    local r = U.sided(E, "removed")[caster]
+    if r and r.name ~= "Unknown" and math.abs(Ext.Utils.MonotonicTime() - r.t) <= THROW_ITEM_MS then return r.name end
+    return nil
+end
+
+-- The name of what dealt a hit from a visible source (of an unseen one the log says only "Someone"), nil when nothing
+-- shown names it. In order: the object that dealt it when that isn't its owner (an item, a visible
+-- summon); the cast with the hit's story action (the item of a Throw, else the spell's shown name); damageCause when it
+-- is one plain word (an id with _ or digits could carry what a player isn't shown).
+local function dealtBy(src, attacker, cause, story)
+    local a = V.uuid(attacker)
+    if a and a ~= src and (not isCharacter(a) or visibleChar(a)) then
+        local n = V.name(a)
+        if n and n ~= "Unknown" then return n end
+    end
+    local act = story and U.sided(E, "actions")[story]
+    if act then
+        local n = act.throw and thrownItem(act.caster) or act.name
+        if n then return n end
+    end
+    local word = type(cause) == "string" and cause:match("^%a+$") or nil
+    return word ~= "None" and word or nil
+end
+
 -- AttackedBy(defender, attackerOwner, attacker, damageType, damageAmount, damageCause, storyActionID)
-listen("AttackedBy", 7, function(defender, attackerOwner, attacker, dtype, amount, cause, _)
+listen("AttackedBy", 7, function(defender, attackerOwner, attacker, dtype, amount, cause, story)
     local d = visibleChar(defender)
     if not d then return end
     local data = { target = ref(d), amount = amount, type = dtype }
     local src = visibleChar(attackerOwner) or visibleChar(attacker)
     if src then
         data.source = ref(src)
+        data.by = dealtBy(src, attacker, cause, story)
     elseif V.uuid(attacker) or V.uuid(attackerOwner) then
         data.source = { name = "Someone" } -- unseen attacker, as the combat log shows it
     end
@@ -435,7 +490,7 @@ listen("CastedSpell", 5, function(caster, spell, _, _, _)
     local open, ended
     if Gl and Gl.tb_flags then open, ended = Gl.tb_flags(u) end
     RPC.push("cast", { caster = ref(u), spell = ctx().is_party[u] and spell or nil, name = name, roll = roll,
-        turn = open and not ended and Gl.lost_control and Gl.lost_control(u) and "game's" or nil })
+        thrown = isThrow(spell) and thrownItem(u) or nil, turn = open and not ended and Gl.lost_control and Gl.lost_control(u) and "game's" or nil })
     if not ctx().is_party[u] then E.note_spell(u, spell) end
 end)
 
