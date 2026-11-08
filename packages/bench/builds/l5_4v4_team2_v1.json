@@ -304,7 +304,19 @@
     },
     "game_build": "25605617",
     "hireling": "8078e34e-2dce-44ee-8072-072ac433350f",
-    "evidence": "live.md 'Team 2 read', runtime/probes/t2/"
+    "evidence": "live.md 'Team 2 read', runtime/probes/t2/",
+    "accepted": [
+     {
+      "field": "derived",
+      "only_twin": [
+       "weapon_action_dc=8"
+      ],
+      "only_reference": [
+       "weapon_action_dc=3"
+      ],
+      "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 3 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+     }
+    ]
    }
   },
   {
@@ -752,7 +764,19 @@
     },
     "game_build": "25605617",
     "hireling": "54b02e05-56e7-4f55-8a73-78ce8a479493",
-    "evidence": "live.md 'Team 2 read', runtime/probes/t2/"
+    "evidence": "live.md 'Team 2 read', runtime/probes/t2/",
+    "accepted": [
+     {
+      "field": "derived",
+      "only_twin": [
+       "weapon_action_dc=8"
+      ],
+      "only_reference": [
+       "weapon_action_dc=4"
+      ],
+      "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 4 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+     }
+    ]
    }
   },
   {
@@ -1184,7 +1208,111 @@
     },
     "game_build": "25605617",
     "hireling": "2b5ac4dd-0b15-472c-b215-1f47fbbdfcbe",
-    "evidence": "live.md 'Team 2 read', runtime/probes/t2/"
+    "evidence": "live.md 'Team 2 read', runtime/probes/t2/",
+    "accepted": [
+     {
+      "field": "spells",
+      "only_twin": [],
+      "only_reference": [
+       "Projectile_WitchBolt",
+       "Projectile_WitchBolt_2",
+       "Projectile_WitchBolt_3",
+       "Shout_ExpeditiousRetreat",
+       "Shout_ExpeditiousRetreat_2",
+       "Shout_ExpeditiousRetreat_3",
+       "Shout_FalseLife",
+       "Shout_FalseLife_2",
+       "Shout_FalseLife_3",
+       "Shout_MirrorImage",
+       "Shout_MirrorImage_3",
+       "Target_Shatter",
+       "Target_Shatter_3"
+      ],
+      "why": "Ruled by the orchestrator (D152, D134 of the 4v4 log for the 8 upcast rows). The hireling learned 5 spells it hasn't prepared, with their upcast rows; a twin holds its prepared picks only, which is what a Wizard can cast in an arena: it can't re-prepare in a fight and no rest happens. Read 5 (website ops/logs/live.md, 'Unlock probe and owed scratch reads', 2026-11-07): the twin refuses Witch Bolt, a spell outside its picks."
+     },
+     {
+      "field": "prepared",
+      "only_twin": [
+       "Shout_ArcaneRecovery_2",
+       "Shout_ArcaneRecovery_3"
+      ],
+      "only_reference": [],
+      "why": "Ruled by the orchestrator (D183, D140 of the 4v4 log). Arcane Recovery's upcast rows: a class row gives a twin the spell, so the kit adds these two by AddSpell, and an AddSpell'd row reads in `prepared`. It's a class resource spell with nothing to prepare, the reference holds both rows in `spells`, and an extra `prepared` row stopped no upcast and took no wrong slot (website ops/logs/live.md, 'Unlock probe and owed scratch reads', 2026-11-07)."
+     },
+     {
+      "field": "spellcast",
+      "only_twin": [
+       "Projectile_Fireball|Intelligence|AlwaysPrepared|15|7",
+       "Projectile_MagicMissile_2|Intelligence|AlwaysPrepared|15|7",
+       "Projectile_MagicMissile_3|Intelligence|AlwaysPrepared|15|7",
+       "Projectile_MagicMissile|Intelligence|AlwaysPrepared|15|7",
+       "Projectile_RayOfSickness_2|Intelligence|AlwaysPrepared|15|7",
+       "Projectile_RayOfSickness_3|Intelligence|AlwaysPrepared|15|7",
+       "Projectile_RayOfSickness|Intelligence|AlwaysPrepared|15|7",
+       "Projectile_ScorchingRay_3|Intelligence|AlwaysPrepared|15|7",
+       "Projectile_ScorchingRay|Intelligence|AlwaysPrepared|15|7",
+       "Shout_Shield_Wizard_2|Intelligence|AlwaysPrepared|15|7",
+       "Shout_Shield_Wizard_3|Intelligence|AlwaysPrepared|15|7",
+       "Shout_Shield_Wizard|Intelligence|AlwaysPrepared|15|7",
+       "Target_Counterspell|Intelligence|AlwaysPrepared|15|7",
+       "Target_MageArmor_2|Intelligence|AlwaysPrepared|15|7",
+       "Target_MageArmor_3|Intelligence|AlwaysPrepared|15|7",
+       "Target_MageArmor|Intelligence|AlwaysPrepared|15|7",
+       "Target_MistyStep_3|Intelligence|AlwaysPrepared|15|7",
+       "Target_MistyStep|Intelligence|AlwaysPrepared|15|7",
+       "Zone_BurningHands_2|Intelligence|AlwaysPrepared|15|7",
+       "Zone_BurningHands_3|Intelligence|AlwaysPrepared|15|7",
+       "Zone_BurningHands|Intelligence|AlwaysPrepared|15|7"
+      ],
+      "only_reference": [
+       "Projectile_Fireball|Intelligence|RequiresPreparation|15|7",
+       "Projectile_MagicMissile_2|Intelligence|RequiresPreparation|15|7",
+       "Projectile_MagicMissile_3|Intelligence|RequiresPreparation|15|7",
+       "Projectile_MagicMissile|Intelligence|RequiresPreparation|15|7",
+       "Projectile_RayOfSickness_2|Intelligence|RequiresPreparation|15|7",
+       "Projectile_RayOfSickness_3|Intelligence|RequiresPreparation|15|7",
+       "Projectile_RayOfSickness|Intelligence|RequiresPreparation|15|7",
+       "Projectile_ScorchingRay_3|Intelligence|RequiresPreparation|15|7",
+       "Projectile_ScorchingRay|Intelligence|RequiresPreparation|15|7",
+       "Projectile_WitchBolt_2|Intelligence|RequiresPreparation|15|7",
+       "Projectile_WitchBolt_3|Intelligence|RequiresPreparation|15|7",
+       "Projectile_WitchBolt|Intelligence|RequiresPreparation|15|7",
+       "Shout_ExpeditiousRetreat_2|Intelligence|RequiresPreparation|15|7",
+       "Shout_ExpeditiousRetreat_3|Intelligence|RequiresPreparation|15|7",
+       "Shout_ExpeditiousRetreat|Intelligence|RequiresPreparation|15|7",
+       "Shout_FalseLife_2|Intelligence|RequiresPreparation|15|7",
+       "Shout_FalseLife_3|Intelligence|RequiresPreparation|15|7",
+       "Shout_FalseLife|Intelligence|RequiresPreparation|15|7",
+       "Shout_MirrorImage_3|Intelligence|RequiresPreparation|15|7",
+       "Shout_MirrorImage|Intelligence|RequiresPreparation|15|7",
+       "Shout_Shield_Wizard_2|Intelligence|RequiresPreparation|15|7",
+       "Shout_Shield_Wizard_3|Intelligence|RequiresPreparation|15|7",
+       "Shout_Shield_Wizard|Intelligence|RequiresPreparation|15|7",
+       "Target_Counterspell|Intelligence|RequiresPreparation|15|7",
+       "Target_MageArmor_2|Intelligence|RequiresPreparation|15|7",
+       "Target_MageArmor_3|Intelligence|RequiresPreparation|15|7",
+       "Target_MageArmor|Intelligence|RequiresPreparation|15|7",
+       "Target_MistyStep_3|Intelligence|RequiresPreparation|15|7",
+       "Target_MistyStep|Intelligence|RequiresPreparation|15|7",
+       "Target_Shatter_3|Intelligence|RequiresPreparation|15|7",
+       "Target_Shatter|Intelligence|RequiresPreparation|15|7",
+       "Zone_BurningHands_2|Intelligence|RequiresPreparation|15|7",
+       "Zone_BurningHands_3|Intelligence|RequiresPreparation|15|7",
+       "Zone_BurningHands|Intelligence|RequiresPreparation|15|7"
+      ],
+      "why": "Ruled by the orchestrator (D152). The same rows as `spells`, and a twin's book rows are AlwaysPrepared where a Wizard's are RequiresPreparation, with the same ability, DC and attack; a twin can't change what it holds in a fight."
+     },
+     {
+      "field": "derived",
+      "only_twin": [
+       "weapon_action_dc=8"
+      ],
+      "only_reference": [
+       "weapon_action_dc=3"
+      ],
+      "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 3 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+     }
+    ]
    }
   },
   {
@@ -1578,7 +1706,19 @@
     },
     "game_build": "25605617",
     "hireling": "7198b8ec-8fb4-4a44-9306-a68d533d1cfb",
-    "evidence": "live.md 'Team 2 read', runtime/probes/t2/"
+    "evidence": "live.md 'Team 2 read', runtime/probes/t2/",
+    "accepted": [
+     {
+      "field": "derived",
+      "only_twin": [
+       "weapon_action_dc=8"
+      ],
+      "only_reference": [
+       "weapon_action_dc=4"
+      ],
+      "why": "Ruled by the orchestrator (D148). DifficultyCheck.WeaponActionDC reads 8 on a twin and 4 on this build's hireling, but nothing a fight uses follows it: Launch 5b (website ops/logs/live.md, 2026-11-06) read Pommel Strike's DC 15 = ManeuverSaveDC()+2 with the field at 8, no pak file reads the field, and both twins of a pair read the same."
+     }
+    ]
    }
   }
  ]
