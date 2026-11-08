@@ -51,9 +51,9 @@ from bg3bench import conditions, graders, pins, run_artifacts, saves, scenario, 
 from bg3bench.facts import FactsError
 from bg3bench.matrix import PAID_CLIENTS, RunResult
 
-NO_RESUME = Recovery(max_resumes=0)
+NO_RESUME = Recovery(max_resumes=0, stop_resume_min_minutes=Recovery.resume_min_minutes)
 # a maximise run plays its whole cap: resumed while it acts (the host's stop check), not at most max_stop_resumes times
-MAXIMISE = Recovery(max_resumes=0, max_stop_resumes=None)
+MAXIMISE = Recovery(max_resumes=0, max_stop_resumes=None, stop_resume_min_minutes=Recovery.resume_min_minutes)
 JSON = dict[str, Any]
 REFUSALS = (LaunchBlocked, Bg3leStale)  # the runner's launch refusals: an operator fixes the host, a rerun can't
 

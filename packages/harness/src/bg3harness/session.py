@@ -49,6 +49,8 @@ class Recovery:
     resume_min_minutes: float = 8  # less than this left after a fault: end the session, the next one picks up
     max_stop_resumes: int | None = 6  # the agent ended its turn but the stop check sent it back (None: no count)
     hard_stop_grace_s: float = 600  # the deadline + this is the hard stop (no stop resume within a minute of it)
+    stop_resume_min_minutes: float = 0  # less than this left when the agent stops: no stop resume (0: none, a
+    # playthrough's wrap-up has to be finished however late; a bench run has one: run_session logs why it ended)
 
 
 @dataclass(frozen=True)
@@ -130,8 +132,14 @@ def run_session(spec: SessionSpec, hooks: SessionHooks) -> SessionOutcome:
             why = hooks.stop_check(session_end)
             if not why:
                 break
-            out.stop_resumes += 1
             left = (session_end - hooks.now()) / 60
+            if left < rec.stop_resume_min_minutes:
+                hooks.log(
+                    f"{sid}: claude ended its turn with {left:.1f} min left, under the "
+                    f"{rec.stop_resume_min_minutes:g} min a resume needs: the session ends here"
+                )
+                break
+            out.stop_resumes += 1
             hooks.log(
                 f"{sid}: claude ended its turn but the session can't end yet ({left:.0f} min left); resuming it "
                 f"(-c{out.stop_resumes}): {why[:160]}"

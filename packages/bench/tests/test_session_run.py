@@ -14,10 +14,11 @@ from typing import Any, cast
 import pytest
 from bg3harness.game.io import SteamNotOffline
 from bg3harness.runs import METRIC_FIELDS
+from bg3harness.session import Recovery
 from test_run_artifacts import assert_valid, readout
 
 from bg3bench import conditions, graders, matrix, pins, report, results, scenario
-from bg3bench.adapters.session_run import NO_RESUME, SessionRun, Start, live_verdict, series_name
+from bg3bench.adapters.session_run import MAXIMISE, NO_RESUME, SessionRun, Start, live_verdict, series_name
 from bg3bench.matrix import Matrix, RunResult
 from bg3bench.submission import consistency, pack, validate
 
@@ -414,10 +415,18 @@ def test_every_run_hands_the_host_a_verdict_that_ends_it_at_a_wipe(tmp_path):
 def test_a_maximise_run_has_no_count_on_its_stop_resumes_and_a_goal_run_keeps_it(tmp_path):
     # bench B3: max_stop_resumes (6) ended Sonnet's act1_gold_max at 20.9 of 45 min; the host's stop check decides
     max_sc = {k: v for k, v in SC.items() if k != "goal"} | {"maximise": {"fact": "gold"}}
-    for i, (sc, runs) in enumerate(((SC, 1 + cast(int, NO_RESUME.max_stop_resumes)), (max_sc, 10))):
+    long_sc = {**max_sc, "caps": {**SC["caps"], "run_hours": 1.0}}
+    # SC's cap is 15 min: seven 1-min processes leave 8 min (resumed), the eighth leaves 7, under the minimum
+    for i, (sc, runs) in enumerate(((SC, 1 + cast(int, NO_RESUME.max_stop_resumes)), (long_sc, 10), (max_sc, 8))):
         host = Host([[("exited", 1)] * 10], undecided=True)
         SessionRun("m", host, scenarios={"e2e_sell_idol": sc}, sessions=tmp_path / f"s{i}")(job())
         assert len(host.hooks[0].runs) == runs, sc.get("maximise")
+
+
+def test_a_bench_run_is_not_resumed_with_less_than_the_minimum_left():
+    # v011-pilot act1_gold_max: -c7 started with 27 s left; a run's stop resumes share the minimum a fault resume has
+    for recovery in (NO_RESUME, MAXIMISE):
+        assert recovery.stop_resume_min_minutes == Recovery.resume_min_minutes == 8
 
 
 def p01(man: dict, sc: dict, release_sha1: str | None) -> validate.Outcome:

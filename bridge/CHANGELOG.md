@@ -5,6 +5,13 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-08: a resumed session keeps its real end
+
+- An agent that ended its turn during a fight hold was resumed with the held end (up to 15 min later) as its deadline,
+  and the fight's end released nothing. It now reads the session's own WRAP UP and wrap-up length from the hold file:
+  `WRAP UP NOW` comes when the fight ends, the session closes that wrap-up later, and game tools are refused from that
+  end (plus the usual grace). Tool definitions don't change.
+
 ## 2026-11-08: a Hide that doesn't happen says why
 
 - `set_party sneak_on` used to end `TIMEOUT — timed out` when the game didn't hide the character. It now fails with what

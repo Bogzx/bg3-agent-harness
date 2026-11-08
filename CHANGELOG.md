@@ -201,6 +201,9 @@ game unless it says so.
   Also `set_party sneak_on`: a Hide the game doesn't carry out fails with what was read (the game's refusal, never
   started, began but didn't land, cast but not sneaking) instead of a bare job timeout, which voided a run as a harness
   failure (v011-pilot act1_gold_max, S001). Why the game dropped those two orders is not read.
+  Also the session clock: a run resumed during a fight hold keeps its real end (the fight's end plus its wrap-up), not
+  the held ceiling, which gave S001 about 10 min of play it wasn't due; and a bench run isn't resumed with less than 8
+  min left when its agent ends its turn (the runner's log says so). Owner rulings, 2026-11-08.
   Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
