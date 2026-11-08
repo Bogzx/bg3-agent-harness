@@ -241,13 +241,19 @@ def _times() -> tuple[float, float, bool]:
     wrap_len = _wrap_left()
     base = DEADLINE - wrap_len
     if _hold["of"] != (DEADLINE, base):  # once per server process (tests change the session)
-        _hold.update(of=(DEADLINE, base), cap=base + FIGHT_HOLD_S, wrap=None, held=False, written=None)
+        _hold.update(of=(DEADLINE, base), cap=base + FIGHT_HOLD_S, wrap_len=wrap_len, wrap=None, held=False,
+                     written=None)
         saved = _read_hold()
         if saved:
             _hold["cap"] = min(_hold["cap"], float(saved.get("cap") or _hold["cap"]))
+            _hold["wrap_len"] = float(saved.get("wrap_len") or wrap_len)
             _hold["held"] = bool(saved.get("held"))
             _hold["wrap"] = None if _hold["held"] else saved.get("wrap")
-    now, cap = time.time(), _hold["cap"]
+    # The session's own plan, also in a resumed process: an agent that ended its turn during a hold is resumed with the
+    # held end as this process's DEADLINE, and a plan read from that gave the run the whole ceiling once the fight was
+    # over (v011-pilot act1_gold_max S001: fight over 22:01:57, end 22:15:27).
+    now, cap, wrap_len = time.time(), _hold["cap"], _hold["wrap_len"]
+    base = cap - FIGHT_HOLD_S
     last = cap + wrap_len + FIGHT_OVERRUN_S
     wrap = max(base, float(_hold["wrap"] or 0))
     held = wrap <= now < last and (now < cap or _hold["held"]) and _fight_now()  # past the cap: the held fight only
@@ -278,7 +284,8 @@ def _read_hold() -> dict:
 
 
 def _write_hold(wrap: float, end: float, held: bool) -> None:
-    row = {"wrap": int(wrap), "deadline": int(end), "held": held, "cap": int(_hold["cap"])}
+    row = {"wrap": int(wrap), "deadline": int(end), "held": held, "cap": int(_hold["cap"]),
+           "wrap_len": int(_hold["wrap_len"])}
     if not HOLD_PATH or row == _hold["written"]:
         return
     if _hold["written"] is None and not held and int(wrap) == int(DEADLINE - _wrap_left()):

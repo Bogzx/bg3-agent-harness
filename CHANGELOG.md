@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.15.0 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.16.0 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -192,7 +192,21 @@ game unless it says so.
   grade gains `reactions_unanswered` {A, B: declined, over_budget, waited_s, charged_s, budget_spent}, and `valid`
   doesn't read it. No match on record has ended on the wall cap this way: it is the owner's rule for the public bench,
   bounded by arithmetic (D188, D346, ops wall-cap-design.md). Tool definitions don't change. bench-v0.11's release
-  cites it.
+  cited it until 0.16.0.
+- 0.16.0 (2026-11-08): what the agent sees changed: combat events name what dealt a hit. A `damage` event from a visible
+  source says `by <name>`: the object that dealt it when it isn't its owner, the item that left the thrower during that
+  Throw or the spell of the cast with the hit's story action, else, for a hit with storyActionID 0, the item of the
+  source's own Throw while it is open or under 1 s after it landed. The game's
+  `damageCause` names nothing (read live: Attack, InventoryThrow, SurfaceCreate). A Throw's `cast` says
+  the item (`Throw of Bomb`). Nothing is named for an unseen source. Owner, 2026-11-08, after a wipe by eight bare Force
+  hits (windmill, S001): "fix what the agent is told". Read live: the blast's hits carry storyActionID 0, 10 ms before the Throw's CastedSpell on one load and 224 ms after it on the next.
+  Also `set_party sneak_on`: a Hide the game doesn't carry out fails with what was read (the game's refusal, never
+  started, began but didn't land, cast but not sneaking) instead of a bare job timeout, which voided a run as a harness
+  failure (v011-pilot act1_gold_max, S001). Why the game dropped those two orders is not read.
+  Also the session clock: a run resumed during a fight hold keeps its real end (the fight's end plus its wrap-up), not
+  the held ceiling, which gave S001 about 10 min of play it wasn't due; and a bench run isn't resumed with less than 8
+  min left when its agent ends its turn (the runner's log says so). Owner rulings, 2026-11-08.
+  Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at

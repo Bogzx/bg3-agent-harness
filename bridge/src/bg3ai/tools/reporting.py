@@ -700,7 +700,7 @@ def _guard(fn):
             core.LIFE.ensure()  # manual mode: the first call opens the memory session (was the SessionStart hook)
         except Exception as e:
             core._log("session_start", {}, f"session not opened: {type(e).__name__}: {e}", 0)
-        end = core._times()[1] if core.DEADLINE and time.time() > core.DEADLINE else core.DEADLINE  # a fight hold moves it
+        end = core._times()[1] if core.DEADLINE else core.DEADLINE  # a fight hold moves it, earlier in a resumed process
         refused = rules.stop_refusal(fn.__name__, end, _READ_TOOLS,  # deadline + grace: for any client
                                      off={t for t in ("end_session", "save_game") if core.mcp._tool_manager.get_tool(t) is None})
         if refused:

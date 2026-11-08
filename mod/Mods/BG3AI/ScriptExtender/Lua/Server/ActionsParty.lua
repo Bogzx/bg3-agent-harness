@@ -605,18 +605,44 @@ reg("sneak", function(args)
     G.not_in_dialogue(char)
     G.combat_gate(char, "turn")
     local check = G.check_cast(char, "Shout_Hide", char, nil, nil)
+    local function own(a) return G.same(a[1], char) and a[2] == "Shout_Hide" end
     return start("sneak", char, {
-        timeout_ms = 8000,
+        -- only a backstop: on_tick's bound below says what happened. v011-pilot act1_gold_max S001: Hide's order came
+        -- to nothing and this job ran out as a bare timeout, which the run's record counts as a harness failure
+        timeout_ms = A.CAST_NO_START_MS + 2000,
         start = function(job)
             job.osi_task = "spell"
             A.cast_rolls(job, char, "Shout_Hide") -- the hide check rolls as a player's (ActionsCast.lua)
+            job.ordered_ms = RPC.now_ms()
             G.osi("UseSpell", char, "Shout_Hide", char, NULL_GUID, 1)
         end,
+        osi = {
+            CastSpell = function(job, a) if own(a) then job.spell_begun = true end end,
+            CastedSpell = function(job, a) if own(a) then job.casted = true end end,
+            CastSpellFailed = function(job, a)
+                if not own(a) then return end
+                local why = A.cast_failed_why(char, nil, "Shout_Hide", job)
+                if not A.failed_not_own(job, why) then RPC.finish_job(job, "failed", nil, why) end
+            end,
+        },
         on_tick = function(job)
             local hid = G.b(G.q("HasActiveStatus", char, "SNEAKING"))
             if A.roll_stop_tick(job, hid) then return end
             if hid then
                 RPC.finish_job(job, "done", A.unrolled_result(job, { sneaking = true }))
+                return
+            end
+            if RPC.now_ms() - job.ordered_ms < A.CAST_NO_START_MS or A.cast_paused(char) then return end
+            local s = math.floor(A.CAST_NO_START_MS / 1000)
+            if job.casted then
+                RPC.finish_job(job, "failed", nil,
+                    string.format("Hide was cast but the character isn't sneaking (%d s after the order)", s))
+            elseif job.spell_begun then
+                RPC.finish_job(job, "failed", nil,
+                    string.format("the game began the cast but it didn't land (%d s)", s))
+            else
+                pcall(G.osi, "PurgeOsirisQueue", char)
+                RPC.finish_job(job, "failed", nil, string.format("the game never started it (%d s, no cast)", s))
             end
         end,
         on_finish = function(job)

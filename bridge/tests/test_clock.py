@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 from bg3ai import rules
-from bg3ai.tools import core, session as session_tools
+from bg3ai.tools import core, reporting, session as session_tools
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools" / "memory"))
 import session  # noqa: E402
@@ -244,6 +244,55 @@ class FightHold(unittest.TestCase):
             self.assertEqual(core._times(), (int(cap), int(cap) + 180, True))
             self.fight = False   # it ended while the server was down: WRAP UP now
             self.assertEqual(core._times(), (self.now, self.now + 180, False))
+
+    def _hold_then_resume(self):
+        """A first process with a 150 s wrap-up holds a fight at WRAP UP, the agent ends its turn, and the runner
+        resumes it with the held end as the new process's own deadline (v011-pilot act1_gold_max S001 -c2: 22:15)."""
+        with mock.patch.object(core, "WRAPUP_AT", self.deadline - 150):
+            self.fight, self.now = True, self.deadline - 60
+            _, ceiling, held = core._times()
+            self.assertTrue(held)
+        core._hold["of"] = None
+        self.now += 60
+        return ceiling, [mock.patch.object(core, "DEADLINE", int(ceiling)),
+                         mock.patch.object(core, "WRAPUP_AT", int(ceiling) - 180)]
+
+    def test_a_stop_resume_during_a_hold_keeps_the_runs_real_end(self):
+        # S001: the fight ended 22:01:57, the end stayed 22:15:27 (the ceiling): about 10 min of play the run wasn't due
+        ceiling, patches = self._hold_then_resume()
+        with patches[0], patches[1]:
+            self.assertEqual(core._times()[1:], (int(ceiling), True))  # the fight is on: still the hold
+            self.now += 120
+            self.fight = False
+            end = self.now + 150  # the fight's end + the run's own wrap-up, not the new process's 180 s
+            self.assertEqual(core._times(), (self.now, end, False))
+            self.assertLess(end, ceiling - 10 * 60)
+            saved = json.loads(self.hold.read_text())  # what session.py's end check reads
+            self.assertEqual((saved["deadline"], saved["held"]), (int(end), False))
+            self.assertIn("WRAP UP NOW", core._clock())
+            self.now = end + 1
+            self.assertTrue(core._session_over())
+
+    def test_tools_close_at_the_real_end_of_a_resumed_hold(self):
+        ceiling, patches = self._hold_then_resume()
+        with patches[0], patches[1]:
+            core._times()
+            self.fight = False
+            end = core._times()[1]
+            self.assertLess(end, ceiling)
+
+            @reporting._guard
+            def move_to() -> str:
+                return "acted"
+
+            self.now = end + rules.STOP_GRACE_S + 60  # past the real end's grace, long before the ceiling
+            self.assertLess(self.now, ceiling)
+            with mock.patch.object(reporting, "_finish", lambda _n, _a, res, *_x, **_k: res):
+                self.assertIn("REFUSED: the session ended", move_to())
+
+    def test_with_nothing_held_a_process_keeps_its_own_times(self):
+        self.assertEqual(core._times(), (self.wrap, self.deadline, False))
+        self.assertFalse(self.hold.exists())
 
     def test_fight_events_drop_the_combat_read(self):
         reads = []

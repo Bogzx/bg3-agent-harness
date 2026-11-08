@@ -26,7 +26,7 @@ IGNORED = {"name", "type", "amount", "target", "resource", "max_hp", "spell", "c
            # structure words: a header merged into the one above, an empty ALSO, a quoted line's event wrapper
            "ALSO", "EVENTS", "CHANGES", "dialogue_line", "speaker", "text",
            # event keys the EVENTS templates replace by position ("damage S -> T N X", "cast C: N (roll)")
-           "source", "caster", "roll", "item", "char", "owner", "count", "round",
+           "source", "caster", "roll", "item", "char", "owner", "count", "round", "thrown",
            # combat rows ("init 4 hp 100% current"), a total_damage equal to its one damage entry
            "initiative", "hp_pct", "relation", "race", "is_current", "total_damage",
            # an event whose fact CHANGES states in the same result (DEAD, +Status, -Status)

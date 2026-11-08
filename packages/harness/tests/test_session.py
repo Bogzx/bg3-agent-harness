@@ -136,6 +136,28 @@ class RunSession(unittest.TestCase):
             },
         )
 
+    def test_a_stop_resume_needs_the_runs_minimum_left_and_the_log_says_why(self):
+        # v011-pilot act1_gold_max: -c7 started with 27 s left, printed as "0 min left"
+        run = Recovery(max_stop_resumes=None, stop_resume_min_minutes=8)
+        h = Hooks([("exited", 55)], FakeGame(), ["The run isn't over."])
+        out = run_session(SessionSpec("S001", "K", 60, "conv-1", run), h)
+        self.assertEqual((len(h.runs), out.stop_resumes), (1, 0))
+        self.assertEqual(
+            [m for m in h.logs if "min left" in m],
+            ["S001: claude ended its turn with 5.0 min left, under the 8 min a resume needs: the session ends here"],
+        )
+        h = Hooks([("exited", 52), ("exited", 1)], FakeGame(), ["The run isn't over."])  # exactly the minimum: resumed
+        self.assertEqual(run_session(SessionSpec("S001", "K", 60, "conv-1", run), h).stop_resumes, 1)
+
+    def test_with_no_minimum_a_late_stop_resume_still_runs(self):  # a playthrough's wrap-up has to be finished
+        h = Hooks([("exited", 59), ("exited", 1)], FakeGame(), ["Write the handoff."])
+        self.assertEqual(run_session(SessionSpec("S001", "K", 60, "conv-1", Recovery()), h).stop_resumes, 1)
+
+    def test_with_no_minimum_a_stop_after_the_deadline_is_still_resumed(self):  # REVIEW-reactions F1: 0 means none
+        h = Hooks([("exited", 61), ("exited", 1)], FakeGame(), ["Write the handoff."])
+        out = run_session(SessionSpec("S001", "K", 60, "conv-1", Recovery()), h)
+        self.assertEqual((out.stop_resumes, [m for m in h.logs if "a resume needs" in m]), (1, []))
+
     def test_stop_resumes_are_bounded(self):
         h = Hooks([("exited", 1)] * 3, FakeGame(), ["again"] * 5)
         out = run_session(SessionSpec("S001", "K", 60, "conv-1", Recovery(max_stop_resumes=2)), h)

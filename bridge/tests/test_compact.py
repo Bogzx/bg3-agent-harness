@@ -35,6 +35,38 @@ def fresh(t=0.0) -> compact.Compactor:
     return c
 
 
+
+class DealtBy(unittest.TestCase):
+    """Events.lua's `by` on damage and `thrown` on a cast keep through compaction, in the combat narrative too."""
+
+    HITS = (
+        "  damage target=e4 Tav source=e169 Fezzerk amount=15 type=Force by=Bomb\n"
+        "  damage target=e2 Gale source=e169 Fezzerk amount=7 type=Force by=Smokepowder Bomb\n"
+    )
+
+    def test_a_damage_row_names_what_dealt_it(self):
+        out = fresh().apply("get_status", "EVENTS\n" + self.HITS)
+        self.assertIn("damage e169 Fezzerk -> e4 Tav 15 Force by Bomb", out)
+        self.assertIn("-> e2 Gale 7 Force by Smokepowder Bomb", out)
+        self.assertNotIn("by=", out)
+
+    def test_the_narrative_keeps_the_item_and_each_hits_name(self):
+        cast = "  cast caster=e169 Fezzerk name=Throw roll=attack thrown=Bomb\n"
+        out = fresh().apply("get_status", "EVENTS\n  turn_started e169 Fezzerk\n" + cast + self.HITS)
+        self.assertIn("turn e169 Fezzerk: Throw of Bomb (attack) -> ", out)
+        self.assertIn("e4 Tav 15 Force by Bomb", out)
+        self.assertIn("e2 Gale 7 Force by Smokepowder Bomb", out)
+
+    def test_no_name_reads_as_before(self):
+        out = fresh().apply("get_status", "EVENTS\n  damage target=e4 Tav source=e169 Fezzerk amount=15 type=Force\n")
+        self.assertIn("damage e169 Fezzerk -> e4 Tav 15 Force", out)
+        self.assertNotIn(" by ", out)
+
+    def test_the_check_loses_no_fact(self):
+        raw = "EVENTS\n  cast caster=e169 Fezzerk name=Throw roll=attack thrown=Bomb\n" + self.HITS
+        out = fresh().apply("get_status", raw)
+        self.assertEqual(cc.check(raw, out, [], out), [])
+
 class GoldenReplay(unittest.TestCase):
     """The naut transcripts replayed: every fact survives, and the results shrink."""
 

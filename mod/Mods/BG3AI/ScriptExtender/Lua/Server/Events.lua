@@ -19,6 +19,7 @@ E.openContainer = E.openContainer or nil
 E.approval = E.approval or {}
 E.approvalAsked = E.approvalAsked or {}
 E.combats = E.combats or {}
+E.actions = E.actions or {} -- storyActionID -> the cast it belongs to (CastSpell)
 
 -- Per-event visibility context, cached for one game tick's worth of events.
 local ctxCache, ctxTime = nil, 0
@@ -115,14 +116,87 @@ function E.turn(kind, char, round)
     if not ok then Ext.Utils.PrintWarning("[BG3AI] event " .. kind .. ": " .. tostring(err)) end
 end
 
+-- What dealt a hit, as far as the game names it. A side only remembers what it saw: a visible caster's casts, by the
+-- game's storyActionID, which AttackedBy repeats, and the item that left a visible thrower during its own Throw.
+local ACTION_KEEP_MS = 60000
+local THROW_ITEM_MS = 6000 -- a Throw's windup, from its CastSpell to the item leaving the inventory
+-- How long after its CastedSpell a Throw can still be what a story-less hit came from. A bomb's blast read live 10 ms
+-- before the CastedSpell on one load and 224 ms after it on the next (windmill-force-probe, live.md).
+local THROW_BLAST_MS = 1000
+
+local function isThrow(spell)
+    return tostring(spell):find("^Throw_") ~= nil
+end
+
+-- CastSpell(caster, spell, spellType, spellElement, storyActionID)
+listen("CastSpell", 5, function(caster, spell, _, _, story)
+    local u = visibleChar(caster)
+    if not u or not story or story == 0 then return end
+    local actions, t = U.sided(E, "actions"), Ext.Utils.MonotonicTime()
+    for k, v in pairs(actions) do
+        if t - v.t > ACTION_KEEP_MS then actions[k] = nil end
+    end
+    local st = osi(Ext.Stats.Get, spell)
+    actions[story] = { t = t, caster = u, name = st and U.loca(st.DisplayName) or nil, throw = isThrow(spell) }
+end)
+
+-- The caster's newest open Throw (begun, not landed, inside its window). hit = false: one with no item yet, the one an
+-- item leaving belongs to. hit = true: one with its item set, or one that landed with it under THROW_BLAST_MS ago.
+local function openThrow(caster, hit)
+    local t, open = Ext.Utils.MonotonicTime(), nil
+    for _, v in pairs(U.sided(E, "actions")) do
+        local live
+        if v.landed then live = hit and t - v.landed <= THROW_BLAST_MS else live = t - v.t <= THROW_ITEM_MS end
+        if live and v.throw and v.caster == caster and (v.item ~= nil) == hit and (not open or v.t > open.t) then
+            open = v
+        end
+    end
+    return open
+end
+
+-- RemovedFrom(object, inventoryHolder): the item of the holder's own open Throw (begun, not yet landed, none set), and
+-- only that: anything else leaving an inventory isn't a thing a player is told.
+-- Read now, a bomb is gone once it has hit.
+listen("RemovedFrom", 2, function(item, holder)
+    local h, i = visibleChar(holder), V.uuid(item)
+    if not (h and i) then return end
+    local open = openThrow(h, false)
+    if not open then return end
+    local n = V.name(i)
+    if n and n ~= "Unknown" then open.item = n end
+end)
+
+-- The name of what dealt a hit from a visible source (of an unseen one the log says only "Someone"), nil when nothing
+-- shown names it. In order: the object that dealt it when that isn't its owner (an item, a visible
+-- summon); the cast with the hit's story action (the item of a Throw, else the spell's shown name); for a hit with
+-- storyActionID 0, the item of the source's open or just landed Throw (windmill-force-probe, live.md: a bomb's blast
+-- reads attacker = the thrower, storyActionID 0, around his Throw, and the game's log says he threw it). damageCause
+-- never names it: Attack, InventoryThrow and SurfaceCreate are all that was read live, the engine's words, and
+-- by=Attack on a bomb's blast says nothing true.
+local function dealtBy(src, attacker, story)
+    local a = V.uuid(attacker)
+    if a and a ~= src and (not isCharacter(a) or visibleChar(a)) then
+        local n = V.name(a)
+        if n and n ~= "Unknown" then return n end
+    end
+    local act = story and U.sided(E, "actions")[story]
+    if act then
+        local n = act.item or act.name
+        if n then return n end
+    end
+    local open = story == 0 and openThrow(src, true) or nil
+    return open and open.item or nil
+end
+
 -- AttackedBy(defender, attackerOwner, attacker, damageType, damageAmount, damageCause, storyActionID)
-listen("AttackedBy", 7, function(defender, attackerOwner, attacker, dtype, amount, cause, _)
+listen("AttackedBy", 7, function(defender, attackerOwner, attacker, dtype, amount, _, story)
     local d = visibleChar(defender)
     if not d then return end
     local data = { target = ref(d), amount = amount, type = dtype }
     local src = visibleChar(attackerOwner) or visibleChar(attacker)
     if src then
         data.source = ref(src)
+        data.by = dealtBy(src, attacker, story)
     elseif V.uuid(attacker) or V.uuid(attackerOwner) then
         data.source = { name = "Someone" } -- unseen attacker, as the combat log shows it
     end
@@ -414,9 +488,11 @@ function E.note_spell(caster, id)
 end
 
 -- CastedSpell(caster, spell, spellType, spellElement, storyActionID)
-listen("CastedSpell", 5, function(caster, spell, _, _, _)
+listen("CastedSpell", 5, function(caster, spell, _, _, story)
     local u = visibleChar(caster)
     if not u then return end
+    local act = story and U.sided(E, "actions")[story]
+    if act then act.landed = Ext.Utils.MonotonicTime() end
     local st = osi(Ext.Stats.Get, spell)
     local name = st and U.loca(st.DisplayName) or nil
     if not name then return end -- unnamed/technical casts are not shown in the log
@@ -435,6 +511,7 @@ listen("CastedSpell", 5, function(caster, spell, _, _, _)
     local open, ended
     if Gl and Gl.tb_flags then open, ended = Gl.tb_flags(u) end
     RPC.push("cast", { caster = ref(u), spell = ctx().is_party[u] and spell or nil, name = name, roll = roll,
+        thrown = act and act.item or nil,
         turn = open and not ended and Gl.lost_control and Gl.lost_control(u) and "game's" or nil })
     if not ctx().is_party[u] then E.note_spell(u, spell) end
 end)
