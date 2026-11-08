@@ -12,6 +12,7 @@ from unittest import mock
 
 import pytest
 from bg3harness.arena import match as am
+from bg3harness.arena.unanswered import REACTION_ANSWER_S
 from test_arena_match import ARENA, HELD_REFUSAL, SIDES, ArenaModel, Game, Run, arena_events, grade, my_turn, setup
 
 
@@ -30,7 +31,7 @@ def open_at_round_2(model: ArenaModel, who: str) -> Callable[[], None]:
 
 
 def _hold_reads(reads: list[tuple[int, dict]]) -> list[str]:
-    """The real _reaction_check on (seconds, ui.state) reads with a 90 s cap; the ops it sent."""
+    """The real _reaction_check on (seconds, ui.state) reads; the ops it sent."""
     calls: list[str] = []
 
     def rpc(op, args=None, context=None):
@@ -55,8 +56,8 @@ def test_the_bound_runs_from_the_prompt_first_on_screen_not_from_the_hold():
         "held_reaction": held,
         "reaction": {"prompt": "Counterspell?", "options": [{"i": 1, "who": "Red Cedar"}], "owner": "B"},
     }
-    assert _hold_reads(late + [(t, up) for t in range(30, 118, 2)]) == []  # 116 s from the hold, 86 s on screen
-    assert _hold_reads(late + [(t, up) for t in range(30, 124, 2)]) == ["ui.react"]  # 90 s on screen at 120 s
+    assert _hold_reads(late + [(t, up) for t in range(30, 74, 2)]) == []  # 72 s from the hold, 42 s on screen
+    assert _hold_reads(late + [(t, up) for t in range(30, 78, 2)]) == ["ui.react"]  # 46 s on screen at 76 s
 
 
 L5 = {**ARENA, "turn_cap_s": 90, "wall_cap_min": 60, "round_cap": 20}
@@ -249,7 +250,7 @@ def test_a_prompt_its_owner_leaves_open_is_declined_within_the_bound(tmp_path):
     assert model.reacted == [("Wyll", False)]
     rows = [e for e in arena_events(tmp_path) if e["ev"] == "arena_reaction_declined"]
     assert [(e["round"], e["side"]) for e in rows] == [(2, "B")]
-    assert spec.turn_cap_s <= declined[0] - opened[0] <= am.UNOWNED_CHECK_S + spec.turn_cap_s + 5
+    assert REACTION_ANSWER_S <= declined[0] - opened[0] <= am.UNOWNED_CHECK_S + REACTION_ANSWER_S + 5
     assert not [e for e in arena_events(tmp_path) if e["ev"] == "arena_reaction_unowned"]
     assert out.end is not None and out.end["reason"] == "round_cap" and out.invalid is None
     assert grade(tmp_path)["valid"]

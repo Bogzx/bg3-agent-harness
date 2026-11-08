@@ -15,7 +15,8 @@ text never reach you, only their effects do.
   side", "not your job").
 - Both sides share one game screen. A reaction prompt belongs to the side of the character it asks: only that side
   sees it and answers it with `react`. While the other side's is open your results show WAITING and the game waits;
-  answering it is refused ("not your reaction"). A prompt left unanswered for {turn_cap_s} s or more is declined.
+  answering it is refused ("not your reaction"). A prompt unanswered in 45 s is declined; your next turns
+  lose the wait, up to half each. Past 1/6 of the time limit in waits: declined at once.
 - The match ends at a turn boundary when one side's characters are all downed or dead: the other side wins. At the
   round cap it is a draw. A turn gets {turn_cap_s} s of model time per character in it (the model's own time, not the
   tools'); past that it is ended for that side, and three such turns in a row lose the match.

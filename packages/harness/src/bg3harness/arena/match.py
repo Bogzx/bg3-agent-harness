@@ -99,8 +99,11 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    detail}`. Both ops are the mod's client context's, as the bridge sends them. It reads `ui.state` for one only
    once a turn (or the wait for the first) is UNOWNED_CHECK_S old, then at most every UNOWNED_CHECK_S: a turn that
    moves on costs no read; while the game holds for a reaction, every REACTION_POLL_S. A prompt its owner leaves open
-   for the arena's turn_cap_s from its first read on screen (what a turn gets: a shorter bound would take reactions
-   from slow models only) is declined the same way (`arena_reaction_declined {round, side, detail}`). A hold
+   for REACTION_ANSWER_S from its first read on screen is declined the same way (`arena_reaction_declined {round, side,
+   detail, waited_s, over_budget}`), and the side is told (`arena.notice`). The wait comes off that side's next phases'
+   caps, at most half a cap each (`arena_turn_charged {side, character, round, charged_s, debt_left_s}`); past its
+   budget (BUDGET_SHARE of the wall cap, `arena_reaction_budget_spent {side, round, waited_s, budget_s}` once) its
+   prompts are declined at their first read (arena/unanswered.py). A hold
    REACTION_STUCK_S past its prompt's last read on screen (or its first read, if none showed), past a decline, or
    past the first failure of a decline that keeps failing, is one nobody can clear: the match ends
    `fault`, so it can't hang. A stall with the game held or paused is the game's too, whoever's phase it is. The same
@@ -136,6 +139,7 @@ from typing import Any, Protocol
 from bg3harness import facts
 from bg3harness.arena.scripted_client import SCRIPTED
 from bg3harness.arena.spec import SIDES, ArenaSpec, Side, other
+from bg3harness.arena.unanswered import BUDGET_SHARE, Unanswered, charge_phase, note_declined
 
 POLL_S = 1.0
 SETUP_TIMEOUT_S = 180.0  # arena.setup's job and the match becoming active
@@ -481,6 +485,7 @@ class _Hold:
     shown: float | None = None
     declined: float | None = None
     decline_failed: float | None = None
+    ledger: Unanswered = field(default_factory=Unanswered)
 
 
 def _reaction_check(
@@ -515,7 +520,7 @@ def _reaction_check(
         return owner
     unowned = bool(rx.get("unowned"))
     owner = None if unowned else rx.get("owner") or _prompt_owner(rx, ref)
-    if not unowned and now - (hold.opened or now) < spec.turn_cap_s:
+    if not unowned and now - (hold.opened or now) < hold.ledger.bound(owner):
         return owner
     if hold.decline_failed is not None and now - hold.decline_failed >= REACTION_STUCK_S:
         age = now - hold.since
@@ -536,7 +541,8 @@ def _reaction_check(
         ref.event("arena_reaction_unowned", round=ref.round, detail=detail)
         log(f"arena {spec.name}: declined a reaction prompt no team owns ({detail})")
     else:
-        ref.event("arena_reaction_declined", round=ref.round, side=owner, detail=detail)
+        if owner is not None:
+            note_declined(game, ref, log, hold.ledger, owner, rx, now - (hold.opened or now))
         log(f"arena {spec.name}: declined side {owner}'s unanswered reaction prompt ({detail})")
     return None
 
@@ -679,7 +685,8 @@ def run_arena(
     seen_turns, turn_at, ui_read = 0, started, started  # the turns so far, when the last began, the last ui.state
     idle, tick_at, moved_sig = 0.0, started, None  # the stall's idle clock, its last tick, the last progress read
     prompt_side: str | None = None  # the side whose reaction prompt the last ui.state read found open (S2-1)
-    hold = _Hold()
+    hold = _Hold(ledger=Unanswered(budget_s=spec.wall_cap_min * 60 * BUDGET_SHARE))
+    charged_turn = -1  # the phase the ledger's debt was last taken from
     camera_seen: str | None = None  # the last arena.camera answer (on, skipped: why, failed: error), logged on change
     seen_model = dict.fromkeys(SIDES, 0.0)
 
@@ -876,6 +883,9 @@ def run_arena(
             if lost is not None:  # the game's turn: what its side thinks meanwhile isn't this phase's
                 turn_mark = (turn_mark[0], turn_mark[1] + gained[turn.side])
                 continue
+            if charged_turn != turn_mark[0]:  # a phase's first read: what its side's unanswered prompts cost it
+                charged_turn = turn_mark[0]
+                turn_mark = (turn_mark[0], turn_mark[1] - charge_phase(game, ref, log, hold.ledger, turn, cap))
             if not hold.key and model(turn.side) - turn_mark[1] >= cap:
                 ui_read = now  # the mod refuses an end during a pause: read for one before capping
                 prompt_side = _reaction_check(spec, game, ref, log, hold, now)
