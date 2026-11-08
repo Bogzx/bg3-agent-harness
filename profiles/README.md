@@ -28,6 +28,11 @@ response that its endpoint doesn't bill (any endpoint but OpenRouter and DeepSee
 without `usage.cost`) is priced from the profile's `cost` table, which every pi profile must have. The run's
 `served` record (manifest `model.served`) names the providers that answered.
 
+**Codex through pi** (`api = "openai-codex-responses"`) needs pi's own ChatGPT login, once:
+`PI_CODING_AGENT_DIR=~/.config/bg3ai/pi-codex tools/pi/node_modules/.bin/pi`, then `/login`. A run takes only the access
+token from it and refuses an expired one. Codex credits are not dollars: the ledger counts pi's estimate at the
+profile's rates (pi 1.3.0's catalog).
+
 **Effort** (`effort`: low, medium, high, xhigh, max) as each client gets it:
 
 | Client | Flag | Mapping |

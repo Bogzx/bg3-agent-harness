@@ -256,6 +256,11 @@ game unless it says so.
   `invalid: "tool_faults"`; its reason and winner stay what happened). Our tools failing is infrastructure, not the
   side's play, and a real timeout can decide a match. The bench still voids a run at the first. Tool definitions don't
   change. bench-v0.11's release cites it.
+- Codex through pi, on 0.19.0 (local branch bp/v011-sol, 2026-11-08 commits): what the agent sees doesn't change. A pi profile can play a Codex model on the account's Codex
+  credits: `api = "openai-codex-responses"`, whose only egress is `chatgpt.com`. The token comes from the profile's
+  `api_key_env`, else the access token of pi's own login in `~/.config/bg3ai/pi-codex/auth.json`; the refresh token
+  stays in that file, out of the sandbox, and a run with no login or an expired one is refused saying how to log in.
+  The backend reports tokens, so the spend ledger counts pi's estimate at the profile's rates.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at

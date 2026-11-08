@@ -12,6 +12,8 @@ The harness runs non-Claude models (and Claude on the ranked track, D6 in docs/O
 - A profile whose endpoint says `api = "anthropic-messages"` plays through pi's native Anthropic provider (Claude on
   Anthropic's own API). Anthropic reports tokens only, so the cost a run counts is pi's estimate at the profile's
   rates: 5-minute cache writes, cache reads, and a model's prompt-length tiers (Claude Haiku 5.5 over 100K tokens).
+- A profile whose endpoint says `api = "openai-codex-responses"` plays through pi's ChatGPT backend on the account's
+  Codex credits, with the access token of pi's own login (see profiles/README.md) in the profile's `api_key_env`.
 - `conformance/`: offline checks of that setup against a stub model (OpenAI chat completions, or Anthropic's
   Messages API for a request to `.../messages`) and a stub MCP server (no key, no game). Marked `e2e`: CI's e2e job
   installs tools/pi and runs it; it skips without node_modules, except under CI where it fails.
