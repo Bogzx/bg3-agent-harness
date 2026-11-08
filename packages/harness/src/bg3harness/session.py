@@ -133,7 +133,7 @@ def run_session(spec: SessionSpec, hooks: SessionHooks) -> SessionOutcome:
             if not why:
                 break
             left = (session_end - hooks.now()) / 60
-            if left < rec.stop_resume_min_minutes:
+            if rec.stop_resume_min_minutes and left < rec.stop_resume_min_minutes:
                 hooks.log(
                     f"{sid}: claude ended its turn with {left:.1f} min left, under the "
                     f"{rec.stop_resume_min_minutes:g} min a resume needs: the session ends here"

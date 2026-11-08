@@ -3,7 +3,7 @@
 The bench builds the run: the series (`series_name`: one per scenario, model, client, effort and condition), the run
 number (one after the series' last runs.jsonl record), the run directory (runtime/sessions/<series.run_name>/), the
 SessionSpec (the host's kickoff, the scenario's run_hours, Recovery(max_resumes=0); a maximise scenario's with no
-count on its stop resumes: the host resumes its agent until the time cap while it acts) and, at the end, the record
+count on its stop resumes: the host resumes its agent while it acts and at least the minimum is left) and, at the end, the record
 (with a legacy series record's benchmark metrics: run_metrics), its runs.jsonl line (its pins carry the harness,
 bench and suite versions: pins.versions, the host's harness version first) and write_run_artifacts' manifest.json
 and result.json. The harness side comes in through RunHost:
@@ -52,7 +52,8 @@ from bg3bench.facts import FactsError
 from bg3bench.matrix import PAID_CLIENTS, RunResult
 
 NO_RESUME = Recovery(max_resumes=0, stop_resume_min_minutes=Recovery.resume_min_minutes)
-# a maximise run plays its whole cap: resumed while it acts (the host's stop check), not at most max_stop_resumes times
+# a maximise run: resumed while it acts (the host's stop check), not at most max_stop_resumes times, and with the
+# minimum left
 MAXIMISE = Recovery(max_resumes=0, max_stop_resumes=None, stop_resume_min_minutes=Recovery.resume_min_minutes)
 JSON = dict[str, Any]
 REFUSALS = (LaunchBlocked, Bg3leStale)  # the runner's launch refusals: an operator fixes the host, a rerun can't

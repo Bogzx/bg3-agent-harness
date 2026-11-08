@@ -195,9 +195,10 @@ game unless it says so.
   cited it until 0.16.0.
 - 0.16.0 (2026-11-08): what the agent sees changed: combat events name what dealt a hit. A `damage` event from a visible
   source says `by <name>`: the object that dealt it when it isn't its owner, the item that left the thrower during that
-  Throw or the spell of the cast with the hit's story action, else the game's `damageCause` when that is one plain word. A Throw's `cast` says
+  Throw or the spell of the cast with the hit's story action, else the item of the source's own open Throw. The game's
+  `damageCause` names nothing (read live: Attack, InventoryThrow, SurfaceCreate). A Throw's `cast` says
   the item (`Throw of Bomb`). Nothing is named for an unseen source. Owner, 2026-11-08, after a wipe by eight bare Force
-  hits (windmill, S001): "fix what the agent is told". Which of those the game gives for a bomb is not read live yet.
+  hits (windmill, S001): "fix what the agent is told". Read live: the blast's hits carry storyActionID 0, inside the Throw.
   Also `set_party sneak_on`: a Hide the game doesn't carry out fails with what was read (the game's refusal, never
   started, began but didn't land, cast but not sneaking) instead of a bare job timeout, which voided a run as a harness
   failure (v011-pilot act1_gold_max, S001). Why the game dropped those two orders is not read.

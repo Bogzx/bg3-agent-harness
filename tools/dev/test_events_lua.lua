@@ -588,9 +588,9 @@ do
     listeners.CastedSpell(HOST, "Target_FireBolt", "Target", "None", 12)
     check("cast: no item on a cast that isn't a Throw", last("cast") and last("cast").thrown == nil)
 
-    d = hit(GOB, GOB, "Surface", 99)
-    check("damage: a plain damageCause when nothing else names it", d and d.by == "Surface", d and d.by)
-    for _, cause in ipairs({ "Trap_Hidden_01", "None", "", 3 }) do
+    -- windmill-force-probe (live.md): every damageCause read live is the engine's own word, printed as by=Attack
+    for _, cause in ipairs({ "Attack", "InventoryThrow", "SurfaceCreate", "Surface", "Trap_Hidden_01", "None", "",
+        3 }) do
         d = hit(GOB, GOB, cause, 99)
         check("damage: no name from cause " .. tostring(cause), d and d.by == nil, d and d.by)
     end
@@ -618,6 +618,31 @@ do
         listeners.CastedSpell(GOB, "Throw_Throw", "Throw", "None", story)
         return last("cast")
     end
+
+    -- windmill-force-probe (live.md): the blast's 8 AttackedBy rows read attacker = the thrower, damageCause Attack and
+    -- storyActionID 0, inside his Throw (RemovedFrom before them, CastedSpell after); the log says he threw the bomb.
+    listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 31)
+    d = hit(GOB, GOB, "Attack", 0)
+    check("damage: a story-less hit before the Throw's item left names nothing", d and d.by == nil, d and d.by)
+    listeners.RemovedFrom(BOMB, GOB)
+    d = hit(GOB, GOB, "Attack", 0)
+    check("damage: a story-less hit inside the source's open Throw names its item", d and d.by == "Bomb", d and d.by)
+    d = hit(HOST, HOST, "Attack", 0)
+    check("damage: another source's story-less hit isn't that Throw's", d and d.by == nil, d and d.by)
+    clock = clock + 100
+    listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 32)
+    listeners.RemovedFrom(GREASE, GOB)
+    d = hit(GOB, GOB, "Attack", 0)
+    check("damage: two open Throws, the newest names it", d and d.by == "Bottle of Grease", d and d.by)
+    cast(32)
+    cast(31)
+    d = hit(GOB, GOB, "Attack", 0)
+    check("damage: once the Throws landed, a story-less hit names nothing", d and d.by == nil, d and d.by)
+    listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 33)
+    listeners.RemovedFrom(BOMB, GOB)
+    clock = clock + 6001
+    d = hit(GOB, GOB, "Attack", 0)
+    check("damage: a Throw past its window names nothing", d and d.by == nil, d and d.by)
 
     listeners.RemovedFrom(POTION, GOB)
     listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 21)

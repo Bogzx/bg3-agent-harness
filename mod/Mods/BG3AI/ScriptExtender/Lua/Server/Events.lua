@@ -137,19 +137,25 @@ listen("CastSpell", 5, function(caster, spell, _, _, story)
     actions[story] = { t = t, caster = u, name = st and U.loca(st.DisplayName) or nil, throw = isThrow(spell) }
 end)
 
+-- The caster's newest open Throw (begun, not landed, inside its window), with an item set or with none.
+local function openThrow(caster, hasItem)
+    local t, open = Ext.Utils.MonotonicTime(), nil
+    for _, v in pairs(U.sided(E, "actions")) do
+        if v.throw and v.caster == caster and (v.item ~= nil) == hasItem and not v.landed and t - v.t <= THROW_ITEM_MS
+            and (not open or v.t > open.t) then
+            open = v
+        end
+    end
+    return open
+end
+
 -- RemovedFrom(object, inventoryHolder): the item of the holder's own open Throw (begun, not yet landed, none set), and
 -- only that: anything else leaving an inventory isn't a thing a player is told.
 -- Read now, a bomb is gone once it has hit.
 listen("RemovedFrom", 2, function(item, holder)
     local h, i = visibleChar(holder), V.uuid(item)
     if not (h and i) then return end
-    local t, open = Ext.Utils.MonotonicTime(), nil
-    for _, v in pairs(U.sided(E, "actions")) do
-        if v.throw and v.caster == h and not v.item and not v.landed and t - v.t <= THROW_ITEM_MS
-            and (not open or v.t > open.t) then
-            open = v
-        end
-    end
+    local open = openThrow(h, false)
     if not open then return end
     local n = V.name(i)
     if n and n ~= "Unknown" then open.item = n end
@@ -157,9 +163,11 @@ end)
 
 -- The name of what dealt a hit from a visible source (of an unseen one the log says only "Someone"), nil when nothing
 -- shown names it. In order: the object that dealt it when that isn't its owner (an item, a visible
--- summon); the cast with the hit's story action (the item of a Throw, else the spell's shown name); damageCause when it
--- is one plain word (an id with _ or digits could carry what a player isn't shown).
-local function dealtBy(src, attacker, cause, story)
+-- summon); the cast with the hit's story action (the item of a Throw, else the spell's shown name); the item of the
+-- source's open Throw (windmill-force-probe, live.md: a bomb's blast reads attacker = the thrower, storyActionID 0,
+-- inside his Throw, and the game's log says he threw it). damageCause never names it: Attack, InventoryThrow and
+-- SurfaceCreate are all that was read live, the engine's words, and by=Attack on a bomb's blast says nothing true.
+local function dealtBy(src, attacker, story)
     local a = V.uuid(attacker)
     if a and a ~= src and (not isCharacter(a) or visibleChar(a)) then
         local n = V.name(a)
@@ -170,19 +178,19 @@ local function dealtBy(src, attacker, cause, story)
         local n = act.item or act.name
         if n then return n end
     end
-    local word = type(cause) == "string" and cause:match("^%a+$") or nil
-    return word ~= "None" and word or nil
+    local open = openThrow(src, true)
+    return open and open.item or nil
 end
 
 -- AttackedBy(defender, attackerOwner, attacker, damageType, damageAmount, damageCause, storyActionID)
-listen("AttackedBy", 7, function(defender, attackerOwner, attacker, dtype, amount, cause, story)
+listen("AttackedBy", 7, function(defender, attackerOwner, attacker, dtype, amount, _, story)
     local d = visibleChar(defender)
     if not d then return end
     local data = { target = ref(d), amount = amount, type = dtype }
     local src = visibleChar(attackerOwner) or visibleChar(attacker)
     if src then
         data.source = ref(src)
-        data.by = dealtBy(src, attacker, cause, story)
+        data.by = dealtBy(src, attacker, story)
     elseif V.uuid(attacker) or V.uuid(attackerOwner) then
         data.source = { name = "Someone" } -- unseen attacker, as the combat log shows it
     end
