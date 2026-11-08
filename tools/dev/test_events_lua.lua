@@ -661,6 +661,20 @@ do
     d = hit(GOB, GOB, "Attack", 0)
     check("damage: what leaves after the landing doesn't become its item", d and d.by == nil, d and d.by)
     clock = clock + 1001
+    -- a Throw's windup is real time: the re-read's CastSpell came 939 ms before its CastedSpell
+    listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 35)
+    clock = clock + 100
+    listeners.RemovedFrom(BOMB, GOB)
+    clock = clock + 1400
+    d = hit(GOB, GOB, "Attack", 0)
+    check("damage: 1.5 s into an open Throw, a story-less hit names its item", d and d.by == "Bomb", d and d.by)
+    cast(35)
+    clock = clock + 900
+    d = hit(GOB, GOB, "Attack", 0)
+    check("damage: the window runs from the landing, not the Throw's start", d and d.by == "Bomb", d and d.by)
+    clock = clock + 101
+    d = hit(GOB, GOB, "Attack", 0)
+    check("damage: 1001 ms after a late landing names nothing", d and d.by == nil, d and d.by)
     listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 33)
     listeners.RemovedFrom(BOMB, GOB)
     clock = clock + 6001
