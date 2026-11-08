@@ -179,6 +179,9 @@ game unless it says so.
   open is declined after 45 s from its first read on screen, not the arena's turn cap, as a player who lets it pass
   (rules/arena.md states it; the prompts' digest moves). The wait comes off that side's next turns' model-time caps, at
   most half a cap each (`arena_turn_charged`), so unanswered prompts alone never end a turn; the rest carries over. A
+  phase capped only because of the charge (model time under the full cap) is told the time it had, is marked
+  `charged_cap` on `arena_turn_forced`, counts toward no forfeit and breaks the run in the runner and the grader, so
+  only a side's own full cap can forfeit (owner, 2026-11-08). A
   side's waits are budgeted at a sixth of the wall cap: past it (`arena_reaction_budget_spent`, once) its prompts are
   declined at their first read, so unanswered prompts can't use up a match. The side reads an `arena_notice` event for
   each decline and each charge (`reaction: Sentinel (Red Ash) unanswered for 46 s: declined; 46 s comes off your next
