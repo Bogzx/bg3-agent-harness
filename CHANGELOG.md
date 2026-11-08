@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.13.0 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.14.0 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -153,7 +153,16 @@ game unless it says so.
   the grade lists `lost_control` and `valid` doesn't read it. Read live: the component under 5 statuses (live.md "## Goaded read 2"); the fix itself not yet. Known, not
   changed: a member both stunned and the game's gets both row flags, and the bridge's end for a passing row is refused
   in the same words (`did not end`); a task of ours queued before the status (a timed-out walk) can't be purged while
-  it's on, and whether the game's AI clears it is unread. Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
+  it's on, and whether the game's AI clears it is unread. Tool definitions and the bench prompts don't change. bench-v0.11's release cited it until 0.14.0.
+- 0.14.0 (2026-11-08): what the agent sees changed: an order's result in combat states a free attack. Its `after={...}`
+  reads `Extra Attack: free` beside `action=` while the game's free-attack status (any of Guard's
+  EXTRA_ATTACK_STATUSES) is on at that read, the words get_actions tags the attack with. With none on, in a held
+  weapon attack's landing gap at Action 0, it reads `last cast still resolving`, the list's reason there. Otherwise
+  nothing: absence claims nothing either way. Before, a swing's result read `action=0` alone, and in the L12 S6 rerun
+  7 free attacks went unused by pM's count (3 attacks per action), inferred, all after the turn's last paid swing with
+  no list read in between (extra-attack-read.md).
+  A Canceled swing's status comes 43-137 ms after its return (pK's reads), so its result stays as before. Tool
+  definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
