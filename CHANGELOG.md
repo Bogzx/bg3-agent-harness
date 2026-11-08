@@ -374,12 +374,17 @@ game unless it says so.
 - `builds-l12-4v4-v1` and its build file aren't drafts any more, so its S6 matrix plans its one match.
 - A kit gives a race's rows above level 1 up to its level, as a real character of that race has them: at level 5 a Drow
   twin holds Faerie Fire and Darkness beside Dancing Lights. Only `builds-l5-4v4-team2-v1`'s Ranger moves, and it's still
-  a draft. Not read live: nothing has cast them in an arena, and whether a twin keeps their once-per-rest rule.
+  a draft. Read live (2026-11-08): a twin casts each once, and a second try on a later turn is refused as on cooldown
+  until a long rest, as a character's.
 - `builds-l5-4v4-team2-v1`'s Barbarian (Wildheart) and Bard (Valor) become a Fighter (Champion) and a Bard (Lore): a
   twin can't lose a passive its class rows gave (`RemovePassive` does nothing to one, live 2026-11-07), and every
   Barbarian subclass and Valor remove one at level 3. Swords and Glamour fail the knock-down scan. Still a draft.
 - `make_arena_save` refuses a build whose subclass rows remove a passive, naming the row: no call takes one off a
   twin.
+- `builds-l5-4v4-team2-v1` has its four references, read live from respecced hirelings, and accepts by exact value only
+  the rows L5's first team accepts (each build's weapon action DC; the Wizard's unprepared spells, book rows and Arcane
+  Recovery upcasts). Its S4 and a scripted S5 passed (2026-11-08). It stays a draft until the owner rules on its
+  classes and on rating it; its draft reason now says so.
 
 ### Benchmark (`packages/bench`)
 

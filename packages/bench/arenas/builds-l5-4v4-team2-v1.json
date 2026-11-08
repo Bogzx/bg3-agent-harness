@@ -14,7 +14,7 @@
  "name": "builds-l5-4v4-team2-v1",
  "title": "Level 5, second team: Fighter (Champion), Bard (Lore), Wizard (Abjuration), Ranger (Hunter); each its hireling's race and background",
  "about": "The build file l5_4v4_team2_v1 (tools/dev/make_arena_save.py builds-arena), each pair's twins made per match, on crash-mirror-v1's save.",
- "draft": "proposed second team, to try once the first team's L5 passes (website repo ops/logs/arena-4v4-tests.md); no reference profiles yet (2026-11-06)",
+ "draft": "second L5 team: all four references read live and its S4, cast-twice read and scripted S5 passed (website repo ops/logs/live.md 'Team 2 read 2' and 'Team 2 read 3', 2026-11-08); a draft until the owner rules on its classes (Fighter Champion and Lore Bard in place of Barbarian and Valor, since a twin can't lose a class-row passive) and on rating it",
  "location": {
   "level": "WLD_Main_A",
   "spawns": {

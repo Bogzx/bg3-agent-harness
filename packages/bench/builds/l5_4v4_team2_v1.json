@@ -5,7 +5,7 @@
  "tier": "L5",
  "level": 5,
  "game_build": "25605617",
- "draft": "proposed second team, to try once the first team's L5 passes (website repo ops/logs/arena-4v4-tests.md); no reference profiles yet (2026-11-06)",
+ "draft": "second L5 team: all four references read live and its S4, cast-twice read and scripted S5 passed (website repo ops/logs/live.md 'Team 2 read 2' and 'Team 2 read 3', 2026-11-08); a draft until the owner rules on its classes (Fighter Champion and Lore Bard in place of Barbarian and Valor, since a twin can't lose a class-row passive) and on rating it",
  "builds": [
   {
    "id": "fighter",
