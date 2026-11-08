@@ -735,8 +735,18 @@ local function park(kind, char, spec, prev)
     return A.reply(job)
 end
 
+-- The runner's end at a cap (act.end_turn {forced}) holds against the capped side's next order: in s5-a30wc a move_to
+-- ended it, and Red Ash walked and swung after the cap. Only the runner's second send replaces it (spec.forced).
+function A.forced_end_gate(char)
+    local running = A.active[char]
+    if running and running.status == "running" and running.forced then
+        G.refuse("this character's turn is being ended at " .. running.forced)
+    end
+end
+
 local function start(kind, char, spec)
     if char and not spec.passive then
+        if not spec.forced then A.forced_end_gate(char) end
         -- the latest order goes, as without a wait; also once the stand-up ended but before the waiting one ran again
         if kind ~= "end_standup" then A.drop_waiting(char, "superseded by a new action (" .. kind .. ")") end
         local prev = A.active[char]

@@ -616,23 +616,26 @@ def _end_turn(
     game: ArenaGame, clock: Clock, uuid: str, side: str, forced: str, tick: Callable[[], None] = lambda: None
 ) -> str | None:
     """act.end_turn for `uuid` as `side` at a cap (`forced`: which one, as the mod tells the side: its turn_forced
-    event and its out-of-phase refusals), its job polled until it settles (at most END_SETTLE_S), `tick` after each
+    event and its out-of-phase refusals), its job polled while it runs (at most END_SETTLE_S), `tick` after each
     wait (the runner reads the ring: a phase that began meanwhile is marked then); None when it is done, else the
-    refusal, the failure or "still <status>" (not settled: not an end)."""
+    refusal, the failure, its final status or "still running" (not an end)."""
     try:
         job = game.rpc("act.end_turn", {"char": uuid, "forced": forced}, side) or {}
         deadline = clock.now() + END_SETTLE_S
-        while job.get("status") not in ("done", "failed") and clock.now() < deadline:
+        while job.get("status") == "running" and clock.now() < deadline:
             clock.sleep(END_POLL_S)
             tick()
             job = game.rpc("job.poll", {"id": job.get("job", job.get("id"))}, side) or {}
     except Exception as e:  # a refusal (the op's error) or no answer
         return str(e)
-    if job.get("status") == "done":
+    status = job.get("status")
+    if status == "done":
         return None
-    if job.get("status") == "failed":
+    if status == "failed":
         return str(job.get("error"))
-    return f"act.end_turn still {job.get('status')} after {END_SETTLE_S:g} s"
+    if status == "running":
+        return f"act.end_turn still running after {END_SETTLE_S:g} s"
+    return f"act.end_turn {status}: {job.get('error')}"  # interrupted or timeout: final, as RPC.lua's jobs are
 
 
 def _ended_refusal(err: str) -> bool:
