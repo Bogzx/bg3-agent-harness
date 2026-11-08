@@ -85,10 +85,6 @@ class EndTurn(Base):
         self.assertIsNone(combat._peer_requested(goaded_combat(), P1))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class Status(unittest.TestCase):
     """live.md "## Lost control fix live": get_status read `COMBAT round 3 turn=e1` on a turn the game ran."""
 
@@ -107,3 +103,7 @@ class Status(unittest.TestCase):
         h = Handles()
         self.assertTrue(delta._turn(self.status(game_turn=self.WORDS), h).endswith(f"turn={h.get(P1)} ({self.WORDS})"))
         self.assertNotIn("the game runs", delta._turn(self.status(), h))
+
+
+if __name__ == "__main__":
+    unittest.main()

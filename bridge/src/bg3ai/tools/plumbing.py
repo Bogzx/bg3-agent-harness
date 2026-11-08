@@ -315,7 +315,13 @@ def _trim_after(res: Any, tool: str = "", char: str | None = None) -> Any:
             out["hp"] = f"{render.num(prev)}->{render.num(hp)}/{render.num(mx)}"
         return out
     if a.get("in_combat"):
-        keep = {k: a[k] for k in ("hp", "max_hp", "action", "bonus", "reaction", "movement", "my_turn") if k in a}
+        keep = {k: a[k] for k in ("hp", "max_hp", "action") if k in a}
+        # the mod's free-attack read, in get_actions' words: its tag, or its reason in a held swing's landing gap
+        if a.get("extra_attack_ready"):
+            keep["Extra Attack: free"] = True
+        elif a.get("cast_unlanded"):
+            keep["last cast still resolving"] = True
+        keep.update({k: a[k] for k in ("bonus", "reaction", "movement", "my_turn") if k in a})
         for k in ("slots", "pact_slots"):
             if isinstance(a.get(k), dict) and a[k]:
                 keep[k] = ",".join(f"{lv}:{n}" for lv, n in sorted(a[k].items()))
