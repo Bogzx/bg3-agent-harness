@@ -176,8 +176,8 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(up["passives"], ["FightingStyle_Archery"])
 
     def test_an_unlisted_subclass_is_refused_and_a_name_the_game_gave_none_too(self):
-        b = build(5, "fighter") | {"subclass": "Champion"}
-        with self.assertRaisesRegex(ar.RefStepError, "no page label for subclass Champion"):
+        b = build(5, "fighter") | {"subclass": "EldritchKnight"}
+        with self.assertRaisesRegex(ar.RefStepError, "no page label for subclass EldritchKnight"):
             ar.ui_plans(b, 5, STATIC)
         with self.assertRaisesRegex(ar.RefStepError, "no display name read for X"):
             ar.translate({"spells": ["X"]}, {"X": ""})
@@ -275,8 +275,11 @@ class RespecTest(unittest.TestCase):
         self.assertEqual(up["plan"], {"feat": "Ability Improvement", "abilities": {"Strength": 2}})
 
     def test_a_subclass_levels_passives_carry_their_list_from_the_subclass_row(self):
-        doc = json.loads((REPO / "packages/bench/builds/l5_4v4_team2_v1.json").read_text())
-        for cls, lv, want in (("Ranger", 3, "26b53d40"), ("Barbarian", 3, "7f7340a0")):
+        for name, cls, lv, want in (
+            ("l5_4v4_team2_v1", "Ranger", 3, "26b53d40"),
+            ("l5_4v4_v1", "Fighter", 3, "e51a2ef5"),
+        ):
+            doc = json.loads((REPO / f"packages/bench/builds/{name}.json").read_text())
             b = next(x for x in doc["builds"] if x["class"] == cls)
             up = next(u for u in ar.ui_plans(b, 5, STATIC)["level_ups"] if u["level"] == lv)
             self.assertEqual([x[:8] for x in up["plan"]["passive_lists"]], [want], cls)

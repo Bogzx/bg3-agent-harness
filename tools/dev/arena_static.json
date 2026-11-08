@@ -1203,6 +1203,24 @@
      "PassivesAdded": "",
      "Selectors": ""
     }
+   ],
+   "above": [
+    {
+     "race": "Drow",
+     "level": 3,
+     "uuid": "334e0ddd-33cb-468f-a232-40cfe9ad23da",
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(753bd4ba-9f16-4a01-92df-556b98cc7497,,Charisma,,AlwaysPrepared,UntilRest)"
+    },
+    {
+     "race": "Drow",
+     "level": 5,
+     "uuid": "db485b48-fc71-4de4-a62d-47675659678b",
+     "Boosts": "",
+     "PassivesAdded": "",
+     "Selectors": "AddSpells(ab1b1b3e-d13c-49b3-b061-c72dd3c8a2b4,,Charisma,,AlwaysPrepared,UntilRest)"
+    }
    ]
   },
   "Elf_HighElf": {
@@ -1269,12 +1287,24 @@
    ]
   }
  },
- "races_source": "A1 races (orchestrator D411), read 2026-11-03 from the installed game's paks with tools/pak.py, read-only (no game run): Shared.pak Public/Shared/Races/Races.lsx (race and subrace ids, ParentGuid, ProgressionTableUUID); Public/Shared + Public/SharedDev Progressions/Progressions.lsx, the level-1 row of the parent race's table and of the subrace's (SharedDev's row wins over Shared's with the same UUID; Gustav, GustavDev, GustavX and the hotfix paks carry none of these rows); Public/Shared/Lists/SpellLists.lsx (the Drow cantrip list). `race` is the id a template of that race reads (Races.lsx UUID of the subrace, or the race when it has none); `rows` the level-1 rows in the order the kit applies them, parent first.",
+ "races_source": "A1 races (orchestrator D411), read 2026-11-03 from the installed game's paks with tools/pak.py, read-only (no game run): Shared.pak Public/Shared/Races/Races.lsx (race and subrace ids, ParentGuid, ProgressionTableUUID); Public/Shared + Public/SharedDev Progressions/Progressions.lsx, the level-1 row of the parent race's table and of the subrace's (SharedDev's row wins over Shared's with the same UUID; Gustav, GustavDev, GustavX and the hotfix paks carry none of these rows); Public/Shared/Lists/SpellLists.lsx (the Drow cantrip list). `race` is the id a template of that race reads (Races.lsx UUID of the subrace, or the race when it has none); `rows` the level-1 rows in the order the kit applies them, parent first. `above`, added 2026-11-07 from the same files: the rows above level 1 that hold something, by level, for a Drow its spells at 3 and 5.",
  "spell_lists": {
   "d707ec70-da8a-457b-9b69-7cf5205eef0e": {
    "name": "Drow cantrip",
    "spells": [
     "Target_DancingLights"
+   ]
+  },
+  "753bd4ba-9f16-4a01-92df-556b98cc7497": {
+   "name": "Drow level 3",
+   "spells": [
+    "Target_FaerieFire_DrowMagic"
+   ]
+  },
+  "ab1b1b3e-d13c-49b3-b061-c72dd3c8a2b4": {
+   "name": "Drow level 5",
+   "spells": [
+    "Target_Darkness_DrowMagic"
    ]
   }
  },
@@ -5135,6 +5165,13 @@
     "NaturalExplorer_WastelandWander_Poison"
    ]
   },
+  "753bd4ba-9f16-4a01-92df-556b98cc7497": {
+   "kind": "spells",
+   "name": "Drow level 3",
+   "ids": [
+    "Target_FaerieFire_DrowMagic"
+   ]
+  },
   "75e04c40-be8f-40a5-9acc-0b5d59d5f3a6": {
    "kind": "spells",
    "name": "Bard SLevel 4",
@@ -5783,6 +5820,13 @@
    "ids": [
     "Teleportation_Revivify",
     "Shout_BeaconOfHope"
+   ]
+  },
+  "ab1b1b3e-d13c-49b3-b061-c72dd3c8a2b4": {
+   "kind": "spells",
+   "name": "Drow or Asmodeus Tiefling level 5",
+   "ids": [
+    "Target_Darkness_DrowMagic"
    ]
   },
   "afe6b18c-47a7-4c5f-aed5-49dfe07e5234": {

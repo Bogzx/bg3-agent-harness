@@ -16,7 +16,7 @@
 -- arena.mirror_kit {twins = [u1, u2], race, kit} (a job): the same level-1 choices on both twins, in the same order,
 --   by the game's own calls, once both twins read ready (READY_WAIT_MS: race set, items readable, the containers the
 --   calls write present; a copy fresh from CreateAt has none of it in its spawn tick, live check 13b) and SETTLE_MS has
---   passed. A finished kit fails, naming it, when a twin holds a passive twice.
+--   passed. A finished kit fails, naming it, when a twin holds a passive the kit added twice.
 --   kit (make_arena_save.py builds it from the spec's kit and the game data):
 --     race = {race, boosts, passives, spells}: the race's level-1 fixed parts, its parent race's rows first (the game
 --       applies none to a spawned copy; its Movement boost is the copy's only Movement resource: live check 12 step
@@ -307,13 +307,18 @@ local function setAbilities(calls, u, kit)
     return late
 end
 
--- Passives a twin holds more than once (see SETTLE_MS), sorted.
-local function doubled(u)
-    local n, out = {}, {}
+-- Passives the kit AddPassive'd that a twin holds more than once (see SETTLE_MS), sorted. Only the kit's own: the
+-- game's class rows can give one twice, as a character has it (a Ranger's UnlockedSpellSlotLevel1 at levels 2 and 3,
+-- its reference too: team 2 read 2, live 2026-11-08).
+local function doubled(calls, u)
+    local added, n, out = {}, {}, {}
+    for _, c in ipairs(calls) do
+        if c[1] == "AddPassive" and c[2] == u then added[c[3]] = true end
+    end
     for _, pe in ipairs(U.items(V.entity(u).PassiveContainer.Passives)) do
         local id = tostring(pe.Passive.PassiveId)
         n[id] = (n[id] or 0) + 1
-        if n[id] == 2 then out[#out + 1] = id end
+        if n[id] == 2 and added[id] then out[#out + 1] = id end
     end
     table.sort(out)
     return out
@@ -326,7 +331,7 @@ local function finish(job)
     local late, twice = {}, {}
     for _, u in ipairs(job.twins) do
         for _, id in ipairs(setAbilities(job.calls, u, job.kit)) do late[#late + 1] = u .. ": " .. id end
-        for _, id in ipairs(doubled(u)) do twice[#twice + 1] = u .. ": " .. id end
+        for _, id in ipairs(doubled(job.calls, u)) do twice[#twice + 1] = u .. ": " .. id end
     end
     local partial = { twins = job.twins, calls = job.calls }
     if #twice > 0 then

@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.14.0 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.14.1 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -162,7 +162,10 @@ game unless it says so.
   7 free attacks went unused by pM's count (3 attacks per action), inferred, all after the turn's last paid swing with
   no list read in between (extra-attack-read.md).
   A Canceled swing's status comes 43-137 ms after its return (pK's reads), so its result stays as before. Tool
-  definitions and the bench prompts don't change. bench-v0.11's release cites it.
+  definitions and the bench prompts don't change. bench-v0.11's release cited it until 0.14.1.
+- 0.14.1 (2026-11-08): what the agent sees doesn't change. A mirror kit fails on a passive held twice only when the kit
+  added it: a twin the game's own class rows gave one twice (a Ranger's UnlockedSpellSlotLevel1 at levels 2 and 3)
+  holds it as its reference does, and team 2's first S4 failed on it (live 2026-11-08). bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
@@ -369,6 +372,19 @@ game unless it says so.
 - A kit's subclass spell with no ability on its row or class reads the stats' ability, as a character's does (a Thief's
   Shout_SupremeSneak read None on a twin, Intelligence on the reference).
 - `builds-l12-4v4-v1` and its build file aren't drafts any more, so its S6 matrix plans its one match.
+- A kit gives a race's rows above level 1 up to its level, as a real character of that race has them: at level 5 a Drow
+  twin holds Faerie Fire and Darkness beside Dancing Lights. Only `builds-l5-4v4-team2-v1`'s Ranger moves, and it's still
+  a draft. Read live (2026-11-08): a twin casts each once, and a second try on a later turn is refused as on cooldown
+  until a long rest, as a character's.
+- `builds-l5-4v4-team2-v1`'s Barbarian (Wildheart) and Bard (Valor) become a Fighter (Champion) and a Bard (Lore): a
+  twin can't lose a passive its class rows gave (`RemovePassive` does nothing to one, live 2026-11-07), and every
+  Barbarian subclass and Valor remove one at level 3. Swords and Glamour fail the knock-down scan. Still a draft.
+- `make_arena_save` refuses a build whose subclass rows remove a passive, naming the row: no call takes one off a
+  twin.
+- `builds-l5-4v4-team2-v1` has its four references, read live from respecced hirelings, and accepts by exact value only
+  the rows L5's first team accepts (each build's weapon action DC; the Wizard's unprepared spells, book rows and Arcane
+  Recovery upcasts). Its S4 and a scripted S5 passed (2026-11-08). It stays a draft until the owner rules on its
+  classes and on rating it; its draft reason now says so.
 
 ### Benchmark (`packages/bench`)
 

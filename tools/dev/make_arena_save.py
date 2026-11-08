@@ -385,13 +385,14 @@ def kit_plan(
     the game's lists; SpecError names the first problem. -> {race (uuid), kit (arena.mirror_kit's)}. `base` (the
     point-buy) is needed only for prepared spells (the casting ability's modifier). The game applies the class rows'
     fixed parts itself (our stat entry's Progressions and the party level); the subclass rows' and the improvements'
-    fixed parts are the kit's `grants`."""
+    fixed parts are the kit's `grants`. A subclass row that removes a passive is refused: no call takes one off a
+    twin."""
     if not isinstance(kit, dict):
         raise SpecError(f"{what} must be an object")
     c = static["classes"][cls]
     rows = selector_rows(cls, kit.get("subclass"), level, static, what)
     choices: list[dict[str, Any]] = []
-    grants: dict[str, list[str]] = {"boosts": [], "passives": [], "passives_removed": [], "spells": []}
+    grants: dict[str, list[str]] = {"boosts": [], "passives": [], "spells": []}
     pool: list[str] = []  # spells a preparer prepares from (no AlwaysPrepared flag)
     class_spells: list[str] = []  # what the class rows' AddSpells give: the game's, its upcasts the kit's
     abilities: dict[str, str] = {}  # spell -> its ability: AddSpell gives none, ArenaMirror writes the rows
@@ -411,7 +412,11 @@ def kit_plan(
         if r["source"] == "subclass":
             grants["boosts"] += [b for b in (row.get("Boosts") or "").split(";") if b]
             grants["passives"] += [x for x in (row.get("PassivesAdded") or "").split(";") if x]
-            grants["passives_removed"] += [x for x in (row.get("PassivesRemoved") or "").split(";") if x]
+            if row.get("PassivesRemoved"):
+                raise SpecError(
+                    f"{what}: subclass {kit['subclass']} level {lv} removes {row['PassivesRemoved']}: a twin can't lose"
+                    " a passive its class rows gave (RemovePassive does nothing to one, live 2026-11-07)"
+                )
         for name, args in selectors(row["Selectors"]):
             prepared_flag = len(args) > 6 and args[6] == "AlwaysPrepared"
             if name == "AddSpells":
@@ -468,7 +473,7 @@ def kit_plan(
         x["from_pool"] = x.pop("pool")
         if x["from_pool"]:
             pool += x["ids"]
-    race, rpart, rchoices, fixed = race_plan(kit, static, what, c["casting"])
+    race, rpart, rchoices, fixed = race_plan(kit, static, what, c["casting"], level)
     abilities.update(rpart.pop("spell_abilities", {}))
     book_only = cls in PICKS_ARE_ITS_BOOK and kit.get("prepared") is not None
     pool_picks = [x for x in choices if x.pop("from_pool", False)]
@@ -555,8 +560,6 @@ def kit_plan(
             "passives": grants["passives"],
             "spells": grants["spells"],
         }
-        if grants["passives_removed"]:  # a Berserker's RageFrenzyUnlock replaces the class row's RageUnlock
-            out_kit["grants"]["passives_removed"] = grants["passives_removed"]
     if prepared is not None and not book_only:
         out_kit["prepared"] = list(prepared)
     if abilities:
@@ -576,17 +579,18 @@ def _upcasts(held: list[str], rows: list[dict[str, Any]], static: dict[str, Any]
 
 
 def race_plan(
-    kit: dict[str, Any], static: dict[str, Any], what: str, casting: str | None = None
+    kit: dict[str, Any], static: dict[str, Any], what: str, casting: str | None = None, level: int = 1
 ) -> tuple[str, dict[str, Any], list[dict[str, Any]], list[tuple[str, str]]]:
     """The kit's race part from the race's level-1 rows, its parent race's first (A1, D411: a build's race, so a Wood
-    Half-Elf also gets the subrace's Movement and Stealth). -> (race id, the kit's race part {race, boosts, passives,
+    Half-Elf also gets the subrace's Movement and Stealth), then its rows above level 1 up to `level` (a Drow's spells
+    at 3 and 5: a copy gets a race's rows only from here). -> (race id, the kit's race part {race, boosts, passives,
     spells?, spell_abilities?}, the race's choices (Human: one skill, from kit.race_skills), [(skill, where from)] the
     rows give). `casting`: the class's, for a row that names no ability."""
     name = kit.get("race")
     race = static["races"].get(name)
     if race is None:
         raise SpecError(f"{what}: race must be one of {', '.join(static['races'])}")
-    rows = race.get("rows") or [race["levels"]["1"]]
+    rows = [*(race.get("rows") or [race["levels"]["1"]]), *(r for r in race.get("above", []) if r["level"] <= level)]
     boosts = [b for r in rows for b in (r["Boosts"] or "").split(";") if b]
     passives = [x for r in rows for x in (r["PassivesAdded"] or "").split(";") if x]
     spells: list[str] = []

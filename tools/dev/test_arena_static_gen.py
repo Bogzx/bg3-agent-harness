@@ -18,6 +18,7 @@ import pak
 DAGGERS = ("WPN_Dagger", "WPN_Dagger_1", "WPN_Dagger_2")
 
 FIGHTER_T, BM_T, RACE_T, SUB_T = (f"{i}0000000-0000-0000-0000-000000000000" for i in "1234")
+RACE_LIST = "b1000000-0000-0000-0000-000000000000"
 FIGHTER, BM, RACE, SUB, BG, ORIGIN, LIST, SKILLS = (f"a{i}000000-0000-0000-0000-000000000000" for i in "12345678")
 
 
@@ -140,7 +141,8 @@ def game(tmp: Path, *, shared_rows=(), dev_rows=(), x_rows=(), subrace=SUB) -> P
                     "PassiveList",
                     {"UUID": LIST, "Name": "styles", "Passives": "FightingStyle_Defense,FightingStyle_Archery"},
                     [],
-                )
+                ),
+                ("PassiveList", {"UUID": RACE_LIST, "Name": "a race's later row", "Passives": "Later"}, []),
             ],
         ),
         "Public/Shared/Lists/SkillLists.lsx": lsx(
@@ -202,6 +204,32 @@ def test_race_rows_parent_first_background_hireling_feats_lists_and_xp_totals(tm
     }  # comma-separated
     assert g["lists"][SKILLS]["ids"] == ["Athletics", "Perception"]
     assert g["xp"]["2"] == 100 and g["xp"]["3"] == 300 and g["xp"]["12"] == sum(i * 100 for i in range(1, 12))
+
+
+def test_a_race_row_above_level_1_is_kept_by_level_with_its_list_and_an_empty_one_isnt(tmp_path):
+    later = f"AddSpells({RACE_LIST},,Charisma)"
+    g = run(
+        tmp_path,
+        shared_rows=[
+            row(RACE_T, 5, "race5", Selectors=later),
+            row(RACE_T, 2, "race2"),
+            row(RACE_T, 3, "race3", Boosts="B"),
+        ],
+    )
+    r = g["races"]["HalfElf_Wood"]
+    assert [x["race"] for x in r["rows"]] == ["HalfElf", "HalfElf_Wood"]  # the level-1 rows stay as they were
+    assert [(x["race"], x["level"], x["uuid"]) for x in r["above"]] == [
+        ("HalfElf", 3, "race3"),
+        ("HalfElf", 5, "race5"),
+    ]
+    assert (r["above"][0]["Boosts"], r["above"][1]["Selectors"]) == ("B", later)
+    assert g["lists"][RACE_LIST]["ids"] == ["Later"]
+
+
+def test_a_race_with_no_row_above_level_1_has_no_above_key_or_its_list(tmp_path):
+    g = run(tmp_path)
+    assert "above" not in g["races"]["HalfElf_Wood"]
+    assert RACE_LIST not in g["lists"]
 
 
 def test_a_hirelings_template_gives_the_subrace_its_origin_leaves_out(tmp_path, monkeypatch):

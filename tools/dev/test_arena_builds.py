@@ -69,6 +69,35 @@ class RaceTest(unittest.TestCase):
         self.assertEqual((r["race"], r["spells"]), (SELDARINE, ["Target_DancingLights"]))
         self.assertIn("ProficiencyBonus(Skill,Perception)", r["boosts"])
 
+    def test_a_race_row_above_level_1_counts_from_its_level(self):
+        # The game's Drow table: Faerie Fire at 3, Darkness at 5. A real Drow of that level has them, so its twin must.
+        lights, fire, dark = "Target_DancingLights", "Target_FaerieFire_DrowMagic", "Target_Darkness_DrowMagic"
+        for level, want in ((2, [lights]), (3, [lights, fire]), (4, [lights, fire]), (5, [lights, fire, dark])):
+            with self.subTest(level=level):
+                part = mas.race_plan(kit("Ranger", "Drow_Seldarine"), STATIC, "x", "Wisdom", level)[1]
+                self.assertEqual(part["spells"], want)
+                self.assertEqual(part["spell_abilities"], dict.fromkeys(want, "Charisma"), "the row's own")
+
+    def test_a_race_row_above_level_1_with_a_choice_a_kit_cant_make_is_refused(self):
+        st = copy.deepcopy(STATIC)
+        st["races"]["Drow_Seldarine"]["above"][0]["Selectors"] = "SelectPassives(aaaaaaaa,1)"
+        self.assertEqual(
+            mas.race_plan(kit("Ranger", "Drow_Seldarine"), st, "x", None, 2)[1]["spells"], ["Target_DancingLights"]
+        )
+        with self.assertRaisesRegex(mas.SpecError, r"race Drow_Seldarine has SelectPassives\(aaaaaaaa"):
+            mas.race_plan(kit("Ranger", "Drow_Seldarine"), st, "x", None, 3)
+
+    def test_a_kit_of_a_tier_holds_its_races_spells_of_that_tier(self):
+        r = mas.kit_plan(kit("Ranger", "Drow_Seldarine"), "Ranger", 2, STATIC)["kit"]["race"]
+        self.assertEqual(r["spells"], ["Target_DancingLights"], "L2's Ranger has no row above")
+        pair = next(p for p in json.loads((REPO / "packages/bench/arenas/builds-l5-4v4-team2-v1.json").read_text())
+                    ["mirror"]["pairs"] if p["class"] == "Ranger")  # fmt: skip
+        self.assertEqual(
+            pair["kit"]["race"]["spells"],
+            ["Target_DancingLights", "Target_FaerieFire_DrowMagic", "Target_Darkness_DrowMagic"],
+        )
+        self.assertEqual(pair["kit"]["spell_abilities"]["Target_Darkness_DrowMagic"], "Charisma")
+
     def test_a_spell_keeps_the_ability_its_row_gives_else_its_classs(self):
         doc = json.loads((REPO / "packages/bench/builds/l2_hirelings_v1.json").read_text())
         b = next(x for x in doc["builds"] if x["class"] == "Ranger")
@@ -644,21 +673,44 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
         self.assertNotIn("Target_Bane_4", plan(tier(5), "bard")["spell_abilities"])
         self.assertIn("Target_Bane_6", plan(tier(12), "bard")["spell_abilities"])
 
-    def test_the_second_team_is_valid_and_a_subclass_rows_removed_passive_is_in_the_kits_grants(self):
+    def test_the_second_team_is_valid_and_no_build_of_it_removes_a_passive(self):
         d = ab.load_builds(REPO / "packages/bench/builds/l5_4v4_team2_v1.json")
         self.assertIn("draft", d)
-        self.assertEqual([b["class"] for b in d["builds"]], ["Barbarian", "Bard", "Wizard", "Ranger"])
+        self.assertEqual([b["class"] for b in d["builds"]], ["Fighter", "Bard", "Wizard", "Ranger"])
         __import__("jsonschema").validate(
             d, json.loads((REPO / "packages/bench/schema/arena-builds.v1.schema.json").read_text())
         )
-        k = plan(d, "barbarian")
-        self.assertEqual(k["grants"]["passives_removed"], ["RageUnlock"])
-        self.assertIn(["TotemSpirit_Bear"], [c["ids"] for c in k["choices"] if c["kind"] == "passives"])
-        self.assertNotIn("passives_removed", plan(tier(5), "fighter")["grants"])
-        v = plan(d, "bard")  # Valor: another removed passive, and proficiencies a copy gets only from the kit
-        self.assertEqual(v["grants"]["passives_removed"], ["BardicInspiration"])
-        self.assertIn("CombatInspiration", v["grants"]["passives"])
-        self.assertIn("Proficiency(MartialWeapons)", v["grants"]["boosts"])
+        k = plan(d, "fighter")  # Champion: its level 3 adds a passive and removes none
+        self.assertEqual(k["grants"]["passives"], ["ImprovedCritical"])
+        self.assertIn(
+            ["FightingStyle_GreatWeaponFighting"], [c["ids"] for c in k["choices"] if c["kind"] == "passives"]
+        )
+        v = plan(d, "bard")  # Lore, as team 1's, with its own picks
+        self.assertEqual(v["grants"]["passives"], ["CuttingWords"])
+        self.assertIn(["Insight", "Persuasion", "Stealth"], [c["ids"] for c in v["choices"] if c["kind"] == "skills"])
+        for b in d["builds"]:
+            self.assertNotIn("passives_removed", plan(d, b["id"]).get("grants", {}), b["id"])
+
+    def test_a_build_whose_subclass_rows_remove_a_passive_is_refused(self):
+        barbarian = {
+            "id": "barbarian", "class": "Barbarian", "subclass": "TotemWarriorPath", "race": "Dwarf_GoldHill",
+            "background": "Outlander", "role": "frontline", "reference": None,
+            "gear": ["WPN_Greataxe_1", "OBJ_Potion_Healing", "OBJ_Potion_Healing", "ARM_Shoes_Barbarian",
+                     "ARM_Barbarian", {"item": "WPN_Handaxe_1", "equip": False},
+                     {"item": "WPN_Handaxe_1", "equip": False}, "OBJ_Potion_Healing_Greater"],
+            "script": {
+                "cc": {
+                    "abilities": {"Strength": 15, "Dexterity": 13, "Constitution": 14, "Intelligence": 10,
+                                  "Wisdom": 12, "Charisma": 8},
+                    "ability_bonus": ["Strength", "Constitution"], "skills": ["Intimidation", "Perception"],
+                },
+                "level_ups": [{"level": 2}, {"level": 3, "passives": [["TotemSpirit_Bear"]]},
+                              {"level": 4, "improvement": {"asi": {"Strength": 2}}}, {"level": 5}],
+            },
+        }  # fmt: skip
+        d = {"level": 5, "builds": [barbarian]}
+        with self.assertRaisesRegex(mas.SpecError, r"TotemWarriorPath level 3 removes RageUnlock: a twin can't"):
+            plan(d, "barbarian")
 
     def test_a_wizards_kit_adds_only_its_prepared_picks_and_a_clerics_keeps_prepared_for_the_mod_to_name(self):
         for lv, n in ((2, 5), (5, 9), (12, 17)):
