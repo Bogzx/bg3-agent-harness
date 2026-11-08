@@ -33,8 +33,8 @@ Ext = {
         Projectile_Unnamed = { DisplayName = "", SpellRoll = { Default = "" } },
         Throw_Throw = { DisplayName = "hThrow", SpellRoll = { Default = "Attack(AttackType.RangedUnarmedAttack)" } },
     })[id] end },
-    Loca = { GetTranslatedString = function(h) return ({ hFire = "Fire Bolt", hScimitar = "Scimitar Slash", hThrow = "Throw",
-        hCK = "Cloudkill",
+    Loca = { GetTranslatedString = function(h) return ({ hFire = "Fire Bolt", hScimitar = "Scimitar Slash",
+        hThrow = "Throw", hCK = "Cloudkill",
         hCKd = "Create a cloud of poison that deals [1] each turn to creatures inside it.<br>It moves away from you.",
         hCKx = "The cloud moves <LSTag Type=\"Tooltip\" Tooltip=\"Distance\">3m</LSTag> each turn." })[h] end },
 }
@@ -606,14 +606,18 @@ do
     -- The item is tied to its own Throw (REVIEW-reactions F1, P1 and P3).
     local POTION, GREASE, NONAME = "bbbbbbbb-0000-0000-0000-000000000002", "bbbbbbbb-0000-0000-0000-000000000003",
         "bbbbbbbb-0000-0000-0000-000000000004"
-    local itemNames = { [POTION] = "Potion of Healing", [GREASE] = "Bottle of Grease", [BOMB] = "Bomb", [NONAME] = "Unknown" }
+    local itemNames = { [POTION] = "Potion of Healing", [GREASE] = "Bottle of Grease", [BOMB] = "Bomb",
+        [NONAME] = "Unknown" }
     local withItems = V.name
     V.name = function(u) return itemNames[u] or withItems(u) end
     V.entity = function(u) return itemNames[u] == nil and { ServerCharacter = {}, _u = u } or { _u = u } end
     local clock = 200000
     local realClock = Ext.Utils.MonotonicTime
     Ext.Utils.MonotonicTime = function() return clock end
-    local function cast(story) listeners.CastedSpell(GOB, "Throw_Throw", "Throw", "None", story); return last("cast") end
+    local function cast(story)
+        listeners.CastedSpell(GOB, "Throw_Throw", "Throw", "None", story)
+        return last("cast")
+    end
 
     listeners.RemovedFrom(POTION, GOB)
     listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 21)

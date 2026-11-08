@@ -138,7 +138,8 @@ listen("CastSpell", 5, function(caster, spell, _, _, story)
 end)
 
 -- RemovedFrom(object, inventoryHolder): the item of the holder's own open Throw (begun, not yet landed, none set), and
--- only that: anything else leaving an inventory isn't a thing a player is told. Read now, a bomb is gone once it has hit.
+-- only that: anything else leaving an inventory isn't a thing a player is told.
+-- Read now, a bomb is gone once it has hit.
 listen("RemovedFrom", 2, function(item, holder)
     local h, i = visibleChar(holder), V.uuid(item)
     if not (h and i) then return end
@@ -496,7 +497,8 @@ listen("CastedSpell", 5, function(caster, spell, _, _, story)
     local open, ended
     if Gl and Gl.tb_flags then open, ended = Gl.tb_flags(u) end
     RPC.push("cast", { caster = ref(u), spell = ctx().is_party[u] and spell or nil, name = name, roll = roll,
-        thrown = act and act.item or nil, turn = open and not ended and Gl.lost_control and Gl.lost_control(u) and "game's" or nil })
+        thrown = act and act.item or nil,
+        turn = open and not ended and Gl.lost_control and Gl.lost_control(u) and "game's" or nil })
     if not ctx().is_party[u] then E.note_spell(u, spell) end
 end)
 
