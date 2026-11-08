@@ -5,6 +5,12 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-08: combat events name what dealt a hit
+
+- `damage` events from a visible source add `by`: `damage e169 Fezzerk -> e4 Tav 15 Force by Bomb`. A Throw's `cast` adds
+  the item: `cast e169 Fezzerk: Throw of Bomb (attack)`. Nothing is added for an unseen source or when nothing shown
+  names the hit. Tool definitions don't change.
+
 ## 2026-11-08: a dropped cast is never sent again by the mod
 
 - A combat cast the game never started (no cast state, no step at 3 s) right after a hit on the caster, a shown status

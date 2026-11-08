@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.15.0 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.16.0 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -192,7 +192,13 @@ game unless it says so.
   grade gains `reactions_unanswered` {A, B: declined, over_budget, waited_s, charged_s, budget_spent}, and `valid`
   doesn't read it. No match on record has ended on the wall cap this way: it is the owner's rule for the public bench,
   bounded by arithmetic (D188, D346, ops wall-cap-design.md). Tool definitions don't change. bench-v0.11's release
-  cites it.
+  cited it until 0.16.0.
+- 0.16.0 (2026-11-08): what the agent sees changed: combat events name what dealt a hit. A `damage` event from a visible
+  source says `by <name>`: the object that dealt it when it isn't its owner, the item of a Throw or the spell of the
+  cast with the hit's story action, else the game's `damageCause` when that is one plain word. A Throw's `cast` says
+  the item (`Throw of Bomb`). Nothing is named for an unseen source. Owner, 2026-11-08, after a wipe by eight bare Force
+  hits (windmill, S001): "fix what the agent is told". Which of those the game gives for a bomb is not read live yet.
+  Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
