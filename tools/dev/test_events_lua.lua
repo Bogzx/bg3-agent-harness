@@ -585,7 +585,6 @@ do
     listeners.CastSpell(HOST, "Target_FireBolt", "Target", "None", 12)
     d = hit(HOST, HOST, "Attack", 12)
     check("damage: the cast with the story action names the spell", d and d.by == "Fire Bolt", d and d.by)
-    listeners.RemovedFrom(BOMB, HOST)
     listeners.CastedSpell(HOST, "Target_FireBolt", "Target", "None", 12)
     check("cast: no item on a cast that isn't a Throw", last("cast") and last("cast").thrown == nil)
 
@@ -604,6 +603,76 @@ do
     d = hit(GOB, HIDDEN, "None", 99)
     check("damage: a hidden summon of a visible owner isn't named", d and d.by == nil, d and d.by)
 
+    -- The item is tied to its own Throw (REVIEW-reactions F1, P1 and P3).
+    local POTION, GREASE, NONAME = "bbbbbbbb-0000-0000-0000-000000000002", "bbbbbbbb-0000-0000-0000-000000000003",
+        "bbbbbbbb-0000-0000-0000-000000000004"
+    local itemNames = { [POTION] = "Potion of Healing", [GREASE] = "Bottle of Grease", [BOMB] = "Bomb", [NONAME] = "Unknown" }
+    local withItems = V.name
+    V.name = function(u) return itemNames[u] or withItems(u) end
+    V.entity = function(u) return itemNames[u] == nil and { ServerCharacter = {}, _u = u } or { _u = u } end
+    local clock = 200000
+    local realClock = Ext.Utils.MonotonicTime
+    Ext.Utils.MonotonicTime = function() return clock end
+    local function cast(story) listeners.CastedSpell(GOB, "Throw_Throw", "Throw", "None", story); return last("cast") end
+
+    listeners.RemovedFrom(POTION, GOB)
+    listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 21)
+    d = cast(21)
+    check("cast: what left before the Throw began isn't its item", d and d.thrown == nil, d and d.thrown)
+    d = hit(GOB, GOB, "None", 21)
+    check("damage: a Throw with no item of its own says Throw", d and d.by == "Throw", d and d.by)
+    listeners.RemovedFrom(POTION, GOB)
+    d = hit(GOB, GOB, "None", 21)
+    check("damage: what leaves after the Throw landed isn't its item", d and d.by == "Throw", d and d.by)
+
+    listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 22)
+    listeners.RemovedFrom(BOMB, GOB)
+    d = cast(22)
+    check("cast: the bomb, thrown first", d and d.thrown == "Bomb", d and d.thrown)
+    listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 23)
+    listeners.RemovedFrom(GREASE, GOB)
+    d = cast(23)
+    check("cast: the grease, thrown second", d and d.thrown == "Bottle of Grease", d and d.thrown)
+    d = hit(GOB, GOB, "None", 22)
+    check("damage: the bomb's blast after the grease left is the bomb's", d and d.by == "Bomb", d and d.by)
+
+    listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 24)
+    listeners.RemovedFrom(BOMB, GOB)
+    listeners.RemovedFrom(POTION, GOB)
+    d = hit(GOB, GOB, "None", 24)
+    check("damage: the first item out is the Throw's, set once", d and d.by == "Bomb", d and d.by)
+
+    listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 25)
+    clock = clock + 6001
+    listeners.RemovedFrom(BOMB, GOB)
+    d = hit(GOB, GOB, "None", 25)
+    check("damage: an item leaving past the window isn't the Throw's", d and d.by == "Throw", d and d.by)
+
+    listeners.CastSpell(HOST, "Target_FireBolt", "Target", "None", 26)
+    listeners.RemovedFrom(BOMB, HOST)
+    d = hit(HOST, HOST, "None", 26)
+    check("damage: an item leaving during a cast that isn't a Throw isn't named", d and d.by == "Fire Bolt", d and d.by)
+
+    listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 27)
+    V.characterVisible = function() return false end
+    listeners.RemovedFrom(BOMB, GOB)
+    V.characterVisible = function(c, u) return u ~= HIDDEN and realVisible(c, u) end
+    d = hit(GOB, GOB, "None", 27)
+    check("damage: an item leaving a thrower out of sight isn't named", d and d.by == "Throw", d and d.by)
+
+    listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 28)
+    listeners.RemovedFrom(NONAME, GOB)
+    d = hit(GOB, GOB, "None", 28)
+    check("damage: an item shown as Unknown isn't a name", d and d.by == "Throw", d and d.by)
+
+    d = hit(GOB, NONAME, "None", 99)
+    check("damage: an attacker shown as Unknown isn't a name", d and d.by == nil, d and d.by)
+
+    listeners.CastSpell(GOB, "Target_FireBolt", "Target", "None", 0)
+    d = hit(GOB, GOB, "None", 0)
+    check("damage: story action 0 links nothing", d and d.by == nil, d and d.by)
+
+    Ext.Utils.MonotonicTime = realClock
     V.entity, V.name, V.characterVisible = realEntity, realName, realVisible
 end
 

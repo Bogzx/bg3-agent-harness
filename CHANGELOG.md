@@ -194,8 +194,8 @@ game unless it says so.
   bounded by arithmetic (D188, D346, ops wall-cap-design.md). Tool definitions don't change. bench-v0.11's release
   cited it until 0.16.0.
 - 0.16.0 (2026-11-08): what the agent sees changed: combat events name what dealt a hit. A `damage` event from a visible
-  source says `by <name>`: the object that dealt it when it isn't its owner, the item of a Throw or the spell of the
-  cast with the hit's story action, else the game's `damageCause` when that is one plain word. A Throw's `cast` says
+  source says `by <name>`: the object that dealt it when it isn't its owner, the item that left the thrower during that
+  Throw or the spell of the cast with the hit's story action, else the game's `damageCause` when that is one plain word. A Throw's `cast` says
   the item (`Throw of Bomb`). Nothing is named for an unseen source. Owner, 2026-11-08, after a wipe by eight bare Force
   hits (windmill, S001): "fix what the agent is told". Which of those the game gives for a bomb is not read live yet.
   Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
