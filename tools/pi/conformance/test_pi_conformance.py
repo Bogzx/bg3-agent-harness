@@ -13,6 +13,7 @@ was made that way.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -72,6 +73,24 @@ PROFILE = {
         "context_window": 200000,
         "max_tokens": 16000,
         "cost": {"input": 1.0, "output": 4.0, "cache_read": 0.1},
+    },
+}
+CODEX_PROFILE = {
+    "client": "pi",
+    "model": "gpt-stub",
+    "effort": "high",
+    "endpoint": {
+        "provider": "openai-codex",
+        "base_url": "https://chatgpt.com/backend-api",
+        "api": pr.CODEX_API,
+        "api_key_env": "BG3_STUB_KEY",
+    },
+    "model_info": {
+        "input": ["text"],
+        "reasoning": True,
+        "context_window": 200000,
+        "max_tokens": 16000,
+        "cost": {"input": 2.0, "output": 10.0, "cache_read": 0.2},
     },
 }
 WAIT_S = 30  # upper bound on any one pi process or condition; a pass takes far less
@@ -158,6 +177,9 @@ class Run:
     BINARY.exists() or NEED_PI, "tools/pi/node_modules missing: cd tools/pi && npm ci --ignore-scripts"
 )
 class Conformance(unittest.TestCase):
+    pi_model = f"openrouter/{MODEL}"
+    key = "stub-key"
+
     @classmethod
     def setUpClass(cls):
         if not BINARY.exists():
@@ -199,12 +221,13 @@ class Conformance(unittest.TestCase):
         wait_until(lambda: port.exists() and port.read_text(), "the stub model's port")
         return int(port.read_text())
 
-    def configure(self, script, model_info=None, settings=None, mcp_env=None, timeout_s=110):
+    def configure(self, script, model_info=None, settings=None, mcp_env=None, timeout_s=110, profile=None):
         port = self.start_stub(script)
-        raw = json.loads(json.dumps(PROFILE))
+        raw = json.loads(json.dumps(profile or PROFILE))
         raw["model_info"].update(model_info or {})
         models = pr.models_json(pr.parse(raw))
-        models["providers"]["openrouter"]["baseUrl"] = f"http://127.0.0.1:{port}/v1"  # the stub, as OpenRouter
+        provider = raw["endpoint"]["provider"]
+        models["providers"][provider]["baseUrl"] = f"http://127.0.0.1:{port}/v1"  # the stub, as the endpoint
         (self.ws / "agent" / "models.json").write_text(json.dumps(models))
         (self.ws / "agent" / "settings.json").write_text(json.dumps(settings or SETTINGS))
         env = {"STUB_MCP_LOG": str(self.ws / "mcp.jsonl"), **(mcp_env or {})}
@@ -233,7 +256,7 @@ class Conformance(unittest.TestCase):
             "--session-id",
             session,
             "--model",
-            f"openrouter/{MODEL}",
+            self.pi_model,
             "--thinking",
             "high",
         ]
@@ -247,7 +270,7 @@ class Conformance(unittest.TestCase):
             "PI_CODING_AGENT_DIR": str(self.ws / "agent"),
             "BG3_PI_CONFIG": str(self.ws / "bg3.json"),
             "PI_OFFLINE": "1",
-            "BG3_STUB_KEY": "stub-key",
+            "BG3_STUB_KEY": self.key,
         }
 
     def popen(
@@ -520,6 +543,24 @@ class Conformance(unittest.TestCase):
         self.assertNotIn(claude_md[:80], json.dumps(run.requests))
         self.assertEqual(sorted(p.name for p in (self.ws / "home").iterdir()), [])  # no ~/.pi
         self.assertEqual(len(run.requests[0]["messages"]), 2)  # system + prompt, no context files
+
+    def test_24_codex_backend_with_the_token_from_the_env(self):
+        claim = {"https://api.openai.com/auth": {"chatgpt_account_id": "acct-stub"}}
+        payload = base64.urlsafe_b64encode(json.dumps(claim).encode()).decode().rstrip("=")
+        self.key, self.pi_model = f"e30.{payload}.sig", "openai-codex/gpt-stub"
+        run = self.run_pi([{"tool_calls": [call("look")]}, {"text": "done"}], profile=CODEX_PROFILE)
+        self.assertEqual(run.rc, 0, run.err)
+        self.assertEqual(run.calls(), [("start", "look"), ("end", "look")])
+        logged = jsonl(self.ws / "llm.jsonl")
+        self.assertEqual({r["path"] for r in logged}, {"/v1/codex/responses"})
+        self.assertEqual(len(logged), 2)
+        headers = {k.lower(): v for k, v in logged[0]["headers"].items()}
+        self.assertEqual(headers["authorization"], f"Bearer {self.key}")
+        self.assertEqual(headers["chatgpt-account-id"], "acct-stub")
+        final = run.messages("assistant")[-1]
+        self.assertEqual((final["stopReason"], final["provider"]), ("stop", "openai-codex"))
+        # the backend bills no dollars: 1000 input + 10 output at the profile's rates, what the cost cap counts
+        self.assertAlmostEqual(final["usage"]["cost"]["total"], (1000 * 2.0 + 10 * 10.0) / 1e6)
 
     def test_30_pi_client_end_to_end(self):
         """bg3harness/pi_client.py's own config files, env and command against the stubs, its parser on the stream."""

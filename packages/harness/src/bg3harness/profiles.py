@@ -55,6 +55,11 @@ the highest matching tier prices the whole request, output included:
 A pi model definition replaces pi's catalog entry of the same id, catalog compat flags included: copy the ones the
 model needs into compat (pi detects the provider's defaults from the provider id and base_url).
 
+A Codex model through pi says api = "openai-codex-responses", provider = "openai-codex" and base_url =
+"https://chatgpt.com/backend-api" (so that host is the run's only egress). api_key_env names the variable that holds
+the login's access token (client_setup.api_key_env reads it from pi's own login when it isn't set). The backend reports
+tokens, not dollars, so what a run counts is pi's estimate at the profile's rates, as for Anthropic.
+
 claude, codex and gemini take only client, model, effort (and fallback_model for claude): their endpoint is the
 CLI's own, so endpoint, routing and model_info are an error there rather than silently meaning nothing.
 
@@ -82,7 +87,8 @@ CLIENT_NAMES = ("claude", "codex", "gemini", "pi")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")  # play.EFFORTS
 STATUSES = ("verified", "offline", "unsupported")
 API = "openai-completions"  # pi's default wire format (D6)
-APIS = (API, "anthropic-messages")  # anthropic-messages: Anthropic's own API (pi's native provider)
+CODEX_API = "openai-codex-responses"  # pi's ChatGPT backend, billed to the account's Codex credits
+APIS = (API, "anthropic-messages", CODEX_API)  # anthropic-messages: Anthropic's own API (pi's native provider)
 INPUTS = ("text", "image")
 THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")  # pi's thinkingLevelMap keys
 COST_KEYS = {"input": "input", "output": "output", "cache_read": "cacheRead", "cache_write": "cacheWrite"}

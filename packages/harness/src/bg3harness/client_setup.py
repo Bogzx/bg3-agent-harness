@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import subprocess
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,10 @@ from bg3harness import profiles
 from bg3harness.profiles import Profile
 
 DEFAULT_MODEL = "opus"  # play.py's --model default (claude)
+# pi's own login for a Codex profile. Only the access token leaves this file, for the run's env: the refresh token
+# stays here, out of the sandbox.
+CODEX_LOGIN = Path.home() / ".config/bg3ai/pi-codex/auth.json"
+CODEX_LOGIN_HOW = "log in with PI_CODING_AGENT_DIR=~/.config/bg3ai/pi-codex tools/pi/node_modules/.bin/pi, then /login"
 
 
 class SetupRefused(ValueError):
@@ -111,16 +116,35 @@ def read_dotenv(path: Path) -> dict[str, str]:
     return out
 
 
-def api_key_env(prof: Profile | None, environ: Mapping[str, str], dotenv: Path) -> dict[str, str]:
+def codex_token(path: Path) -> str:
+    """The access token of pi's Codex login in `path` (pi's auth.json). No login, or an expired one: refused."""
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError):
+        raw = None
+    cred = raw.get("openai-codex") if isinstance(raw, dict) else None
+    if not isinstance(cred, dict) or not cred.get("access"):
+        raise SetupRefused(f"no Codex login in {path}: {CODEX_LOGIN_HOW}")
+    if float(cred.get("expires") or 0) <= time.time() * 1000:
+        raise SetupRefused(f"the Codex login in {path} has expired: {CODEX_LOGIN_HOW}")
+    return str(cred["access"])
+
+
+def api_key_env(
+    prof: Profile | None, environ: Mapping[str, str], dotenv: Path, codex_login: Path = CODEX_LOGIN
+) -> dict[str, str]:
     """{name: value} of the profile's API key env var to add to the runner's env: {} when it is set already (or
-    the client has no endpoint), else the value from the .env file. Missing everywhere: refused. The value is
-    never logged or written: pi's models.json names the variable."""
+    the client has no endpoint), else the value from the .env file, else, for a Codex profile, the access token of
+    pi's login. Missing everywhere: refused. The value is never logged or written: pi's models.json names the
+    variable."""
     if prof is None or prof.endpoint is None:
         return {}
     name = prof.endpoint.api_key_env
     if environ.get(name):
         return {}
     value = read_dotenv(dotenv).get(name)
+    if not value and prof.endpoint.api == profiles.CODEX_API:
+        value = codex_token(codex_login)
     if not value:
         raise SetupRefused(f"{name} (the profile's api_key_env) is set neither in the env nor in {dotenv}")
     return {name: value}

@@ -86,6 +86,26 @@ def pi(**changes: Any) -> dict[str, Any]:
     return raw
 
 
+CODEX = {
+    "client": "pi",
+    "model": "gpt-x",
+    "effort": "medium",
+    "endpoint": {
+        "provider": "openai-codex",
+        "base_url": "https://chatgpt.com/backend-api",
+        "api": "openai-codex-responses",
+        "api_key_env": "BG3AI_CODEX_ACCESS_TOKEN",
+    },
+    "model_info": {
+        "input": ["text", "image"],
+        "reasoning": True,
+        "context_window": 272000,
+        "max_tokens": 128000,
+        "cost": {"input": 2.0, "output": 12.0, "cache_read": 0.2},
+    },
+}
+
+
 class Examples(unittest.TestCase):
     def test_every_example_loads(self):
         paths = sorted(EXAMPLES.glob("*.toml"))
@@ -246,6 +266,26 @@ class Status(unittest.TestCase):
         self.assertEqual(got["opus-5.5-claude-code.toml"], "verified")
         self.assertEqual(got["gemini-cli.toml"], "unsupported")  # D14
         self.assertEqual({got[n] for n in got if n.startswith(("codex", "deepseek-v4", "opus-5.5-pi"))}, {"offline"})
+
+
+class Codex(unittest.TestCase):
+    def test_models_json_keeps_the_token_an_env_reference(self):
+        provider = pr.models_json(pr.parse(json.loads(json.dumps(CODEX))))["providers"]["openai-codex"]
+        self.assertEqual(provider["api"], "openai-codex-responses")
+        self.assertEqual(provider["baseUrl"], "https://chatgpt.com/backend-api")
+        self.assertEqual(provider["apiKey"], "${BG3AI_CODEX_ACCESS_TOKEN}")
+
+    def test_the_sandbox_lets_out_the_backend_only(self):
+        from bg3harness import sandbox
+
+        p = pr.parse(json.loads(json.dumps(CODEX)))
+        self.assertEqual(sandbox.egress_hosts("pi", p), ["chatgpt.com"])
+
+    def test_it_has_rates_to_count_against_a_cap(self):
+        raw = json.loads(json.dumps(CODEX))
+        del raw["model_info"]["cost"]
+        with self.assertRaisesRegex(pr.ProfileError, "cost needs"):
+            pr.parse(raw)
 
 
 class OffRoute(unittest.TestCase):
