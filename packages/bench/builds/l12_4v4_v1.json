@@ -47,7 +47,7 @@
        [
         "PrecisionAttack",
         "Riposte",
-        "GoadingAttack"
+        "SweepingAttack"
        ]
       ]
      },
@@ -137,10 +137,10 @@
      "max_hp": 136,
      "ac": 18,
      "equipment": {
-      "RangedMainHand": "WPN_HUM_Shortbow_A_2_NOT_APPROVED_d9a98dce-1027-4324-939c-3c9cfe776731",
       "MeleeMainHand": "WPN_HUM_Longsword_A_2_e3b2adb6-7493-466e-9c65-4281fb74e83f",
       "Boots": "ARM_Boots_Leather_969bab00-b269-46a5-a7e9-dd4887814719",
-      "Breast": "ARM_ScaleMail_2_21f0dd84-6f02-4be9-8654-4cebd00dcbaf"
+      "Breast": "ARM_ScaleMail_2_21f0dd84-6f02-4be9-8654-4cebd00dcbaf",
+      "RangedMainHand": "WPN_HUM_Shortbow_A_2_NOT_APPROVED_d9a98dce-1027-4324-939c-3c9cfe776731"
      },
      "inventory": [
       "CONS_Potion_Healing_A_Greater_e3b95c96-dc26-40fe-bfc0-baa05e1abd20",
@@ -149,7 +149,6 @@
      ],
      "spells": [
       "Projectile_DistractingStrike",
-      "Projectile_GoadingAttack",
       "Projectile_HamstringShot",
       "Projectile_Jump",
       "Projectile_MainHandAttack",
@@ -164,7 +163,6 @@
       "Target_Dip",
       "Target_DistractingStrike",
       "Target_FeintingAttack",
-      "Target_GoadingAttack",
       "Target_Help",
       "Target_MainHandAttack",
       "Target_PommelStrike",
@@ -172,11 +170,11 @@
       "Target_Shove",
       "Target_Slash_New",
       "Throw_ImprovisedWeapon",
-      "Throw_Throw"
+      "Throw_Throw",
+      "Zone_SweepingAttack"
      ],
      "prepared": [
       "Projectile_DistractingStrike",
-      "Projectile_GoadingAttack",
       "Projectile_HamstringShot",
       "Projectile_Jump",
       "Projectile_MainHandAttack",
@@ -191,7 +189,6 @@
       "Target_Dip",
       "Target_DistractingStrike",
       "Target_FeintingAttack",
-      "Target_GoadingAttack",
       "Target_Help",
       "Target_MainHandAttack",
       "Target_PommelStrike",
@@ -199,7 +196,8 @@
       "Target_Shove",
       "Target_Slash_New",
       "Throw_ImprovisedWeapon",
-      "Throw_Throw"
+      "Throw_Throw",
+      "Zone_SweepingAttack"
      ],
      "passives": [
       "ARM_Ambusher_1_Passive",
@@ -216,7 +214,6 @@
       "FeintingAttack",
       "FeyAncestry",
       "FightingStyle_Defense",
-      "GoadingAttack",
       "HumanMilitia",
       "ImprovedCombatSuperiority",
       "Indomitable",
@@ -229,6 +226,7 @@
       "Sentinel_OpportunityAdvantage",
       "Sentinel_ZeroSpeed",
       "ShortResting",
+      "SweepingAttack",
       "Tough",
       "WeaponThrow"
      ],
@@ -236,16 +234,16 @@
       "INSURFACE"
      ],
      "resources": {
-      "ReactionActionPoint": {
+      "ActionPoint": {
        "0": 1.0
       },
-      "ActionPoint": {
+      "Interrupt_Indomitable": {
        "0": 1.0
       },
       "SuperiorityDie": {
        "0": 5.0
       },
-      "Interrupt_Indomitable": {
+      "ReactionActionPoint": {
        "0": 1.0
       },
       "BonusActionPoint": {
@@ -268,24 +266,24 @@
       "Spears"
      ],
      "skills": {
-      "Medicine": 1,
-      "Religion": 0,
-      "Arcana": 0,
-      "Investigation": 0,
-      "AnimalHandling": 1,
-      "Survival": 5,
-      "Performance": -1,
-      "Intimidation": 3,
-      "Deception": -1,
-      "Acrobatics": 1,
-      "Nature": 0,
-      "Persuasion": -1,
-      "Athletics": 9,
-      "Insight": 1,
-      "SleightOfHand": 1,
       "Stealth": 5,
+      "Performance": -1,
+      "Deception": -1,
+      "Insight": 1,
+      "Arcana": 0,
       "History": 0,
-      "Perception": 5
+      "Religion": 0,
+      "Acrobatics": 1,
+      "Perception": 5,
+      "Survival": 5,
+      "Investigation": 0,
+      "Athletics": 9,
+      "Persuasion": -1,
+      "Medicine": 1,
+      "Nature": 0,
+      "SleightOfHand": 1,
+      "AnimalHandling": 1,
+      "Intimidation": 3
      },
      "boosts": [
       "AC|||",
@@ -351,12 +349,10 @@
       "UnlockSpell|||",
       "UnlockSpell|||",
       "UnlockSpell|||",
-      "UnlockSpell|||",
       "UnlockSpell|||"
      ],
      "spellcast": [
       "Projectile_DistractingStrike|Intelligence|AlwaysPrepared|12|4",
-      "Projectile_GoadingAttack|Intelligence|AlwaysPrepared|12|4",
       "Projectile_HamstringShot|Intelligence|AlwaysPrepared|12|4",
       "Projectile_Jump|Intelligence|AlwaysPrepared|12|4",
       "Projectile_MainHandAttack|None|AlwaysPrepared|-|-",
@@ -371,7 +367,6 @@
       "Target_Dip|Intelligence|AlwaysPrepared|12|4",
       "Target_DistractingStrike|Intelligence|AlwaysPrepared|12|4",
       "Target_FeintingAttack|Intelligence|AlwaysPrepared|12|4",
-      "Target_GoadingAttack|Intelligence|AlwaysPrepared|12|4",
       "Target_Help|Intelligence|AlwaysPrepared|12|4",
       "Target_MainHandAttack|None|AlwaysPrepared|-|-",
       "Target_PommelStrike|Intelligence|AlwaysPrepared|12|4",
@@ -379,17 +374,18 @@
       "Target_Shove|Intelligence|AlwaysPrepared|12|4",
       "Target_Slash_New|Intelligence|AlwaysPrepared|12|4",
       "Throw_ImprovisedWeapon|Intelligence|AlwaysPrepared|12|4",
-      "Throw_Throw|Intelligence|AlwaysPrepared|12|4"
+      "Throw_Throw|Intelligence|AlwaysPrepared|12|4",
+      "Zone_SweepingAttack|Intelligence|AlwaysPrepared|12|4"
      ],
      "derived": {
       "ranged_main_hand": "none",
-      "spell_casting_ability": "Intelligence",
-      "movement": 10.5,
       "melee_main_hand": "none",
-      "initiative_bonus": 2,
+      "spell_casting_ability": "Intelligence",
       "spell_save_dc_boost": 0,
+      "initiative_bonus": 2,
       "weapon_action_dc": 3,
-      "proficiency_bonus": 4
+      "proficiency_bonus": 4,
+      "movement": 10.5
      },
      "resource_max": [
       "ActionPoint|0|1.0|Default",
@@ -414,7 +410,6 @@
       "FeintingAttack|false|true",
       "FeyAncestry|false|true",
       "FightingStyle_Defense|false|true",
-      "GoadingAttack|false|true",
       "HumanMilitia|false|true",
       "ImprovedCombatSuperiority|false|true",
       "Indomitable|false|true",
@@ -427,13 +422,14 @@
       "Sentinel_OpportunityAdvantage|false|true",
       "Sentinel_ZeroSpeed|false|true",
       "ShortResting|false|true",
+      "SweepingAttack|false|true",
       "Tough|false|true",
       "WeaponThrow|false|true"
      ]
     },
     "game_build": "25605617",
     "hireling": "8078e34e-2dce-44ee-8072-072ac433350f",
-    "evidence": "live.md L12 launch 2c, runtime/probes/l12/fighter/",
+    "evidence": "live.md 'No lose control', runtime/probes/nlc/l12/",
     "accepted": [
      {
       "field": "derived",

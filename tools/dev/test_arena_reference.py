@@ -132,7 +132,7 @@ class PlanTest(unittest.TestCase):
         ups = {u["level"]: u["plan"] for u in p["level_ups"]}
         self.assertEqual(sorted(ups), [2, 3, 4, 5])
         self.assertEqual(ups[3]["subclass"], "Battle Master")
-        self.assertEqual(ups[3]["passives"], ["PrecisionAttack", "Riposte", "GoadingAttack"])
+        self.assertEqual(ups[3]["passives"], ["PrecisionAttack", "Riposte", "SweepingAttack"])
         self.assertEqual(ups[4]["abilities"], {"Strength": 2})
         self.assertIn("PrecisionAttack", p["names"])
 
