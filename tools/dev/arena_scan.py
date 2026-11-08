@@ -1,8 +1,9 @@
 """What a build can reach in the game's stats, and whether any of it knocks down, changes sides or hands a turn to the
 game's AI. The arena's bar (website ops/logs/REVIEW-4v4.md, orchestrator D130, 2026-11-06): knock-downs and
 side-changing spells are banned; incapacitating spells are allowed, GuardCast already refuses those. A status whose
-StatusPropertyFlags (`using` resolved) hold LoseControl is banned too: the game's AI plays its holder's turn (Goading
-Attack's Goaded, live.md "## Goaded read"; owner, 2026-11-08: the game AI doesn't play in the arena). A build's ids
+StatusPropertyFlags (`using` resolved) hold LoseControl is banned too (owner, 2026-11-08: the game AI doesn't play in
+the arena): Goaded's holders lost their turns to it (live.md "## Goaded read"). The flag alone doesn't prove that, as
+one Compelled Duel turn under it stayed the player's (website ops/logs/lose-control-reach.md). A build's ids
 don't show this: a Quarterstaff unlocks Topple and a Cleric's class rows add Command, so the walk follows items, class
 rows, kit, race and passives through spells, statuses and passives.
 
@@ -118,7 +119,7 @@ def hits(entries: Entries, name: str) -> list[str]:
         out.add("knock-down: SG_Prone")
     out.update(f"side: {g}" for g in SIDE_GROUPS if g in groups)
     if re.search(r"\bLoseControl\b", d.get("StatusPropertyFlags", "")):
-        out.add("control: LoseControl")  # the game's AI plays the holder's turn (owner, 2026-11-08)
+        out.add("control: LoseControl")  # the flag on Goaded, whose holders lost their turns to the game's AI
     for k, v in _effects(d):
         if re.search(r"\bPRONE\b", v):
             out.add(f"knock-down: PRONE in {k}")
