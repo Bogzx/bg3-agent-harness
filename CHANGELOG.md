@@ -181,7 +181,10 @@ game unless it says so.
   most half a cap each (`arena_turn_charged`), so unanswered prompts alone never end a turn; the rest carries over. A
   phase capped only because of the charge (model time under the full cap) is told the time it had, is marked
   `charged_cap` on `arena_turn_forced`, counts toward no forfeit and breaks the run in the runner and the grader, so
-  only a side's own full cap can forfeit (owner, 2026-11-08). A
+  only a side's own full cap can forfeit (owner, 2026-11-08). While the runner's end at a cap runs, a new order for
+  that character is refused (`this character's turn is being ended at <the cap>`): live, its own next `move_to`
+  replaced the end, and it walked and swung after the cap. The runner stops polling that end once it reaches any final
+  status; it waited 22 s on an `interrupted` one, with no cap, hold or stall check. A
   side's waits are budgeted at a sixth of the wall cap: past it (`arena_reaction_budget_spent`, once) its prompts are
   declined at their first read, so unanswered prompts can't use up a match. The side reads an `arena_notice` event for
   each decline and each charge (`reaction: Sentinel (Red Ash) unanswered for 46 s: declined; 46 s comes off your next
