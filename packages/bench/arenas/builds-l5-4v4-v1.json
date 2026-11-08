@@ -125,7 +125,7 @@
        "ids": [
         "PrecisionAttack",
         "Riposte",
-        "GoadingAttack"
+        "SweepingAttack"
        ]
       }
      ],
@@ -192,9 +192,9 @@
       "max_hp": 44,
       "ac": 17,
       "equipment": {
+       "Boots": "ARM_Boots_Leather_969bab00-b269-46a5-a7e9-dd4887814719",
        "MeleeMainHand": "WPN_HUM_Longsword_A_1_3fc2ba50-3070-4caa-abe8-3bf885969bde",
        "RangedMainHand": "WPN_HUM_Shortbow_A_1_a46173b7-afd6-48e0-9c76-817acd027574",
-       "Boots": "ARM_Boots_Leather_969bab00-b269-46a5-a7e9-dd4887814719",
        "Breast": "ARM_ScaleMail_1_dc748177-8590-4a99-a446-feccbd8d8eb4"
       },
       "inventory": [
@@ -202,7 +202,6 @@
        "CONS_Potion_Healing_A_d47006e9-8a51-453d-b200-9e0d42e9bbab"
       ],
       "spells": [
-       "Projectile_GoadingAttack",
        "Projectile_HamstringShot",
        "Projectile_Jump",
        "Projectile_MainHandAttack",
@@ -214,17 +213,16 @@
        "Shout_PrecisionAttack",
        "Shout_SecondWind",
        "Target_Dip",
-       "Target_GoadingAttack",
        "Target_Help",
        "Target_MainHandAttack",
        "Target_PommelStrike",
        "Target_Shove",
        "Target_Slash_New",
        "Throw_ImprovisedWeapon",
-       "Throw_Throw"
+       "Throw_Throw",
+       "Zone_SweepingAttack"
       ],
       "prepared": [
-       "Projectile_GoadingAttack",
        "Projectile_HamstringShot",
        "Projectile_Jump",
        "Projectile_MainHandAttack",
@@ -236,14 +234,14 @@
        "Shout_PrecisionAttack",
        "Shout_SecondWind",
        "Target_Dip",
-       "Target_GoadingAttack",
        "Target_Help",
        "Target_MainHandAttack",
        "Target_PommelStrike",
        "Target_Shove",
        "Target_Slash_New",
        "Throw_ImprovisedWeapon",
-       "Throw_Throw"
+       "Throw_Throw",
+       "Zone_SweepingAttack"
       ],
       "passives": [
        "ARM_SuperiorMaterial_1_Passive",
@@ -256,33 +254,33 @@
        "ExtraAttack",
        "FeyAncestry",
        "FightingStyle_Defense",
-       "GoadingAttack",
        "HumanMilitia",
        "NonLethal",
        "Perform",
        "PrecisionAttack",
        "Riposte",
        "ShortResting",
+       "SweepingAttack",
        "WeaponThrow"
       ],
       "statuses": [
        "INSURFACE"
       ],
       "resources": {
+       "ActionPoint": {
+        "0": 1.0
+       },
+       "ReactionActionPoint": {
+        "0": 1.0
+       },
+       "BonusActionPoint": {
+        "0": 1.0
+       },
        "Movement": {
         "0": 10.5
        },
        "SuperiorityDie": {
         "0": 4.0
-       },
-       "ReactionActionPoint": {
-        "0": 1.0
-       },
-       "ActionPoint": {
-        "0": 1.0
-       },
-       "BonusActionPoint": {
-        "0": 1.0
        }
       },
       "proficiencies": [
@@ -298,24 +296,24 @@
        "Spears"
       ],
       "skills": {
-       "History": 0,
+       "AnimalHandling": 1,
+       "Deception": -1,
        "Athletics": 7,
        "Investigation": 0,
-       "Survival": 4,
-       "Insight": 1,
-       "AnimalHandling": 1,
-       "Religion": 0,
-       "SleightOfHand": 1,
+       "Nature": 0,
        "Persuasion": -1,
-       "Perception": 4,
-       "Medicine": 1,
+       "History": 0,
        "Arcana": 0,
        "Acrobatics": 1,
-       "Nature": 0,
-       "Performance": -1,
-       "Intimidation": 2,
        "Stealth": 4,
-       "Deception": -1
+       "Insight": 1,
+       "Survival": 4,
+       "Intimidation": 2,
+       "Perception": 4,
+       "Medicine": 1,
+       "Religion": 0,
+       "Performance": -1,
+       "SleightOfHand": 1
       },
       "boosts": [
        "AC|||",
@@ -367,11 +365,9 @@
        "UnlockSpell|UnlockSpell|Target_PommelStrike|",
        "UnlockSpell|UnlockSpell|Target_Slash_New|",
        "UnlockSpell|||",
-       "UnlockSpell|||",
        "UnlockSpell|||"
       ],
       "spellcast": [
-       "Projectile_GoadingAttack|Intelligence|AlwaysPrepared|11|3",
        "Projectile_HamstringShot|Intelligence|AlwaysPrepared|11|3",
        "Projectile_Jump|Intelligence|AlwaysPrepared|11|3",
        "Projectile_MainHandAttack|None|AlwaysPrepared|-|-",
@@ -383,23 +379,23 @@
        "Shout_PrecisionAttack|Intelligence|AlwaysPrepared|11|3",
        "Shout_SecondWind|Intelligence|AlwaysPrepared|11|3",
        "Target_Dip|Intelligence|AlwaysPrepared|11|3",
-       "Target_GoadingAttack|Intelligence|AlwaysPrepared|11|3",
        "Target_Help|Intelligence|AlwaysPrepared|11|3",
        "Target_MainHandAttack|None|AlwaysPrepared|-|-",
        "Target_PommelStrike|Intelligence|AlwaysPrepared|11|3",
        "Target_Shove|Intelligence|AlwaysPrepared|11|3",
        "Target_Slash_New|Intelligence|AlwaysPrepared|11|3",
        "Throw_ImprovisedWeapon|Intelligence|AlwaysPrepared|11|3",
-       "Throw_Throw|Intelligence|AlwaysPrepared|11|3"
+       "Throw_Throw|Intelligence|AlwaysPrepared|11|3",
+       "Zone_SweepingAttack|Intelligence|AlwaysPrepared|11|3"
       ],
       "derived": {
-       "initiative_bonus": 1,
        "ranged_main_hand": "none",
-       "weapon_action_dc": 3,
+       "initiative_bonus": 1,
        "spell_save_dc_boost": 0,
-       "movement": 10.5,
-       "proficiency_bonus": 3,
        "spell_casting_ability": "Intelligence",
+       "weapon_action_dc": 3,
+       "proficiency_bonus": 3,
+       "movement": 10.5,
        "melee_main_hand": "none"
       },
       "resource_max": [
@@ -420,13 +416,13 @@
        "ExtraAttack|false|true",
        "FeyAncestry|false|true",
        "FightingStyle_Defense|false|true",
-       "GoadingAttack|false|true",
        "HumanMilitia|false|true",
        "NonLethal|false|true",
        "Perform|false|true",
        "PrecisionAttack|false|true",
        "Riposte|false|true",
        "ShortResting|false|true",
+       "SweepingAttack|false|true",
        "WeaponThrow|false|true"
       ]
      },

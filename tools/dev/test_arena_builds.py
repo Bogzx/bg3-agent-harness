@@ -349,7 +349,7 @@ class TierTest(unittest.TestCase):
         self.assertIn("ActionResource(SuperiorityDie,4,0)", k["grants"]["boosts"])
         self.assertIn("Ability(Strength,2)", k["grants"]["boosts"])  # level 4's ASI
         man = [c for c in k["choices"] if c["kind"] == "passives" and c["n"] == 3]
-        self.assertEqual(man[0]["ids"], ["PrecisionAttack", "Riposte", "GoadingAttack"])
+        self.assertEqual(man[0]["ids"], ["PrecisionAttack", "Riposte", "SweepingAttack"])
         cl = plan(tier(2), "cleric")
         self.assertIn("DiscipleOfLife", cl["grants"]["passives"])
         self.assertTrue({"Target_Bless", "Target_CureWounds"} <= set(cl["grants"]["spells"]))

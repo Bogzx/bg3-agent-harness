@@ -1,8 +1,11 @@
-"""What a build can reach in the game's stats, and whether any of it knocks down or changes sides. The arena's one bar
-(website ops/logs/REVIEW-4v4.md, orchestrator D130, 2026-11-06): knock-downs and side-changing spells are banned;
-incapacitating spells are allowed, GuardCast already refuses those. A build's ids don't show this: a Quarterstaff
-unlocks Topple and a Cleric's class rows add Command, so the walk follows items, class rows, kit, race and passives
-through spells, statuses and passives.
+"""What a build can reach in the game's stats, and whether any of it knocks down, changes sides or hands a turn to the
+game's AI. The arena's bar (website ops/logs/REVIEW-4v4.md, orchestrator D130, 2026-11-06): knock-downs and
+side-changing spells are banned; incapacitating spells are allowed, GuardCast already refuses those. A status whose
+StatusPropertyFlags (`using` resolved) hold LoseControl is banned too (owner, 2026-11-08: the game AI doesn't play in
+the arena): Goaded's holders lost their turns to it (live.md "## Goaded read"). The flag alone doesn't prove that, as
+one Compelled Duel turn under it stayed the player's (website ops/logs/lose-control-reach.md). A build's ids
+don't show this: a Quarterstaff unlocks Topple and a Cleric's class rows add Command, so the walk follows items, class
+rows, kit, race and passives through spells, statuses and passives.
 
     python tools/dev/arena_scan.py graph "<BG3>/Data"   # arena_stat_graph.json from the paks (read-only, in memory)
     python tools/dev/arena_scan.py check                # every build's hits, from the checked-in graph
@@ -115,6 +118,8 @@ def hits(entries: Entries, name: str) -> list[str]:
     if "SG_Prone" in groups:
         out.add("knock-down: SG_Prone")
     out.update(f"side: {g}" for g in SIDE_GROUPS if g in groups)
+    if re.search(r"\bLoseControl\b", d.get("StatusPropertyFlags", "")):
+        out.add("control: LoseControl")  # the flag on Goaded, whose holders lost their turns to the game's AI
     for k, v in _effects(d):
         if re.search(r"\bPRONE\b", v):
             out.add(f"knock-down: PRONE in {k}")
@@ -239,7 +244,7 @@ def walk(g: Graph, seeds: Iterable[str]) -> tuple[dict[str, list[str]], list[str
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="The arena's knock-down and side-change scan.")
+    ap = argparse.ArgumentParser(description="The arena's knock-down, side-change and lost-control scan.")
     sub = ap.add_subparsers(dest="step", required=True)
     gen = sub.add_parser("graph", help="regenerate arena_stat_graph.json from the paks")
     gen.add_argument("data", type=Path, help="the game's Data folder")
