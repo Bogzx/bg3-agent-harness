@@ -295,8 +295,8 @@ test("cast in combat: an enemy's reaction cast holds the no-start, then it fails
     tick(60)
     eq(j.status, "failed", "spent: no second order")
     eq(#called("UseSpellAtPosition"), n + 1, "one order")
-    assert(j.error:find("Spellplague's Counterspell %(an enemy reaction%) came just then and the game took the"
-        .. " action: most likely countered"), j.error)
+    assert(j.error:find("no cast, no step%): Spellplague's Counterspell %(an enemy reaction%) came just then and the"
+        .. " game took the action: most likely countered$"), j.error) -- pQ's a4: the countered clause alone
     -- a reaction that never ends: held at most CAST_REACT_HOLD_MS, then it fails, one order
     AP.Amount = 1
     n = #called("UseSpellAtPosition")

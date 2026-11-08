@@ -3,8 +3,9 @@
 A prompt left open holds the game for both sides, and nothing else charges the side that left it. REACTION_ANSWER_S
 from its first read on screen it is declined, as a player who lets it pass. The time waited is that side's debt, taken
 off its next phases' model-time caps, at most CHARGE_SHARE of a cap each, so unanswered prompts alone never end a
-turn. The waits of one side add up to at most its budget (BUDGET_SHARE of the wall cap); past it, that side's prompts
-are declined at their first read, which is what keeps unanswered prompts from using up a match.
+turn, and a phase capped only because of the charge counts toward no forfeit (match.py Turn.charged_cap). The waits of
+one side add up to at most its budget (BUDGET_SHARE of the wall cap); past it, that side's prompts are declined at
+their first read, which is what keeps unanswered prompts from using up a match.
 """
 
 from __future__ import annotations
@@ -49,6 +50,13 @@ class Unanswered:
         if charged > 0:
             self.debt[side] -= charged
         return charged
+
+
+def cap_words(cap: float, charged: float) -> str:
+    """The per-turn cap as its side is told when it ends the turn: on a charged phase, the time the side had."""
+    if charged <= 0:
+        return f"the per-turn time cap ({cap:g} s of model time)"
+    return f"the per-turn time cap ({cap - charged:.0f} s of model time: {charged:.0f} s went to unanswered prompts)"
 
 
 def notice(game: Any, log: Callable[[str], None], side: str, text: str) -> None:

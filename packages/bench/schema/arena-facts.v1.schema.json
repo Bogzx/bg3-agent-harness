@@ -351,7 +351,7 @@
         }
       },
       "then": {
-        "description": "The harness ended the phase in progress at its model-time cap (turn_cap_s times its member count) or at a held stall (arena_stall stall held), with act.end_turn for each member; it names that phase's side and character.",
+        "description": "The harness ended the phase in progress at its model-time cap (turn_cap_s times its member count) or at a held stall (arena_stall stall held), with act.end_turn for each member; it names that phase's side and character. charged_cap, only when true: capped because of an unanswered prompts' charge with its model time under the full turn cap, so it counts toward no forfeit and breaks the run.",
         "required": [
           "side",
           "character"
@@ -362,6 +362,9 @@
           },
           "character": {
             "$ref": "#/$defs/name"
+          },
+          "charged_cap": {
+            "type": "boolean"
           }
         }
       }

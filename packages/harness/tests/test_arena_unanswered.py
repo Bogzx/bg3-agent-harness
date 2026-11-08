@@ -12,7 +12,7 @@ import pytest
 from bg3harness.arena import match as am
 from bg3harness.arena import unanswered as un
 from test_arena_lost_control import goaded
-from test_arena_match import ARENA, SIDES, arena_events, grade, my_turn, setup, staller
+from test_arena_match import ARENA, SIDES, arena_events, grade, my_turn, passer, setup, staller
 from test_arena_reactions import open_at_round_2, patient
 
 RULES = Path(am.__file__).resolve().parents[3] / "prompts" / "rules" / "arena.md"
@@ -231,3 +231,106 @@ def test_the_budget_is_a_sixth_of_the_wall_cap(tmp_path):
     rows = [e for e in arena_events(tmp_path) if e["ev"] == "arena_reaction_budget_spent"]
     assert [(e["side"], e["budget_s"]) for e in rows] == [("B", 45.0)]
     assert grade(tmp_path, {**ARENA, "wall_cap_min": 4.5})["reactions_unanswered"]["B"]["budget_spent"] is True
+
+
+def think_40_s():
+    """A play: 40 s of model time on each of its phases as the runner counts it (20 s a tick; the first tick comes
+    before the runner's first read of the phase), then it ends the phase: under a 60 s cap."""
+    seen = {"char": None, "s": 0}
+
+    def play(game, side, run):
+        if not (char := my_turn(game, side)):
+            return
+        if seen["char"] != char:
+            seen.update(char=char, s=0)
+        if seen["s"] >= 60:
+            assert game.rpc("act.end_turn", {"char": char}, side)["status"] == "done"
+            return
+        run.model += 20
+        seen["s"] += 20
+
+    return play
+
+
+def charged_match(out_dir, b_play, debt=0.0, on_forced=None):
+    """Side B plays b_play with `debt` on its ledger from the start; on_forced(ledger, n) after B's n-th forced end.
+    -> side B's forced words, in order."""
+    made: list[un.Unanswered] = []
+
+    def ledger(budget_s):
+        made.append(un.Unanswered(budget_s=budget_s, debt={"B": debt}))
+        return made[-1]
+
+    _model, game, clock, agents, spec = setup({"A": passer, "B": b_play})
+    notices_of(game)
+    told: list[str] = []
+    real = game.rpc
+
+    def watch(op, args, side=None, context="server"):
+        answer = real(op, args, side, context=context)
+        if op == "act.end_turn" and args.get("forced") and side == "B":
+            told.append(args["forced"])
+            if on_forced is not None:
+                on_forced(made[0], len(told))
+        return answer
+
+    game.rpc = watch  # type: ignore[method-assign]
+    with mock.patch.object(am, "Unanswered", ledger):
+        am.run_arena(spec, SIDES, game, agents, out_dir, clock)
+    return told
+
+
+def forced_rows(out_dir):
+    return [e for e in arena_events(out_dir) if e["ev"] == "arena_turn_forced" and e["side"] == "B"]
+
+
+def the_end(out_dir):
+    return next(e for e in arena_events(out_dir) if e["ev"] == "arena_end")
+
+
+def test_phases_capped_only_by_a_charge_are_no_forfeit(tmp_path):
+    """pQ's table (a2dec9bc review, owner's ruling): 40 s phases under a 60 s cap with 92 s of debt are charged 30, 30,
+    30 and capped at 40 s each. Three forced in a row, none reached the side's own full cap: the match goes on, and the
+    grader, which counts the streak itself, doesn't call it a match that went on past a forfeit."""
+    told = charged_match(tmp_path, think_40_s(), debt=92.0)
+    rows = forced_rows(tmp_path)
+    assert [r.get("charged_cap") for r in rows] == [True, True, True]
+    assert the_end(tmp_path)["reason"] == "round_cap"
+    assert told[0] == "the per-turn time cap (30 s of model time: 30 s went to unanswered prompts)"
+    g = grade(tmp_path)
+    assert g["valid"] is True and g["forced"]["B"] == 3 and g["reason"] == "round_cap"
+
+
+def test_a_charged_cap_breaks_the_run_and_the_full_caps_after_it_forfeit(tmp_path):
+    """Full, full, charged: no forfeit at the third; the run starts over, and three full caps after it forfeit."""
+
+    def debt_after_two(ledger, n):
+        if n == 2:
+            ledger.debt["B"] = 30.0
+
+    charged_match(tmp_path, staller, on_forced=debt_after_two)
+    rows = forced_rows(tmp_path)
+    assert [bool(r.get("charged_cap")) for r in rows] == [False, False, True, False, False, False]
+    end = the_end(tmp_path)
+    assert (end["reason"], end["forfeit"], end["cause"]) == ("forfeit", "B", "forced_turns")
+    assert grade(tmp_path)["valid"] is True
+
+
+def test_a_charged_phase_past_the_full_cap_is_the_sides_own_cap(tmp_path):
+    """A charge doesn't excuse a phase whose model time reached the full cap anyway (70 s in one tick of a 60 s cap)."""
+
+    def thinks_70(game, side, run):
+        if my_turn(game, side):
+            run.model += 70
+
+    charged_match(tmp_path, thinks_70, debt=500.0)
+    rows = forced_rows(tmp_path)
+    assert len(rows) == 3 and not any(r.get("charged_cap") for r in rows)
+    end = the_end(tmp_path)
+    assert (end["reason"], end["forfeit"], end["cause"]) == ("forfeit", "B", "forced_turns")
+    assert grade(tmp_path)["valid"] is True
+
+
+def test_the_cap_words_name_the_time_allowed():
+    assert un.cap_words(60.0, 0.0) == "the per-turn time cap (60 s of model time)"
+    assert un.cap_words(90.0, 46.0) == "the per-turn time cap (44 s of model time: 46 s went to unanswered prompts)"

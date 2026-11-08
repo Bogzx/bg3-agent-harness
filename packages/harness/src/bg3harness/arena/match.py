@@ -76,7 +76,10 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    then the stall decides (held: capped again; the game's: a fault). The cap of a side's FORFEIT_TURNS-th turn in
    a row is its forfeit, decided there: `arena_turn_forced`, then the end goes to the mod, and no `act.end_turn` is
    sent (the mod keeps a match's first end, so no wipe at the next turn boundary can come before the forfeit; a
-   wipe already there when arena.end comes is the end: the mod checks for one first).
+   wipe already there when arena.end comes is the end: the mod checks for one first). A phase capped only because of
+   an unanswered prompts' charge (arena/unanswered.py), its model time under turn_cap_s, is forced like any (told the
+   time it had, `arena_turn_forced`'s `charged_cap`) but counts toward no forfeit and breaks the run: only a side's own
+   full cap can lose it the match (owner, 2026-11-08).
    Stall: a phase's idle clock (wall time less the phase's own side's model time gain, tick by tick; the other
    side thinking during it is no progress of the phase; once the phase was capped, no model time counts; before the
    first phase, the larger of the two sides' gains) runs from its last progress: a new phase, a
@@ -139,7 +142,7 @@ from typing import Any, Protocol
 from bg3harness import facts
 from bg3harness.arena.scripted_client import SCRIPTED
 from bg3harness.arena.spec import SIDES, ArenaSpec, Side, other
-from bg3harness.arena.unanswered import BUDGET_SHARE, Unanswered, charge_phase, note_declined
+from bg3harness.arena.unanswered import BUDGET_SHARE, Unanswered, cap_words, charge_phase, note_declined
 
 POLL_S = 1.0
 SETUP_TIMEOUT_S = 180.0  # arena.setup's job and the match becoming active
@@ -244,6 +247,8 @@ class Turn:
     cap_tries: int = 0  # the times the runner sent its cap's ends
     passed: set[str] = field(default_factory=set)  # lowercase uuids of members the mod passed (arena_turn_passed)
     control_lost: bool = False  # arena_control_lost was written for it
+    charged_s: float = 0.0  # what its side's unanswered prompts took off its cap
+    charged_cap: bool = False  # capped under that charge with its model time short of the full cap: no forfeit count
 
 
 class Referee:
@@ -362,14 +367,17 @@ class Referee:
         """arena_turn_forced for `t`, the capped phase (a later one may have begun while its ends settled)."""
         assert not t.forced
         t.forced = True
-        self.event("arena_turn_forced", side=t.side, character=t.name)
+        self.event(
+            "arena_turn_forced", side=t.side, character=t.name, **({"charged_cap": True} if t.charged_cap else {})
+        )
 
     def forfeits(self) -> bool:
-        """Forcing the turn in progress makes FORFEIT_TURNS forced turns in a row of its side."""
+        """Forcing the turn in progress makes FORFEIT_TURNS forced turns in a row of its side (a charged cap breaks
+        the run: Turn.charged_cap)."""
         t = self.turn
         assert t is not None
         own = [x for x in self.turns if x.side == t.side][-FORFEIT_TURNS:]
-        return len(own) == FORFEIT_TURNS and all(x.forced for x in own[:-1])
+        return len(own) == FORFEIT_TURNS and not t.charged_cap and all(x.forced and not x.charged_cap for x in own[:-1])
 
     def end(self, **fields: Any) -> dict[str, Any]:
         self.pending_end = {"ev": "arena_end", **fields, **self.invalid()}
@@ -492,8 +500,9 @@ def _reaction_check(
     spec: ArenaSpec, game: ArenaGame, ref: Referee, log: Callable[[str], None], hold: _Hold, now: float
 ) -> str | None:
     """Reads the game client's reaction state (ui.state with no side). Declines a prompt no team owns at once and one
-    its owner left open for the turn cap; ends the match on a hold nobody can clear (REACTION_STUCK_S). Returns
-    the side that owns an open prompt (None: no prompt, or none owned)."""
+    its owner left open for REACTION_ANSWER_S from its first read (at that read once the side's budget is spent); ends
+    the match on a hold nobody can clear (REACTION_STUCK_S). Returns the side that owns an open prompt (None: no
+    prompt, or none owned)."""
     try:
         ui = game.rpc("ui.state", {}, context="client") or {}
     except Exception as e:  # read again at the next check
@@ -709,10 +718,11 @@ def run_arena(
         settle_rows += sum(feed.poll())
         mark_turn()
 
-    def cap_phase(turn: Turn, why: str, told: str) -> None:
+    def cap_phase(turn: Turn, why: str, told: str, charged_cap: bool = False) -> None:
         """End the phase at a cap (`why`; `told`: the cap as its side is told): its side's forfeit when it is the
-        FORFEIT_TURNS-th in a row, else act.end_turn for each member and arena_turn_forced once they went through."""
-        turn.capped = True
+        FORFEIT_TURNS-th in a row, else act.end_turn for each member and arena_turn_forced once they went through.
+        `charged_cap`: reached only because of a charge, so it can't count toward the forfeit."""
+        turn.capped, turn.charged_cap = True, charged_cap
         if ref.forfeits():
             ref.forced(turn)
             log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) hit the {why}")
@@ -885,7 +895,8 @@ def run_arena(
                 continue
             if charged_turn != turn_mark[0]:  # a phase's first read: what its side's unanswered prompts cost it
                 charged_turn = turn_mark[0]
-                turn_mark = (turn_mark[0], turn_mark[1] - charge_phase(game, ref, log, hold.ledger, turn, cap))
+                turn.charged_s = charge_phase(game, ref, log, hold.ledger, turn, cap)
+                turn_mark = (turn_mark[0], turn_mark[1] - turn.charged_s)
             if not hold.key and model(turn.side) - turn_mark[1] >= cap:
                 ui_read = now  # the mod refuses an end during a pause: read for one before capping
                 prompt_side = _reaction_check(spec, game, ref, log, hold, now)
@@ -894,7 +905,8 @@ def run_arena(
                 continue
             if model(turn.side) - turn_mark[1] < cap:
                 continue
-            cap_phase(turn, f"{cap:g} s cap", f"the per-turn time cap ({cap:g} s of model time)")
+            used = model(turn.side) - turn_mark[1] - turn.charged_s  # the charge moved the mark back: its real time
+            cap_phase(turn, f"{cap - turn.charged_s:g} s cap", cap_words(cap, turn.charged_s), charged_cap=used < cap)
         if ref.mod_end is None:  # the mod ended it but its record didn't reach the ring: the status's end
             e = status["ended"]
             outcome.end = ref.end(**{k: e.get(k) for k in END_FIELDS})
