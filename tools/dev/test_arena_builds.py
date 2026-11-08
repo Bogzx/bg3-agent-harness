@@ -335,7 +335,9 @@ class TierTest(unittest.TestCase):
         for lv in (2, 5, 12):
             with self.subTest(level=lv):
                 d = ab.check_builds(tier(lv))
-                self.assertEqual("draft" in d, lv == 2)  # L5's and L12's references are in
+                # L2's Cleric draft; L5's and L12's Fighter reference is read again after Goading Attack came out
+                # (owner, 2026-11-08): those two are rated again once it's in and S4 passes
+                self.assertIn("draft", d)
                 healer = "Cleric" if lv == 2 else "Bard"
                 self.assertEqual([b["class"] for b in d["builds"]], ["Fighter", healer, "Wizard", "Rogue"])
                 schema = json.loads((REPO / "packages/bench/schema/arena-builds.v1.schema.json").read_text())
@@ -349,7 +351,7 @@ class TierTest(unittest.TestCase):
         self.assertIn("ActionResource(SuperiorityDie,4,0)", k["grants"]["boosts"])
         self.assertIn("Ability(Strength,2)", k["grants"]["boosts"])  # level 4's ASI
         man = [c for c in k["choices"] if c["kind"] == "passives" and c["n"] == 3]
-        self.assertEqual(man[0]["ids"], ["PrecisionAttack", "Riposte", "GoadingAttack"])
+        self.assertEqual(man[0]["ids"], ["PrecisionAttack", "Riposte", "SweepingAttack"])
         cl = plan(tier(2), "cleric")
         self.assertIn("DiscipleOfLife", cl["grants"]["passives"])
         self.assertTrue({"Target_Bless", "Target_CureWounds"} <= set(cl["grants"]["spells"]))
@@ -599,6 +601,8 @@ class ReferenceAndArenaFileTest(unittest.TestCase):
                 k = plan(doc, b["id"])
                 got = set(k.get("spell_abilities", {})) & ups
                 self.assertEqual(len(got), want)
+                if b["reference"] is None:  # the Fighter's, read again (Goading Attack out, 2026-11-08)
+                    continue
                 held = ups & set(b["reference"]["profile"]["spells"])
                 # the Wizard's learned, unprepared spells stay out with their upcasts: its twin holds neither
                 learned = [x for ids in b["script"]["cc"].get("spells", []) for x in ids]
