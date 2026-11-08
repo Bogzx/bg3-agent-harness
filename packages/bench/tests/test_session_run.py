@@ -9,10 +9,12 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 from bg3harness.game.io import SteamNotOffline
+from bg3harness.runner import run_host
 from bg3harness.runs import METRIC_FIELDS
 from bg3harness.session import Recovery
 from test_run_artifacts import assert_valid, readout
@@ -400,9 +402,8 @@ def test_every_run_hands_the_host_a_verdict_that_ends_it_at_a_wipe(tmp_path):
         {"v": 1, "kind": "event", "t": T0 + 9, "game_t": 9.0, "ev": "died", "name": "Wyll", "party": True},
         {"v": 1, "kind": "event", "t": T0 + 10, "game_t": 10.0, "ev": "downed", "name": "Tav", "party": True},
     ]
-    max_sc = {k: v for k, v in SC.items() if k != "goal"} | {"maximise": {"fact": "gold"}}
     until_sc = {k: v for k, v in SC.items() if k != "goal"} | {"until": "grove"}
-    for i, sc in enumerate((SC, max_sc, until_sc)):
+    for i, sc in enumerate((SC, until_sc)):
         host = Host([[("exited", 5)]])
         SessionRun("m", host, scenarios={"e2e_sell_idol": sc}, sessions=tmp_path / f"s{i}")(job())
         started, _, run_dir = host.started[0]
@@ -410,6 +411,43 @@ def test_every_run_hands_the_host_a_verdict_that_ends_it_at_a_wipe(tmp_path):
         assert started["verdict"]() is None  # Wyll dead, Tav standing: the fight goes on
         (run_dir / "facts.jsonl").write_text("".join(json.dumps(r) + "\n" for r in lines))
         assert started["verdict"]() == "wiped", sc.get("name")
+
+
+def _goal_watch(monkeypatch, verdict, game_over=None):
+    """The real GoalWatch over a run whose runner facts hold game_over (or None), with this run's live verdict."""
+    monkeypatch.setattr(run_host.renv, "log", lambda *a, **k: None)
+    r = SimpleNamespace(
+        until_hit=None, facts_writer=lambda: SimpleNamespace(game_over=game_over), event=lambda *a, **k: None
+    )
+    return r, run_host.GoalWatch(cast(Any, r), verdict)
+
+
+def test_a_maximise_run_is_not_stopped_or_called_game_over_when_every_member_reads_as_down(tmp_path, monkeypatch):
+    party = [{"name": n, "level": 2, "dead": False, "downed": False} for n in ("Tav", "Gale")]
+    lines = [
+        {"v": 1, "kind": "mark", "t": T0, "game_t": 0.0, "mark": "run_start"},
+        {"v": 1, "kind": "snapshot", "t": T0 + 5, "game_t": 5.0, "gold": 903, "party": party, "region": "Grove",
+         "area": None, "areas": [], "combat": True, "inv": [], "quests": {}},
+        {"v": 1, "kind": "event", "t": T0 + 9, "game_t": 9.0, "ev": "downed", "name": "Gale", "party": True},
+        {"v": 1, "kind": "event", "t": T0 + 10, "game_t": 10.0, "ev": "downed", "name": "Tav", "party": True},
+    ]  # fmt: skip
+    max_sc = {k: v for k, v in SC.items() if k != "goal"} | {"maximise": {"fact": "gold"}}
+    host = Host([[("exited", 5)]])
+    SessionRun("m", host, scenarios={"e2e_sell_idol": max_sc}, sessions=tmp_path / "s")(job())
+    started, _, run_dir = host.started[0]
+    facts = run_dir / "facts.jsonl"
+    facts.write_text("".join(json.dumps(r) + "\n" for r in lines))
+    r, watch = _goal_watch(monkeypatch, started["verdict"])
+    assert started["verdict"]() is None and not watch.check() and r.until_hit is None
+
+    over = {"v": 1, "kind": "event", "t": T0 + 12, "game_t": 12.0, "ev": "game_over"}
+    facts.write_text("".join(json.dumps(x) + "\n" for x in [*lines, over]))
+    assert started["verdict"]() == "wiped"  # the facts file's Game Over, whichever the runner saw first
+    r, watch = _goal_watch(monkeypatch, started["verdict"])
+    assert watch.check() and (r.until_hit["verdict"], r.until_hit["label"]) == (
+        "wiped",
+        "the party was wiped (Game Over)",
+    )
 
 
 def test_a_maximise_run_has_no_count_on_its_stop_resumes_and_a_goal_run_keeps_it(tmp_path):

@@ -8,9 +8,11 @@ Clock (decision D7): `clock="game"` (default) measures time by the records' `gam
 think-pause excluded); every record in the run needs one, else FactsError (carrying the last snapshot's time forward
 would move gains between snapshots earlier). `clock="wall"` uses `t` minus time zero.
 
-A party wipe (every real party member dead or downed, or the game's Game Over screen: facts.State.wiped) ends the
-run: a goal that didn't hold before it never passes, and a maximise run's score stops there (bench B3: a wiped
-Balthazar run was resumed 6 times and its agent loaded another run's save from the main menu).
+A party wipe (every real party member dead or downed, or the game's Game Over screen: facts.State.wiped) ends a goal
+run: a goal that didn't hold before it never passes (bench B3: a wiped Balthazar run was resumed 6 times and its agent
+loaded another run's save from the main menu). A maximise run ends only at the Game Over screen (State.game_over), as
+its prompt says: a defeat the game answers with a prison or a revive leaves it playing, and whether every member
+reads as down depends on a read landing in that moment (the v0.11 pilot's two gold runs).
 
 Result: `{passed, t_pass_s, violations, curve, progress}`. `verdict(goal, records)` is the live check on a run
 still playing: passed, failed (a fired `never` left the goal unreachable), wiped or undecided; it only ends a run
@@ -23,7 +25,7 @@ early, the post-run grade is the score.
   order against each other; else null.
 
 `measure(fact, timeline, start_state=...)` scores a maximise scenario (scenario.py `maximise`), which has no goal and no
-pass: the fact's gain from run_start to run_end, or to a wipe (`{fact, start, end, gain, peak, start_from, curve}`), on
+pass: the fact's gain from run_start to run_end, or to the Game Over screen (`{fact, start, end, gain, peak, start_from, curve}`), on
 the same window and clock. Its start is the published start state's value (`start_value` of the scenario's start-state
 fingerprint) when there is one: the run's first snapshot comes a poll after the agent starts, and launch-v1 Sonnet
 sold junk before it (start 428, the save's 410). `start_from` says which one the score used.
@@ -246,7 +248,8 @@ def measure(
     snapshot (the one carried into run_start, else the first one after it: before any snapshot the state holds no
     gold, not the save's; `start_from` "first_snapshot"). `end` is its value at run_end, `gain` = end - start (the
     score), `peak` the highest value in the run; end, gain and peak are null when the run has no snapshot, and so is
-    a first-snapshot start. `curve` as grade's."""
+    a first-snapshot start. The window closes early only at the Game Over screen, not when every member reads as
+    down. `curve` as grade's."""
     if clock not in ("game", "wall"):
         raise ValueError(f"clock is 'game' or 'wall', got {clock!r}")
     fact(State(), name)
@@ -273,7 +276,7 @@ def measure(
             v = fact(state, name)
             first = v if first is None else first
             peak = v if peak is None else max(peak, v)
-        if state.wiped():
+        if state.game_over:
             break
     last = fact(state, name) if seen else None
     first = first if start_state is None else start_state
@@ -303,8 +306,7 @@ def _curve(samples: list[tuple[float, float]], spec: dict) -> dict:
 def verdict(goal: Any, timeline: Iterable[dict[str, Any]]) -> str | None:
     """The live verdict on a run still playing (game clock, as grade): "passed" at the first instant grade would
     pass, "failed" once a fired `never` makes the goal unreachable, "wiped" at a party wipe before either, else None
-    (undecided, or no run_start yet). goal None (a maximise or an until scenario, whose milestone the runner checks
-    itself): only "wiped"."""
+    (undecided, or no run_start yet). goal None (a maximise scenario): "wiped" only at the Game Over screen, else None."""
     root = None if goal is None else parse(goal)
     records = check(timeline)
     start = next((i for i, r in enumerate(records) if r["kind"] == "mark" and r.get("mark") == "run_start"), None)
@@ -324,7 +326,7 @@ def verdict(goal: Any, timeline: Iterable[dict[str, Any]]) -> str | None:
                 return "passed"
             if _doomed(ev, root):
                 return "failed"
-        if state.wiped():
+        if state.game_over if root is None else state.wiped():
             return "wiped"
         if r["kind"] == "mark" and r.get("mark") == "run_end":
             break

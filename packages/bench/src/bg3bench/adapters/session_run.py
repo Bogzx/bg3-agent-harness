@@ -11,7 +11,7 @@ and result.json. The harness side comes in through RunHost:
 game, the clock; the job it gets carries "tools_off", the tools its condition removes, and "prompt_condition", the
 harness prompt condition it plays: conditions.Condition.prompt_condition, and "verdict", a callable the host polls
 while the run plays: live_verdict's "passed" or "failed" ends a goal run, so it never plays on past its grade, and
-"wiped" any run), `record` returns the run's
+"wiped" any run, a maximise run only at the Game Over screen), `record` returns the run's
 record fields once the session is over (facts.jsonl closed). The harness never imports the bench: the scenario
 reaches the host as the v2 dict (scenario.load: with defaults).
 
@@ -208,8 +208,8 @@ class SessionRun:
         try:
             cond = conditions.parse(job["condition"])
             host_job = {**job, "tools_off": cond.removed_tools(), "prompt_condition": cond.prompt_condition()}
-            # every run ends at a wipe, a goal or until run at its goal's verdict (scenario.goal_of: until is a milestone
-            # goal; the runner's own until check alone missed the nautiloid escape), a maximise one at its cap
+            # a goal or until run ends at a wipe or its goal's verdict (scenario.goal_of: until is a milestone goal; the
+            # runner's own until check alone missed the nautiloid escape), a maximise one at the Game Over screen or its cap
             goal: JSON | None = None if "maximise" in sc else cast(JSON, scenario.goal_of(sc))  # pyright: ignore[reportUnknownMemberType]
             facts_path = run_dir / run_artifacts.FACTS
             host_job["verdict"] = lambda: live_verdict(goal, facts_path)

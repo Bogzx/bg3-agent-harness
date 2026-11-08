@@ -628,6 +628,13 @@ game unless it says so.
   result.v1 still, the render's ENDED BY AGENT ending), not `timeout`; its score is computed as before, and older
   runs keep `timeout`. results.py lists the new outcome. Both changes share bench-v0.11's second digest (no score
   moves; the version stays 0.11.0, untagged and ungraded, as bench-v0.10's second digest did).
+  A maximise run now ends and scores only at the game's Game Over screen (graders.measure, and the live verdict of a
+  run with no goal). It used to stop when every real member read as dead or downed, which the facts see only if a read
+  lands in that moment, while the prompt says "A party wipe (the Game Over screen) ends it sooner". In the v0.11
+  pilot's two gold runs a defeat sent the party to prison with no Game Over, and one missing `downed` record decided
+  the score. Goal runs keep the wipe rule. This can move a maximise score, so by the rule above it would be a new
+  minor; it is bench-v0.11's third digest instead because v0.11 is untagged and has no published results. bench-v0.8's
+  published scores and results-144.json don't change.
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.
