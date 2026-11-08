@@ -403,6 +403,20 @@ test("a character on no team in the turn order ends the match at the next phase 
     eq(Ar.state.ended and Ar.state.ended.detail, "Goblin (not on a team) joined the fight", "the goblin")
 end)
 
+-- Orchestrator D350: the runner's facts on unanswered prompts go to the side they cost, and only the runner sends them.
+test("arena.notice: the named side reads it, the other doesn't, a side can't send one", function()
+    begin()
+    local text = "reaction: Sentinel (Ana) unanswered for 46 s: declined; 46 s comes off your next turns"
+    local r = rpc("arena.notice", "{side=\"A\",text=" .. string.format("%q", text) .. "}")
+    eq(r.ok, true, "sent: " .. enc(r))
+    local a = kinds(rpc("events.since", "{seq=0}", "A"), "arena_notice")
+    eq(#a, 1, "side A reads it")
+    eq(a[1].data.text, text, "its words")
+    eq(#kinds(rpc("events.since", "{seq=0}", "B"), "arena_notice"), 0, "side B doesn't")
+    eq(rpc("arena.notice", "{side=\"B\",text=\"x\"}", "A").ok, false, "a side can't send one")
+    eq(rpc("arena.notice", "{text=\"x\"}").ok, false, "no side named")
+end)
+
 -- Review C4 (arena-fight-analysis.md): a slow side whose turn the runner ended at its cap sent its next action into
 -- the other side's phase and read only "not your turn". The side is told, as a fact, and only that side.
 test("the runner's cap end: the side gets turn_forced; its refusals name the cap until its next phase", function()

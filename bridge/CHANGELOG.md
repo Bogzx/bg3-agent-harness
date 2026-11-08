@@ -5,6 +5,25 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-08: a dropped cast is never sent again by the mod
+
+- A combat cast the game never started (no cast state, no step at 3 s) right after a hit on the caster, a shown status
+  ending on it, or an enemy's reaction cast was ordered once more by the mod, and a second drop read `the game never
+  started it (3 s, no cast, no step) twice: ordered again after ...`. Now there is one order: the result reads `the
+  game never started it (3 s, no cast, no step): a hit on the caster 1.0 s before the order` (or the status ending, or
+  `someone's reaction cast 0.4 s after the order`, named as a player sees it). The countered words are unchanged.
+
+## 2026-11-08: what an unanswered reaction prompt costs a side
+
+- In a match a prompt left unanswered for 45 s from its first read is declined. The owning side alone reads an event:
+  `arena_notice text=reaction: Sentinel (Red Ash) unanswered for 46 s: declined; 46 s comes off your next turns`, and at
+  the turn it is charged on `arena_notice text=this turn has 60 s of model time: 30 s went to unanswered prompts`. A turn
+  ended early by that charge says the time it had: `the per-turn time cap (60 s of model time: 30 s went to unanswered
+  prompts)`, in the `turn_forced` event and the out-of-phase refusals. An order sent while that end runs is refused:
+  `this character's turn is being ended at the per-turn time cap (...)`. Past
+  its budget: `... declined at once: your side's 10 min of unanswered prompts is used up`. The arena rules state the
+  rule. Other results and the other side's reads don't change.
+
 ## 2026-11-08: a free attack shows in the order's result
 
 - An order's `after={...}` in combat read `action=0` and nothing about a free attack, which only get_actions showed

@@ -921,6 +921,7 @@ end)
 reg("stop", function(args)
     local char = G.actor(args.char)
     G.lost_control_gate(char) -- its purge would cut the game's cast
+    A.forced_end_gate(char) -- it would end the runner's end at a cap
     local job = A.active[char]
     local stopped = job and job.status == "running" and job.id or nil
     local n = osi_tasks(char)

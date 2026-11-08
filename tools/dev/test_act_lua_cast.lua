@@ -197,54 +197,40 @@ test("disabling statuses carry the game's fix; the Sleeping refusal names it (S0
     BG3AI.Visibility = savedV
 end)
 
-test("cast in combat: a dropped order right after a hit on the caster is ordered once more (S066-S069 x6)", function()
+test("cast in combat: a dropped order after a hit on the caster fails naming the hit, never sent again (D346)", function()
     cast_seen = "none" -- a dropped order: the game makes no cast entity (its SpellCastState would be a start)
     combat_setup(9)
     spell("Target_Swing", { TargetRadius = "1.5", SpellType = "Target", UseCosts = "ActionPoint:1", Level = 0 })
     world[NPC].pos = { 1.5, 0, 0 }
-    -- S069 r3 Karlach: an opportunity attack at her during the walk, then the swing never started; the bonus
-    -- ordered 3 s later worked. A hit 1 s before the order: the first order is dropped, the second one starts.
+    -- S069 r3 Karlach: an opportunity attack at her during the walk, then the swing never started. The mod used to
+    -- order it once more; a player's dropped order isn't clicked again for them (owner, D346: A30 goes).
     A.dispatch("AttackedBy", { P1, NPC, NPC, "Slashing", 0, "Attack", 0 })
     clock = clock + 1000
     local j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
-    eq(#called("UseSpell"), 1, "first order")
-    cast_seen = "state" -- the second order starts
+    cast_seen = "state" -- a second order would start
     tick(52) -- 3.1 s, no CastSpell, no step
-    eq(j.status, "running", "ordered again " .. tostring(j.error))
-    eq(#called("UseSpell"), 2, "second order"); eq(#called("PurgeOsirisQueue"), 1, "the dropped one purged first")
-    A.dispatch("CastSpell", { P1, "Target_Swing", "Target", "None", 0 })
-    A.dispatch("CastedSpell", { P1, "Target_Swing", "Target", "None", 0 })
-    tick(10)
-    eq(j.status, "done", "the second order cast")
-    -- dropped twice: fails, naming the hit and the second order
+    eq(j.status, "failed", "fails at 3 s")
+    assert(j.error:find("never started it %(3 s, no cast, no step%): a hit on the caster 1%.0 s before the order$"),
+        j.error)
+    eq(#called("UseSpell"), 1, "one order, never sent again"); eq(#called("PurgeOsirisQueue"), 1, "purged once")
+    -- no hit near the order (one 3 s before it): the plain failure
     world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
-    A.dispatch("AttackedBy", { P1, NPC, NPC, "Slashing", 2, "", 0 }) -- a Bleeding tick at the turn start
-    clock = clock + 500
     cast_seen = "none"
-    j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
-    tick(52)
-    eq(j.status, "running", "second order")
-    tick(52)
-    eq(j.status, "failed", "dropped twice")
-    assert(j.error:find("never started it %(3 s, no cast, no step%) twice: ordered again after a hit on the caster"
-        .. " 0%.5 s before the first order"), j.error)
-    eq(#called("UseSpell"), 4, "two orders, no third")
-    -- no hit near the order (one 3 s before it): fails at 3 s as before, one order
-    world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
     A.dispatch("AttackedBy", { P1, NPC, NPC, "Slashing", 2, "", 0 })
     clock = clock + 3000
     j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
     tick(52)
-    eq(j.status, "failed", "no hit: plain failure"); assert(not j.error:find("twice"), j.error)
-    eq(#called("UseSpell"), 5, "one order")
-    -- a hit after the order (during the 3 s) counts too
+    eq(j.status, "failed", "no hit: plain failure"); assert(not j.error:find("hit"), j.error)
+    eq(#called("UseSpell"), 2, "one order")
+    -- a hit after the order (during the 3 s) is named too
     world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
     j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
     tick(10)
     A.dispatch("AttackedBy", { P1, NPC, NPC, "Slashing", 0, "Attack", 0 })
     tick(42)
-    eq(j.status, "running", "hit after the order: ordered again")
-    eq(#called("UseSpell"), 7, "second order")
+    eq(j.status, "failed", "hit after the order")
+    assert(j.error:find("a hit on the caster 0%.%d s after the order"), j.error)
+    eq(#called("UseSpell"), 3, "one order")
     -- S070 Guiding Bolt: no hit, Prone ended at the turn start (shown statuses only, by name)
     world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
     local savedV = BG3AI.Visibility
@@ -254,18 +240,20 @@ test("cast in combat: a dropped order right after a hit on the caster is ordered
     A.dispatch("StatusRemoved", { P1, "SOME_TECHNICAL_STATUS", "", 0 })
     j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
     tick(52)
-    eq(j.status, "failed", "a technical status ending is no reason")
+    eq(j.status, "failed", "a technical status ending")
+    assert(not j.error:find("ending"), j.error)
     world[P1].comps.ActionResources.Resources.ActionPoint[1].Amount = 1
     A.dispatch("StatusRemoved", { P1, "PRONE", "", 0 })
     j = job(op("cast", { char = P1, spell = "Target_Swing", target = NPC }))
     tick(52)
-    eq(j.status, "running", "Prone ended: ordered again")
-    tick(52)
-    assert(j.error:find("twice: ordered again after the caster's Prone ending"), j.error)
+    eq(j.status, "failed", "Prone ended: named, not sent again")
+    assert(j.error:find(": the caster's Prone ending 0%.%d s %a+ the order$"), j.error)
+    eq(#called("UseSpell"), 5, "one order each")
     BG3AI.Visibility = savedV
 end)
 
-test("cast in combat: an enemy's reaction cast holds the no-start, then the order goes once more (A30, S094)", function()
+test("cast in combat: an enemy's reaction cast holds the no-start, then it fails naming it, never sent again (D346)",
+    function()
     cast_seen = "none" -- a dropped order: the game makes no cast entity (its SpellCastState would be a start)
     combat_setup(9)
     A.react_seen = nil
@@ -276,11 +264,12 @@ test("cast in combat: an enemy's reaction cast holds the no-start, then the orde
     local savedV = BG3AI.Visibility
     BG3AI.Visibility = setmetatable({ is_visible = function() return false end }, { __index = savedV })
     local AP = world[P1].comps.ActionResources.Resources.ActionPoint[1]
-    -- S094 09:55:40 Shadowheart's Keene's Fixers: Pactsplitter's Psionic Backlash came with it, nothing was cast,
-    -- nothing spent; the same call later worked. The reaction plays past 3 s: no purge while it does.
+    -- S094 09:55:40 Shadowheart's Keene's Fixers: Pactsplitter's Psionic Backlash came with it, nothing was cast. The
+    -- reaction plays past 3 s: no purge while it does (the game may start ours after it). Then it fails as the game
+    -- left it; the mod used to order it once more (A30, owner D346: "make it like a real player would").
     local j = job(op("cast", { char = P1, spell = "Target_Keene", pos = { 3, 0, 0 } }))
     eq(#called("UseSpellAtPosition"), 1, "first order")
-    cast_seen = "state" -- the second order starts
+    cast_seen = "state" -- a second order would start
     tick(8)
     A.dispatch("CastSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
     tick(44) -- 3.1 s after the order, the enemy's cast not over
@@ -288,26 +277,12 @@ test("cast in combat: an enemy's reaction cast holds the no-start, then the orde
     eq(#called("PurgeOsirisQueue"), 0, "not purged while held")
     tick(16)
     A.dispatch("CastedSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
-    tick(5)
-    eq(j.status, "running", "settle after the reaction")
-    tick(5)
-    eq(#called("UseSpellAtPosition"), 2, "ordered once more after the reaction")
-    eq(#called("PurgeOsirisQueue"), 1, "the dropped order purged first")
-    A.dispatch("CastSpell", { P1, "Target_Keene", "Target", "None", 0 })
-    A.dispatch("CastedSpell", { P1, "Target_Keene", "Target", "None", 0 })
     tick(10)
-    eq(j.status, "done", "the second order cast " .. tostring(j.error))
-    -- dropped twice: names the reaction as a player sees it (an unseen caster unnamed)
-    AP.Amount = 1
+    eq(j.status, "failed", "after the reaction's settle: failed as the game left it")
+    eq(#called("UseSpellAtPosition"), 1, "never sent again")
+    assert(j.error:find("never started it %(3 s, no cast, no step%): someone's reaction cast 0%.%d s after the order$"),
+        j.error) -- audit C23: unseen, so neither named nor called an enemy
     cast_seen = "none"
-    j = job(op("cast", { char = P1, spell = "Target_Keene", pos = { 3, 0, 0 } }))
-    A.dispatch("CastedSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
-    tick(60)
-    eq(j.status, "running", "second order")
-    tick(60)
-    eq(j.status, "failed", "dropped twice")
-    assert(j.error:find("never started it %(3 s, no cast, no step%) twice: ordered again after someone's reaction"
-        .. " cast"), j.error) -- audit C23: unseen, so neither named nor called an enemy
     -- a seen caster is named; the game took the action: countered, not ordered again
     BG3AI.Visibility = setmetatable({ is_visible = function() return true end,
         name = function() return "Spellplague" end }, { __index = savedV })
@@ -320,17 +295,17 @@ test("cast in combat: an enemy's reaction cast holds the no-start, then the orde
     tick(60)
     eq(j.status, "failed", "spent: no second order")
     eq(#called("UseSpellAtPosition"), n + 1, "one order")
-    assert(j.error:find("Spellplague's Counterspell %(an enemy reaction%) came just then and the game took the"
-        .. " action: most likely countered"), j.error)
-    -- a reaction that never ends: held at most CAST_REACT_HOLD_MS, then ordered again
+    assert(j.error:find("no cast, no step%): Spellplague's Counterspell %(an enemy reaction%) came just then and the"
+        .. " game took the action: most likely countered$"), j.error) -- pQ's a4: the countered clause alone
+    -- a reaction that never ends: held at most CAST_REACT_HOLD_MS, then it fails, one order
     AP.Amount = 1
     n = #called("UseSpellAtPosition")
     j = job(op("cast", { char = P1, spell = "Target_Keene", pos = { 3, 0, 0 } }))
     A.dispatch("CastSpell", { NPC, "Target_Counterspell", "Target", "None", 0 })
     tick(130) -- 7.8 s
-    eq(#called("UseSpellAtPosition"), n + 1, "held to the cap")
+    eq(j.status, "running", "held to the cap")
     tick(5)
-    eq(#called("UseSpellAtPosition"), n + 2, "ordered again at the cap")
+    eq(j.status, "failed", "failed at the cap"); eq(#called("UseSpellAtPosition"), n + 1, "never sent again")
     -- an enemy cast well before the order (not a reaction to it): the plain 3 s failure, one order
     AP.Amount = 1
     A.react_seen = nil
@@ -339,7 +314,7 @@ test("cast in combat: an enemy's reaction cast holds the no-start, then the orde
     n = #called("UseSpellAtPosition")
     j = job(op("cast", { char = P1, spell = "Target_Keene", pos = { 3, 0, 0 } }))
     tick(52)
-    eq(j.status, "failed", "old enemy cast: plain failure"); assert(not j.error:find("twice"), j.error)
+    eq(j.status, "failed", "old enemy cast: plain failure"); assert(not j.error:find("reaction"), j.error)
     eq(#called("UseSpellAtPosition"), n + 1, "one order")
     -- the party's own casts are no reaction
     A.react_seen = nil

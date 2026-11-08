@@ -61,6 +61,8 @@
         "arena_group_end_written",
         "arena_turn_readmitted",
         "arena_control_lost",
+        "arena_reaction_budget_spent",
+        "arena_turn_charged",
         "arena_round",
         "arena_surfaces",
         "arena_stood_up"
@@ -349,7 +351,7 @@
         }
       },
       "then": {
-        "description": "The harness ended the phase in progress at its model-time cap (turn_cap_s times its member count) or at a held stall (arena_stall stall held), with act.end_turn for each member; it names that phase's side and character.",
+        "description": "The harness ended the phase in progress at its model-time cap (turn_cap_s times its member count) or at a held stall (arena_stall stall held), with act.end_turn for each member; it names that phase's side and character. charged_cap, only when true: capped because of an unanswered prompts' charge with its model time under the full turn cap, so it counts toward no forfeit and breaks the run.",
         "required": [
           "side",
           "character"
@@ -360,6 +362,9 @@
           },
           "character": {
             "$ref": "#/$defs/name"
+          },
+          "charged_cap": {
+            "type": "boolean"
           }
         }
       }
@@ -570,6 +575,89 @@
           "detail": {
             "type": "string",
             "description": "the prompt's text"
+          },
+          "waited_s": {
+            "type": "number",
+            "minimum": 0,
+            "description": "seconds from its first read on screen to the decline (added 2026-11-08)"
+          },
+          "over_budget": {
+            "type": "boolean",
+            "description": "declined at its first read because the side's budget is used up (added 2026-11-08)"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_reaction_budget_spent"
+          }
+        }
+      },
+      "then": {
+        "description": "A side's waits on its unanswered prompts reached its budget: from here its prompts are declined at their first read. Once per side.",
+        "required": [
+          "side",
+          "round",
+          "waited_s",
+          "budget_s"
+        ],
+        "properties": {
+          "side": {
+            "$ref": "#/$defs/side"
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "waited_s": {
+            "type": "number",
+            "minimum": 0
+          },
+          "budget_s": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_turn_charged"
+          }
+        }
+      },
+      "then": {
+        "description": "A phase started with part of its model-time cap taken for its side's unanswered prompts, at most half a cap.",
+        "required": [
+          "side",
+          "character",
+          "round",
+          "charged_s",
+          "debt_left_s"
+        ],
+        "properties": {
+          "side": {
+            "$ref": "#/$defs/side"
+          },
+          "character": {
+            "$ref": "#/$defs/name"
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "charged_s": {
+            "type": "number",
+            "minimum": 0
+          },
+          "debt_left_s": {
+            "type": "number",
+            "minimum": 0
           }
         }
       }

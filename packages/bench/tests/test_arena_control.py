@@ -7,8 +7,9 @@ from pathlib import Path
 
 import jsonschema
 import pytest
+from test_arena import ARENA, FORFEIT_A, SIX, match
 
-from bg3bench import arena_control
+from bg3bench import arena, arena_control
 
 HERE = Path(__file__).resolve().parent
 PKG = HERE.parent
@@ -61,3 +62,23 @@ def test_lost_control_lists_each_games_turn_with_its_characters_rolls_in_it():
     ]
     assert [x["rolls"] for x in arena_control.lost_control(records, None, 60)] == [None, None]
     assert arena_control.lost_control(records, rolls, 40) == out[:1]  # none after the end
+
+
+def test_a_turn_capped_under_a_charge_breaks_the_forced_streak():
+    """A's 0, 2, 4 forced, turn 2 under a charge (arena_turn_forced's charged_cap): no forfeit is due, so a match that
+    goes on is whole, and a forfeit claimed on that streak isn't."""
+    draw = {"winner": None, "reason": "round_cap", "hp": (1.0, 1.0)}
+
+    def marked(recs):
+        return [{**r, "charged_cap": True} if r.get("ev") == "arena_turn_forced" and r["character"] == "Gale" else r
+                for r in recs]  # fmt: skip
+
+    g = arena.grade(marked(match(turns=SIX, forced=(0, 2, 4), **draw)), ARENA)
+    assert g["valid"] is True and g["forced"]["A"] == 3
+    g = arena.grade(marked(match(turns=SIX, forced=(0, 2, 4), cause="forced_turns", **FORFEIT_A)), ARENA)
+    assert g["invalid_reason"] == "inconsistent_end"
+    row = ev(1, "arena_turn_forced", side="A", character="Gale", charged_cap=True)
+    for schema in (EVENT_SCHEMA, FACTS_SCHEMA):
+        jsonschema.validate(row, schema)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({**row, "charged_cap": "yes"}, schema)

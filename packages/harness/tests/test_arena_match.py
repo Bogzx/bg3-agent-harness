@@ -676,7 +676,7 @@ def test_the_caps_ends_go_one_at_a_time(tmp_path):
             log.append("end " + model.match().member(args["char"]).name)
             r = rpc(op, args, side)
             running[r["job"]] = 2
-            return {"job": r["job"], "status": "running"}
+            return {"job": r["job"]}  # A.reply sets status only once a job has settled
         if op == "job.poll" and side == "A" and running.get(args["id"]):
             running[args["id"]] -= 1
             log.append("poll")

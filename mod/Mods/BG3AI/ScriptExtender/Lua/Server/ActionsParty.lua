@@ -101,6 +101,7 @@ reg("end_turn", function(args)
     end
     local arena = Ar and Ar.active()
     return start("end_turn", char, {
+        forced = args.forced and tostring(args.forced) or nil, -- the runner's end at a cap: nothing supersedes it
         timeout_ms = arena and A.END_LAST_WAIT_MS + 1000 or 10000,
         osi = {
             TurnEnded = function(job, a)

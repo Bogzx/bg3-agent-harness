@@ -484,6 +484,9 @@ def test_the_fixture_match_fits_the_facts_schemas_and_grades():
         "round_first": [{"round": 1, "first": "A", "how": None}, {"round": 2, "first": "A", "how": None}],
         "luck": None,
         "lost_control": [],  # no turn the game ran itself
+        "reactions_unanswered": {
+            s: {"declined": 0, "over_budget": 0, "waited_s": 0.0, "charged_s": 0.0, "budget_spent": False} for s in "AB"
+        },
     }
 
 

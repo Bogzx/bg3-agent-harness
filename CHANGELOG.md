@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.14.1 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.15.0 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -165,7 +165,34 @@ game unless it says so.
   definitions and the bench prompts don't change. bench-v0.11's release cited it until 0.14.1.
 - 0.14.1 (2026-11-08): what the agent sees doesn't change. A mirror kit fails on a passive held twice only when the kit
   added it: a twin the game's own class rows gave one twice (a Ranger's UnlockedSpellSlotLevel1 at levels 2 and 3)
-  holds it as its reference does, and team 2's first S4 failed on it (live 2026-11-08). bench-v0.11's release cites it.
+  holds it as its reference does, and team 2's first S4 failed on it (live 2026-11-08). bench-v0.11's release cited it
+  until 0.15.0.
+- 0.15.0 (2026-11-08): what the agent sees changed: a cast the game never started is never sent again by the mod. In
+  combat, a cast with no cast state and no step at 3 s after a hit on the caster, a shown status ending on it, or an
+  enemy's reaction cast in the same seconds used to be purged and ordered once more by the mod (the hit route since
+  2026-10-17, the reaction route since 2026-10-18; a player's dropped order isn't clicked again for them). Now it fails
+  as the game left it, naming what the mod read and when: `the game never started it (3 s, no cast, no step): a hit on
+  the caster 1.0 s before the order`, `...: someone's reaction cast 0.4 s after the order`. The hold while an enemy's
+  reaction plays (the game may start the cast after it, at most 8 s), the countered route (`... the game took the
+  action: most likely countered`) and the held-cast routes are unchanged. The result no longer reads `twice: ordered
+  again after ...`. Owner, D346: "make it like a real player would". In a match, a reaction prompt its owner leaves
+  open is declined after 45 s from its first read on screen, not the arena's turn cap, as a player who lets it pass
+  (rules/arena.md states it; the prompts' digest moves). The wait comes off that side's next turns' model-time caps, at
+  most half a cap each (`arena_turn_charged`), so unanswered prompts alone never end a turn; the rest carries over. A
+  phase capped only because of the charge (model time under the full cap) is told the time it had, is marked
+  `charged_cap` on `arena_turn_forced`, counts toward no forfeit and breaks the run in the runner and the grader, so
+  only a side's own full cap can forfeit (owner, 2026-11-08). While the runner's end at a cap runs, a new order for
+  that character is refused (`this character's turn is being ended at <the cap>`): live, its own next `move_to`
+  replaced the end, and it walked and swung after the cap. The runner stops polling that end once it reaches any final
+  status; it waited 22 s on an `interrupted` one, with no cap, hold or stall check. A
+  side's waits are budgeted at a sixth of the wall cap: past it (`arena_reaction_budget_spent`, once) its prompts are
+  declined at their first read, so unanswered prompts can't use up a match. The side reads an `arena_notice` event for
+  each decline and each charge (`reaction: Sentinel (Red Ash) unanswered for 46 s: declined; 46 s comes off your next
+  turns`); the other side reads what it read before. `arena_reaction_declined` gains `waited_s` and `over_budget`; the
+  grade gains `reactions_unanswered` {A, B: declined, over_budget, waited_s, charged_s, budget_spent}, and `valid`
+  doesn't read it. No match on record has ended on the wall cap this way: it is the owner's rule for the public bench,
+  bounded by arithmetic (D188, D346, ops wall-cap-design.md). Tool definitions don't change. bench-v0.11's release
+  cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at

@@ -822,6 +822,13 @@ end
 
 op("arena.status", function() return Ar.status() end)
 
+-- The runner's fact for one side (a prompt it left unanswered declined, a turn charged for that): its event alone.
+op("arena.notice", function(args)
+    if not (args.side and args.text) then error("arena.notice needs side and text", 0) end
+    U.with_side(args.side, RPC.push, "arena_notice", { text = tostring(args.text) })
+    return { ok = true }
+end)
+
 -- The runner's end (caps, forfeits, faults): {reason, winner?}; a match the mod already ended keeps that end, and so
 -- does a wipe already there that no turn boundary has checked yet (a side downed mid-phase, then the runner's cap or
 -- forfeit: the wipe is the end, not the runner's reason).

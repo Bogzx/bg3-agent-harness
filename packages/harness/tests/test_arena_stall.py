@@ -5,6 +5,7 @@ its side still holds a member, a fault when the game holds the turn; on test_are
 from __future__ import annotations
 
 import json
+import types
 from pathlib import Path
 
 import jsonschema
@@ -518,3 +519,35 @@ def test_both_schemas_take_the_turn_order_fields_and_refuse_other_values():
         for bad in bads:
             with pytest.raises(jsonschema.ValidationError):
                 jsonschema.validate(bad, schema)
+
+
+@pytest.mark.parametrize("status", ["interrupted", "timeout"])
+def test_a_cap_end_that_reached_a_final_status_returns_at_once(status):
+    """pK's S5 s5-a30wc: a superseded end stays `interrupted` for good, and the runner polled it for END_SETTLE_S with
+    no cap, hold or stall check. Every status but running is the job's last."""
+    polls, slept = [], []
+
+    def rpc(op, args, side=None):
+        if op == "job.poll":
+            polls.append(args["id"])
+            return {"status": status, "error": "superseded by a new action (move_to)"}
+        return {"job": 7}  # A.reply sets status only once a job has settled
+
+    clock = types.SimpleNamespace(now=lambda: sum(slept), sleep=slept.append)
+    err = am._end_turn(types.SimpleNamespace(rpc=rpc), clock, "u", "B", "the cap")  # type: ignore[arg-type]
+    assert err == f"act.end_turn {status}: superseded by a new action (move_to)"
+    assert polls == [7] and sum(slept) == am.END_POLL_S
+
+
+def test_a_cap_end_with_no_status_is_still_running():
+    """A.reply leaves `status` out while a job runs: an end that never reports one is polled to END_SETTLE_S."""
+    polls, slept = [], []
+
+    def rpc(op, args, side=None):
+        polls.append(op)
+        return {"job": 7}
+
+    clock = types.SimpleNamespace(now=lambda: sum(slept), sleep=slept.append)
+    err = am._end_turn(types.SimpleNamespace(rpc=rpc), clock, "u", "B", "the cap")  # type: ignore[arg-type]
+    assert err == f"act.end_turn still running after {am.END_SETTLE_S:g} s"
+    assert sum(slept) >= am.END_SETTLE_S and polls.count("job.poll") == len(slept)

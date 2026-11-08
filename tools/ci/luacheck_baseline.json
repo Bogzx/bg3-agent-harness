@@ -147,7 +147,6 @@
    "W631": 2
   },
   "tools/dev/test_act_lua_cast.lua": {
-   "W311": 1,
    "W631": 27
   },
   "tools/dev/test_act_lua_move.lua": {
