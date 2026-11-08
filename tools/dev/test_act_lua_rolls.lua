@@ -131,6 +131,60 @@ test("cast rolls: sneak's Hide is cleared; a flag that won't clear fails the sne
     osiv[key("HasActiveStatus", P1, "SNEAKING")] = nil
 end)
 
+-- v011-pilot act1_gold_max S001 21:33:21 and 21:33:44: two orders for Hide came to nothing (no cast event, no status)
+-- and the job ran out as a plain timeout, which the run's record counts as a harness failure: it voided the run.
+local function hide()
+    spell("Shout_Hide", { SpellType = "Shout", UseCosts = "BonusActionPoint:1", Level = 0 })
+    return job(op("sneak", { char = P1, on = true }))
+end
+
+test("sneak: no cast by the no-start bound fails saying so and purges the order, not a timeout", function()
+    local j = hide()
+    assert(j.deadline - RPC.now_ms() > A.CAST_NO_START_MS + 500, "the job's own timeout must come after the bound")
+    tick(math.floor(A.CAST_NO_START_MS / 60) - 2)
+    eq(j.status, "running", "still inside the bound")
+    tick(12)
+    eq(j.status, "failed", "status")
+    eq(j.error, "the game never started it (8 s, no cast)", "words")
+    eq(#called("PurgeOsirisQueue"), 1, "the order doesn't stay queued")
+end)
+
+test("sneak: the game's refusal ends it at once with its reason; another spell's or character's doesn't", function()
+    cast_outcome = "CantCast"
+    local j = hide()
+    A.dispatch("CastSpellFailed", { NPC, "Shout_Hide", "Shout", "None", 0 })
+    A.dispatch("CastSpellFailed", { P1, "Target_Other", "Target", "None", 0 })
+    eq(j.status, "running", "not this order's")
+    A.dispatch("CastSpell", { P1, "Shout_Hide", "Shout", "None", 0 })
+    A.dispatch("CastSpellFailed", { P1, "Shout_Hide", "Shout", "None", 0 })
+    eq(j.status, "failed", "status")
+    assert(j.error:find("the game refused the cast: it can't be cast now", 1, true), j.error)
+end)
+
+test("sneak: begun but never landed, and landed with no status, say which and leave the cast alone", function()
+    local j = hide()
+    A.dispatch("CastSpell", { P1, "Shout_Hide", "Shout", "None", 0 })
+    tick(math.ceil(A.CAST_NO_START_MS / 60) + 12)
+    eq(j.status, "failed", "status")
+    eq(j.error, "the game began the cast but it didn't land (8 s)", "begun")
+    eq(#called("PurgeOsirisQueue"), 0, "a begun cast isn't purged")
+    reset()
+    j = hide()
+    A.dispatch("CastSpell", { P1, "Shout_Hide", "Shout", "None", 0 })
+    A.dispatch("CastedSpell", { P1, "Shout_Hide", "Shout", "None", 0 })
+    tick(math.ceil(A.CAST_NO_START_MS / 60) + 12)
+    eq(j.status, "failed", "status")
+    eq(j.error, "Hide was cast but the character isn't sneaking (8 s after the order)", "landed")
+    reset()
+    j = hide()
+    A.dispatch("CastedSpell", { P1, "Shout_Hide", "Shout", "None", 0 })
+    osiv[key("HasActiveStatus", P1, "SNEAKING")] = 1
+    tick(math.ceil(A.CAST_NO_START_MS / 60) - 10)
+    eq(j.status, "done", "the status in time")
+    eq(j.result.sneaking, true, "says so")
+    osiv[key("HasActiveStatus", P1, "SNEAKING")] = nil
+end)
+
 -- Live window 5 (ops/logs/live.md, melee-swap A/B): the cast state was made at 70-270 ms, then Karlach's own
 -- reaction prompt (Reckless Attack) paused the cast; the 3 s no-start check said "never started" and its purge
 -- cancelled the cast. The state's creation is the start; a pause held CAST_PAUSED_MS is reported, nothing purged.

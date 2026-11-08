@@ -198,6 +198,9 @@ game unless it says so.
   Throw or the spell of the cast with the hit's story action, else the game's `damageCause` when that is one plain word. A Throw's `cast` says
   the item (`Throw of Bomb`). Nothing is named for an unseen source. Owner, 2026-11-08, after a wipe by eight bare Force
   hits (windmill, S001): "fix what the agent is told". Which of those the game gives for a bomb is not read live yet.
+  Also `set_party sneak_on`: a Hide the game doesn't carry out fails with what was read (the game's refusal, never
+  started, began but didn't land, cast but not sneaking) instead of a bare job timeout, which voided a run as a harness
+  failure (v011-pilot act1_gold_max, S001). Why the game dropped those two orders is not read.
   Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most

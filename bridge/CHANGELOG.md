@@ -5,6 +5,13 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-08: a Hide that doesn't happen says why
+
+- `set_party sneak_on` used to end `TIMEOUT — timed out` when the game didn't hide the character. It now fails with what
+  was read: `the game refused the cast: <the game's reason>`, `the game never started it (8 s, no cast)`, `the game began
+  the cast but it didn't land (8 s)`, or `Hide was cast but the character isn't sneaking (8 s after the order)`. Tool
+  definitions don't change.
+
 ## 2026-11-08: combat events name what dealt a hit
 
 - `damage` events from a visible source add `by`: `damage e169 Fezzerk -> e4 Tav 15 Force by Bomb`. A Throw's `cast` adds
