@@ -14,7 +14,6 @@
  "name": "builds-l5-4v4-v1",
  "title": "Level 5: Fighter (Battle Master), Bard (Lore), Wizard (Evocation), Rogue (Thief); each its hireling's race and background",
  "about": "The build file l5_4v4_v1 (tools/dev/make_arena_save.py builds-arena), each pair's twins made per match, on crash-mirror-v1's save.",
- "draft": "the Fighter's third manoeuvre is Sweeping Attack in place of Goading Attack, whose Goaded status hands the target's turn to the game's AI (owner, 2026-11-08: the game AI doesn't play in the arena); its reference is read again and S4 passes before this file is rated again",
  "location": {
   "level": "WLD_Main_A",
   "spawns": {

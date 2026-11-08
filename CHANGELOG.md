@@ -392,8 +392,8 @@ game unless it says so.
 - `builds-l5-4v4-v1` and `builds-l12-4v4-v1`'s Battle Master takes Sweeping Attack in place of Goading Attack: its own
   attack with an area damage roll, no status, no ally's action and no dropped weapon (Commander's Strike and
   Manoeuvring Attack hand an ally an action, Disarming Attack leaves a weapon on the ground; Trip, Pushing and
-  Menacing were already out). Both files are drafts again until the Fighter's reference is read again and S4 passes,
-  so their S6 matrices plan nothing.
+  Menacing were already out). The Fighter's references were read again and both arenas' S4 passed (2026-11-08), so
+  neither file is a draft. Not read live: a cast of Sweeping Attack, and a match on either arena since the change.
 
 ### Benchmark (`packages/bench`)
 

@@ -5,7 +5,6 @@
  "tier": "L5",
  "level": 5,
  "game_build": "25605617",
- "draft": "the Fighter's third manoeuvre is Sweeping Attack in place of Goading Attack, whose Goaded status hands the target's turn to the game's AI (owner, 2026-11-08: the game AI doesn't play in the arena); its reference is read again and S4 passes before this file is rated again",
  "builds": [
   {
    "id": "fighter",
