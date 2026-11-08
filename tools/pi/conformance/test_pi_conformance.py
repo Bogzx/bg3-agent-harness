@@ -33,6 +33,7 @@ BINARY = PI_DIR / "node_modules" / ".bin" / "pi"
 EXTENSION = PI_DIR / "bg3.ts"
 NEED_PI = os.environ.get("CI") == "true"  # GitHub Actions: a missing pi is a broken job, not a skip
 sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
+from bg3harness import client_setup as cs
 from bg3harness import clients as cl
 from bg3harness import pi_client as pc
 from bg3harness import profiles as pr
@@ -544,12 +545,21 @@ class Conformance(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in (self.ws / "home").iterdir()), [])  # no ~/.pi
         self.assertEqual(len(run.requests[0]["messages"]), 2)  # system + prompt, no context files
 
-    def test_24_codex_backend_with_the_token_from_the_env(self):
-        claim = {"https://api.openai.com/auth": {"chatgpt_account_id": "acct-stub"}}
-        payload = base64.urlsafe_b64encode(json.dumps(claim).encode()).decode().rstrip("=")
-        self.key, self.pi_model = f"e30.{payload}.sig", "openai-codex/gpt-stub"
+    def test_24_codex_backend_with_the_token_from_the_cli_login(self):
+        claims = {cs.CODEX_ACCOUNT_CLAIM: {"chatgpt_account_id": "acct-stub"}, "exp": 4_000_000_000}
+        payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        tokens = {"access_token": f"e30.{payload}.sig", "refresh_token": "rt-stub", "account_id": "acct-stub"}
+        login = self.ws / "home" / ".codex" / "auth.json"  # where the Codex CLI keeps it, under this pi's HOME
+        login.parent.mkdir()
+        login.write_text(json.dumps({"auth_mode": "chatgpt", "tokens": tokens}))
+        os.utime(login, ns=(10**18, 10**18))  # an old stamp: any rewrite moves it, however fast
+        before = (login.read_bytes(), login.stat().st_mtime_ns)
+        got = cs.api_key_env(pr.parse(CODEX_PROFILE), {}, self.ws / "no.env", login)
+        self.key, self.pi_model = got["BG3_STUB_KEY"], "openai-codex/gpt-stub"
         run = self.run_pi([{"tool_calls": [call("look")]}, {"text": "done"}], profile=CODEX_PROFILE)
         self.assertEqual(run.rc, 0, run.err)
+        self.assertEqual((login.read_bytes(), login.stat().st_mtime_ns), before)  # the CLI's file, as it was
+        self.assertNotIn("rt-stub", run.out + run.err)
         self.assertEqual(run.calls(), [("start", "look"), ("end", "look")])
         logged = jsonl(self.ws / "llm.jsonl")
         self.assertEqual({r["path"] for r in logged}, {"/v1/codex/responses"})

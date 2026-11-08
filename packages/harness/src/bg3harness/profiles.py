@@ -57,8 +57,8 @@ model needs into compat (pi detects the provider's defaults from the provider id
 
 A Codex model through pi says api = "openai-codex-responses", provider = "openai-codex" and base_url =
 "https://chatgpt.com/backend-api" (so that host is the run's only egress). api_key_env names the variable that holds
-the login's access token (client_setup.api_key_env reads it from pi's own login when it isn't set). The backend reports
-tokens, not dollars, so what a run counts is pi's estimate at the profile's rates, as for Anthropic.
+the login's access token (client_setup.api_key_env reads it from the Codex CLI's login when it isn't set). The backend
+reports tokens, not dollars, so what a run counts is pi's estimate at the profile's rates, as for Anthropic.
 
 claude, codex and gemini take only client, model, effort (and fallback_model for claude): their endpoint is the
 CLI's own, so endpoint, routing and model_info are an error there rather than silently meaning nothing.
