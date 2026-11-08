@@ -62,7 +62,8 @@ A.CAST_NO_START_COMBAT_MS = 3000
 -- after a hit on the caster in its own turn (AttackedBy: a Bleeding tick at its turn start, an opportunity attack
 -- during its walk, a psychic tick); the next order ~3 s later worked 6 of 6. S070 20:50 Guiding Bolt: no hit, but the
 -- caster stood up from Prone at that turn start (S069's Claude also lost Hold Person then). A no-start whose caster
--- was hit or lost a status this long before the order (or after it) is ordered once more instead of failing.
+-- was hit or lost a status this long before the order (or after it) names it in its failure. It used to be ordered
+-- once more by the mod; a player's dropped order isn't clicked again for them (owner, D346: A30 goes).
 A.CAST_HIT_WINDOW_MS = 2500
 A.hit_ms = A.hit_ms or {} -- char guid -> {t, why}: when it was last hit (AttackedBy defender) or lost a status
 -- A30 (S090-S095, the Netherbrain fight): most combat casts that "never started" came with an enemy's cast in the
@@ -70,7 +71,8 @@ A.hit_ms = A.hit_ms or {} -- char guid -> {t, why}: when it was last hit (Attack
 -- Huntwardens (S095) among them; the same cast sent again worked each time with nothing spent. In our own turn an
 -- enemy casts only as a reaction. The no-start waits while that reaction plays (until its CastedSpell +
 -- CAST_REACT_SETTLE_MS, at most CAST_REACT_HOLD_MS after the order: the 3 s purge could kill a cast the game holds
--- for it), then orders once more when nothing of ours started and nothing was spent.
+-- for it), then fails naming the reaction; it used to order once more when nothing read spent (owner, D346: "make it
+-- like a real player would": a cast a reaction stopped ends as the game decides, and the mod sends nothing again).
 A.CAST_REACT_HOLD_MS = 8000
 A.CAST_REACT_SETTLE_MS = 500
 A.react_seen = nil -- {t, done?, caster, spell}: the last cast by a character outside the party

@@ -757,18 +757,13 @@ reg("cast", function(args)
                     if hit and hit.t < job.ordered_ms - A.CAST_HIT_WINDOW_MS then hit = nil end
                     local spent = rx and A.cost_spent(char, check)
                     if not hit and rx and not spent then hit = { t = rx.t, why = A.react_name(rx) } end
-                    if hit and not job.reordered then
-                        job.reordered, job.reorder_why = (hit.t - job.ordered_ms) / 1000, hit.why
-                        pcall(G.osi, "PurgeOsirisQueue", char)
-                        order(job)
-                        return
-                    end
                     local why = job.ui_failed or ("the game never started it ("
                         .. tostring(math.floor(no_start_ms / 1000)) .. " s, no cast, no step)" .. A.held_text(char))
-                    if job.reordered then
-                        why = why .. " twice: ordered again after " .. job.reorder_why .. " "
-                            .. string.format("%.1f s %s the first order", math.abs(job.reordered),
-                                job.reordered < 0 and "before" or "after")
+                    -- what the mod read around the order, said and not acted on: no second order (D346, A30 out)
+                    if hit then
+                        local d = (hit.t - job.ordered_ms) / 1000
+                        why = why .. ": " .. hit.why .. string.format(" %.1f s %s the order", math.abs(d),
+                            d < 0 and "before" or "after")
                     end
                     if spent then
                         why = why .. ": " .. A.react_name(rx) .. " came just then and the game took the "
