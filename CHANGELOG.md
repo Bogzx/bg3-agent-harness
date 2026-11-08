@@ -385,6 +385,15 @@ game unless it says so.
   the rows L5's first team accepts (each build's weapon action DC; the Wizard's unprepared spells, book rows and Arcane
   Recovery upcasts). Its S4 and a scripted S5 passed (2026-11-08). It stays a draft until the owner rules on its
   classes and on rating it; its draft reason now says so.
+- The arena scan (`tools/dev/arena_scan.py`, its graph and `test_arena_scan`) refuses a build that can apply a status
+  whose flags (inheritance resolved) hold `LoseControl`, naming the way from the build's pick to the status: the game's
+  AI plays that character's turn (owner, 2026-11-08: the game AI doesn't play in the arena). 45 statuses carry it. Of
+  the played builds only the L5 and L12 Battle Master reached one, Goaded by Goading Attack.
+- `builds-l5-4v4-v1` and `builds-l12-4v4-v1`'s Battle Master takes Sweeping Attack in place of Goading Attack: its own
+  attack with an area damage roll, no status, no ally's action and no dropped weapon (Commander's Strike and
+  Manoeuvring Attack hand an ally an action, Disarming Attack leaves a weapon on the ground; Trip, Pushing and
+  Menacing were already out). Both files are drafts again until the Fighter's reference is read again and S4 passes,
+  so their S6 matrices plan nothing.
 
 ### Benchmark (`packages/bench`)
 

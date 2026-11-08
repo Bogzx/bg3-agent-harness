@@ -31,6 +31,7 @@ INCAPACITATING = ("Target_Haste", "Target_HoldMonster", "Target_Banishment", "Ta
 # the L5 and L12 teams hold a Bard (owner, D114). What it reaches is named so anything new here still fails.
 ACCEPTED = {
     ("l2_4v4_v1.json", "cleric"): {
+        "COMMAND_APPROACH: control: LoseControl",
         "COMMAND_GROVEL: knock-down: SG_Prone",
         "COMMAND_GROVEL: knock-down: StatusType KNOCKED_DOWN",
         "KNOCKED_DOWN: knock-down: SG_Prone",
@@ -94,6 +95,20 @@ new entry "Thrall"
 type "StatusData"
 data "StatusGroups" "SG_Dominated;SG_Condition"
 
+new entry "Taunt"
+type "StatusData"
+data "StatusPropertyFlags" "DisableCombatlog;LoseControl;LoseControlFriendly"
+
+new entry "Goad"
+type "StatusData"
+using "Taunt"
+data "TickType" "EndTurn"
+
+new entry "Duel"
+type "StatusData"
+using "Taunt"
+data "StatusPropertyFlags" "DisableCombatlog"
+
 new entry "Crook"
 type "Weapon"
 data "BoostsOnEquipMainHand" "UnlockSpell(Trip)"
@@ -135,6 +150,12 @@ class Parse(unittest.TestCase):
         self.assertEqual(scan.hits(e, "Thrall"), ["side: SG_Dominated"])
         for clean in ("Base", "Guarded", "HURT", "NOPE"):  # a look, a condition, a removal, a dialogue charm
             self.assertEqual(scan.hits(e, clean), [], clean)
+
+    def test_a_status_that_hands_the_turn_to_the_games_ai_hits_through_using(self):
+        e = entries()
+        self.assertEqual(scan.hits(e, "Taunt"), ["control: LoseControl"])
+        self.assertEqual(scan.hits(e, "Goad"), ["control: LoseControl"])  # inherited
+        self.assertEqual(scan.hits(e, "Duel"), [])  # its own flags replace the parent's
 
     def test_the_graph_holds_what_is_followed_and_survives_its_file(self):
         g = scan.graph(entries())
@@ -216,6 +237,19 @@ class Bar(unittest.TestCase):
                     self.assertEqual(set(found), ACCEPTED.get((path.name, b["id"]), set()))
                     seen += 1
         self.assertGreaterEqual(seen, 20)
+
+    def test_a_battle_master_with_goading_attack_back_would_be_caught(self):
+        self.assertIn("GOADING_ATTACK: control: LoseControl", scan.walk(GRAPH, ["GoadingAttack"])[0])
+        self.assertEqual(scan.walk(GRAPH, ["SweepingAttack"]), ({}, []))
+        for name in ("l5_4v4_v1.json", "l12_4v4_v1.json"):
+            doc = json.loads((scan.BUILDS / name).read_text())
+            fighter = next(b for b in doc["builds"] if b["id"] == "fighter")
+            maneuvers = next(u for u in fighter["script"]["level_ups"] if u["level"] == 3)["passives"][0]
+            maneuvers[maneuvers.index("SweepingAttack")] = "GoadingAttack"
+            seeds, _ = scan.build_seeds(fighter, doc, STATIC)
+            found, _ = scan.walk(GRAPH, seeds)
+            with self.subTest(name):
+                self.assertEqual(found["GOADING_ATTACK: control: LoseControl"][0], "GoadingAttack")
 
     def test_a_wizard_with_its_staff_back_would_be_caught(self):
         doc = json.loads((scan.BUILDS / "l5_4v4_v1.json").read_text())
