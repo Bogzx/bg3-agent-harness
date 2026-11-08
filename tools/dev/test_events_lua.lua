@@ -660,6 +660,13 @@ do
     d = hit(GOB, GOB, "None", 27)
     check("damage: an item leaving a thrower out of sight isn't named", d and d.by == "Throw", d and d.by)
 
+    clock = clock + 6001 -- every earlier open Throw is past its window: only this case's can take the item
+    listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 29)
+    listeners.RemovedFrom(BOMB, HOST)
+    d = hit(GOB, GOB, "None", 29)
+    check("damage: an item leaving someone else isn't this Throw's", d and d.by == "Throw", d and d.by)
+
+    clock = clock + 6001
     listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 28)
     listeners.RemovedFrom(NONAME, GOB)
     d = hit(GOB, GOB, "None", 28)
