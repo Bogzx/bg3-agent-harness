@@ -622,13 +622,13 @@ def _end_turn(
     try:
         job = game.rpc("act.end_turn", {"char": uuid, "forced": forced}, side) or {}
         deadline = clock.now() + END_SETTLE_S
-        while job.get("status") == "running" and clock.now() < deadline:
+        while job.get("status", "running") == "running" and clock.now() < deadline:  # A.reply: no status while it runs
             clock.sleep(END_POLL_S)
             tick()
             job = game.rpc("job.poll", {"id": job.get("job", job.get("id"))}, side) or {}
     except Exception as e:  # a refusal (the op's error) or no answer
         return str(e)
-    status = job.get("status")
+    status = job.get("status", "running")
     if status == "done":
         return None
     if status == "failed":
