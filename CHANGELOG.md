@@ -175,8 +175,18 @@ game unless it says so.
   the caster 1.0 s before the order`, `...: someone's reaction cast 0.4 s after the order`. The hold while an enemy's
   reaction plays (the game may start the cast after it, at most 8 s), the countered route (`... the game took the
   action: most likely countered`) and the held-cast routes are unchanged. The result no longer reads `twice: ordered
-  again after ...`. Owner, D346: "make it like a real player would". Tool definitions and the bench prompts don't
-  change. bench-v0.11's release cites it.
+  again after ...`. Owner, D346: "make it like a real player would". In a match, a reaction prompt its owner leaves
+  open is declined after 45 s from its first read on screen, not the arena's turn cap, as a player who lets it pass
+  (rules/arena.md states it; the prompts' digest moves). The wait comes off that side's next turns' model-time caps, at
+  most half a cap each (`arena_turn_charged`), so unanswered prompts alone never end a turn; the rest carries over. A
+  side's waits are budgeted at a sixth of the wall cap: past it (`arena_reaction_budget_spent`, once) its prompts are
+  declined at their first read, so unanswered prompts can't use up a match. The side reads an `arena_notice` event for
+  each decline and each charge (`reaction: Sentinel (Red Ash) unanswered for 46 s: declined; 46 s comes off your next
+  turns`); the other side reads what it read before. `arena_reaction_declined` gains `waited_s` and `over_budget`; the
+  grade gains `reactions_unanswered` {A, B: declined, over_budget, waited_s, charged_s, budget_spent}, and `valid`
+  doesn't read it. No match on record has ended on the wall cap this way: it is the owner's rule for the public bench,
+  bounded by arithmetic (D188, D346, ops wall-cap-design.md). Tool definitions don't change. bench-v0.11's release
+  cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at

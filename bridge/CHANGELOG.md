@@ -13,6 +13,14 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   game never started it (3 s, no cast, no step): a hit on the caster 1.0 s before the order` (or the status ending, or
   `someone's reaction cast 0.4 s after the order`, named as a player sees it). The countered words are unchanged.
 
+## 2026-11-08: what an unanswered reaction prompt costs a side
+
+- In a match a prompt left unanswered for 45 s from its first read is declined. The owning side alone reads an event:
+  `arena_notice text=reaction: Sentinel (Red Ash) unanswered for 46 s: declined; 46 s comes off your next turns`, and at
+  the turn it is charged on `arena_notice text=this turn has 60 s of model time: 30 s went to unanswered prompts`. Past
+  its budget: `... declined at once: your side's 10 min of unanswered prompts is used up`. The arena rules state the
+  rule. Other results and the other side's reads don't change.
+
 ## 2026-11-08: a free attack shows in the order's result
 
 - An order's `after={...}` in combat read `action=0` and nothing about a free attack, which only get_actions showed
