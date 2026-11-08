@@ -120,6 +120,9 @@ end
 -- game's storyActionID, which AttackedBy repeats, and the item that left a visible thrower during its own Throw.
 local ACTION_KEEP_MS = 60000
 local THROW_ITEM_MS = 6000 -- a Throw's windup, from its CastSpell to the item leaving the inventory
+-- How long after its CastedSpell a Throw can still be what a story-less hit came from. A bomb's blast read live 10 ms
+-- before the CastedSpell on one load and 224 ms after it on the next (windmill-force-probe, live.md).
+local THROW_BLAST_MS = 1000
 
 local function isThrow(spell)
     return tostring(spell):find("^Throw_") ~= nil
@@ -137,12 +140,14 @@ listen("CastSpell", 5, function(caster, spell, _, _, story)
     actions[story] = { t = t, caster = u, name = st and U.loca(st.DisplayName) or nil, throw = isThrow(spell) }
 end)
 
--- The caster's newest open Throw (begun, not landed, inside its window), with an item set or with none.
-local function openThrow(caster, hasItem)
+-- The caster's newest open Throw (begun, not landed, inside its window). hit = false: one with no item yet, the one an
+-- item leaving belongs to. hit = true: one with its item set, or one that landed with it under THROW_BLAST_MS ago.
+local function openThrow(caster, hit)
     local t, open = Ext.Utils.MonotonicTime(), nil
     for _, v in pairs(U.sided(E, "actions")) do
-        if v.throw and v.caster == caster and (v.item ~= nil) == hasItem and not v.landed and t - v.t <= THROW_ITEM_MS
-            and (not open or v.t > open.t) then
+        local live
+        if v.landed then live = hit and t - v.landed <= THROW_BLAST_MS else live = t - v.t <= THROW_ITEM_MS end
+        if live and v.throw and v.caster == caster and (v.item ~= nil) == hit and (not open or v.t > open.t) then
             open = v
         end
     end
@@ -163,10 +168,11 @@ end)
 
 -- The name of what dealt a hit from a visible source (of an unseen one the log says only "Someone"), nil when nothing
 -- shown names it. In order: the object that dealt it when that isn't its owner (an item, a visible
--- summon); the cast with the hit's story action (the item of a Throw, else the spell's shown name); the item of the
--- source's open Throw (windmill-force-probe, live.md: a bomb's blast reads attacker = the thrower, storyActionID 0,
--- inside his Throw, and the game's log says he threw it). damageCause never names it: Attack, InventoryThrow and
--- SurfaceCreate are all that was read live, the engine's words, and by=Attack on a bomb's blast says nothing true.
+-- summon); the cast with the hit's story action (the item of a Throw, else the spell's shown name); for a hit with
+-- storyActionID 0, the item of the source's open or just landed Throw (windmill-force-probe, live.md: a bomb's blast
+-- reads attacker = the thrower, storyActionID 0, around his Throw, and the game's log says he threw it). damageCause
+-- never names it: Attack, InventoryThrow and SurfaceCreate are all that was read live, the engine's words, and
+-- by=Attack on a bomb's blast says nothing true.
 local function dealtBy(src, attacker, story)
     local a = V.uuid(attacker)
     if a and a ~= src and (not isCharacter(a) or visibleChar(a)) then
@@ -178,7 +184,7 @@ local function dealtBy(src, attacker, story)
         local n = act.item or act.name
         if n then return n end
     end
-    local open = openThrow(src, true)
+    local open = story == 0 and openThrow(src, true) or nil
     return open and open.item or nil
 end
 
@@ -486,7 +492,7 @@ listen("CastedSpell", 5, function(caster, spell, _, _, story)
     local u = visibleChar(caster)
     if not u then return end
     local act = story and U.sided(E, "actions")[story]
-    if act then act.landed = true end
+    if act then act.landed = Ext.Utils.MonotonicTime() end
     local st = osi(Ext.Stats.Get, spell)
     local name = st and U.loca(st.DisplayName) or nil
     if not name then return end -- unnamed/technical casts are not shown in the log

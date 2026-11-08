@@ -611,7 +611,7 @@ do
     local withItems = V.name
     V.name = function(u) return itemNames[u] or withItems(u) end
     V.entity = function(u) return itemNames[u] == nil and { ServerCharacter = {}, _u = u } or { _u = u } end
-    local clock = 200000
+    local clock = 3000000 -- past every clock the sections above stubbed: a landing they left is not in the future
     local realClock = Ext.Utils.MonotonicTime
     Ext.Utils.MonotonicTime = function() return clock end
     local function cast(story)
@@ -634,10 +634,33 @@ do
     listeners.RemovedFrom(GREASE, GOB)
     d = hit(GOB, GOB, "Attack", 0)
     check("damage: two open Throws, the newest names it", d and d.by == "Bottle of Grease", d and d.by)
+    d = hit(GOB, GOB, "Attack", 99)
+    check("damage: inside an open Throw, a hit with another story id isn't its item", d and d.by == nil, d and d.by)
     cast(32)
     cast(31)
+    -- the re-read on 2796e17e: CastedSpell 224 ms before the blast's rows (10 ms after them on the first load)
+    clock = clock + 224
     d = hit(GOB, GOB, "Attack", 0)
-    check("damage: once the Throws landed, a story-less hit names nothing", d and d.by == nil, d and d.by)
+    check("damage: a story-less hit just after the Throw landed names its item", d and d.by == "Bottle of Grease",
+        d and d.by)
+    d = hit(GOB, GOB, "Attack", 99)
+    check("damage: after the landing, a hit with another story id isn't its item", d and d.by == nil, d and d.by)
+    d = hit(HOST, HOST, "Attack", 0)
+    check("damage: after the landing, another source's hit isn't its item", d and d.by == nil, d and d.by)
+    clock = clock + 776 -- 1000 ms after the landing: the last moment
+    d = hit(GOB, GOB, "Attack", 0)
+    check("damage: the window's last moment still names it", d and d.by == "Bottle of Grease", d and d.by)
+    clock = clock + 1
+    d = hit(GOB, GOB, "Attack", 0)
+    check("damage: past the window after landing, a story-less hit names nothing", d and d.by == nil, d and d.by)
+    listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 34)
+    cast(34)
+    d = hit(GOB, GOB, "Attack", 0)
+    check("damage: a landed Throw no item left during names nothing", d and d.by == nil, d and d.by)
+    listeners.RemovedFrom(POTION, GOB)
+    d = hit(GOB, GOB, "Attack", 0)
+    check("damage: what leaves after the landing doesn't become its item", d and d.by == nil, d and d.by)
+    clock = clock + 1001
     listeners.CastSpell(GOB, "Throw_Throw", "Throw", "None", 33)
     listeners.RemovedFrom(BOMB, GOB)
     clock = clock + 6001
