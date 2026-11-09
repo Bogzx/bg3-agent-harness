@@ -412,7 +412,7 @@ test("Do Not React on a chosen row: an event gone before the first tick is decli
     eq(#UI.commands, 1, "only the unchoosing: Bo's prompt isn't declined, nor Ana's stale event sent")
 end)
 
-test("Do Not React on a chosen row: the decline reads the context afresh, the event still the one answered (U1)", function()
+test("Do Not React on a chosen row: the decline reads the context afresh, same event (U1)", function()
     prompt("Ana")
     local page = pages.ReactionDecisionPopup
     local ev = { id = "ev" }
