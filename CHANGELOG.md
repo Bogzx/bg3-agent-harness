@@ -242,7 +242,8 @@ game unless it says so.
   `nothing happened`; when the game walked the actor, the last clause gives the distance (`the actor moved 1.4 m`), and
   with no failed Use read it is `no roll came; the actor moved 1.4 m`. The game's own notices during the wait now follow
   as its words (`the game said "Can't reach this", "Can't reach"`, on all 32 no-roll tries read and none of the 26 that
-  rolled); why it can't reach depends on where another party member stands, and that is still not known. A walked
+  rolled). On the one door read (e482, Makeshift Prison) whether the roll came depended on where another party member
+  stood; why is still not known. A walked
   actor's `after=` gives where it ended. A `react` answered while the next reaction prompt comes up no longer reports `TIMEOUT` after 10 s;
   it comes back done, with that prompt. The answer had landed: the game's popup is down 30-82 ms between two prompts,
   under the 80 ms between the job's checks, so the next prompt read as the same one at the same event count (the v0.11
