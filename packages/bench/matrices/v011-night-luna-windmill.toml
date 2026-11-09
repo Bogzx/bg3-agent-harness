@@ -1,0 +1,16 @@
+# bench-v0.11 night queue (owner 2026-11-09): group 2, Luna, windmill alone: the gate. 1 ledger dollar is 25 credits; the ledger cap of 320 is 8,000 credits, with Astra and Luna sharing it.
+# max_cost is the run's cap and its reserve. An invalid run is rerun, at most 2 times.
+name = "v011-night-luna-windmill"
+order = "cell"
+allow_gaps = false
+allow_unverified = true
+models = ["profiles/gpt-6-luna-pi.toml"]
+scenarios = [
+  "fight_act1_windmill",
+]
+conditions = ["rules"]
+repeats = 1
+
+[budget]
+file = "runtime/budget-v011-night-codex.json"
+max_cost = { fight_act1_windmill = 0.5 }

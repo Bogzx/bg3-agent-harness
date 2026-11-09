@@ -1,0 +1,21 @@
+# bench-v0.11 round robin at L5 (owner 2026-11-09: "everytone palys vs everyone"), one pair per file so pK can pick
+# pairs with a clean tree. Pair 14 of the 14 in tonight's order; sol v DeepSeek is in v011-sol-arena.toml. Two matches,
+# sides swapped. max_cost per side: high estimate x 1.5, at least $0.50 for models without a Codex rate (Haiku, Sonnet)
+# and Luna; DeepSeek's is S6's L5 cap. An invalid match is rerun, at most 2 times; one ending at its cap is not.
+name = "v011-rr-l5-luna-deepseek"
+pairs = [["profiles/gpt-6-luna-pi.toml", "profiles/deepseek-flash.toml"]]
+arenas = ["builds-l5-4v4-v1"]
+repeats = 1
+allow_unverified = true
+
+[budget]
+file = "runtime/budget-v011-rr.json"
+max_cost = { "builds-l5-4v4-v1" = 0.5 }
+
+[budget.models]
+"profiles/gpt-6-luna-pi.toml" = ["runtime/budget-v011-night-codex.json"]
+"profiles/deepseek-flash.toml" = ["../ovh-e2e/runtime/budget-deepseek.json"]
+
+[budget.max_cost_models]
+"profiles/gpt-6-luna-pi.toml" = 0.5
+"profiles/deepseek-flash.toml" = 0.25

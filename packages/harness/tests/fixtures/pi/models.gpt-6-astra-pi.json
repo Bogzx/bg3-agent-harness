@@ -1,0 +1,39 @@
+{
+ "providers": {
+  "openai-codex": {
+   "baseUrl": "https://chatgpt.com/backend-api",
+   "api": "openai-codex-responses",
+   "apiKey": "${BG3AI_CODEX_ACCESS_TOKEN}",
+   "models": [
+    {
+     "id": "gpt-6-astra",
+     "name": "gpt-6-astra",
+     "api": "openai-codex-responses",
+     "reasoning": true,
+     "input": [
+      "text",
+      "image"
+     ],
+     "contextWindow": 272000,
+     "maxTokens": 128000,
+     "cost": {
+      "input": 10.0,
+      "output": 50.0,
+      "cacheRead": 1.0,
+      "cacheWrite": 12.5
+     },
+     "thinkingLevelMap": {
+      "off": null,
+      "minimal": "low"
+     },
+     "compat": {
+      "supportsOpenAIGrammarTools": true,
+      "supportsAdditionalTools": true,
+      "supportsToolSearch": true,
+      "supportsMidConvoSystemMessages": true
+     }
+    }
+   ]
+  }
+ }
+}
