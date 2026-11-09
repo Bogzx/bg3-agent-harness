@@ -132,6 +132,7 @@ def test_an_agent_process_writes_its_sides_files_and_reports_its_exit(tmp_path):
     assert ex == aagents.AgentExit("exited", 0, "conv-1", 0.02)
     req = client.requests[0]
     assert req.env["BG3AI_SIDE"] == "B" and req.env["BG3AI_METRICS_PATH"] == f"{tmp_path / 'B-r1'}.metrics.jsonl"
+    assert req.env["BG3AI_HANDLES_PATH"] == str(tmp_path / "B.handles.json")  # the side's: no tag, a resume keeps it
     kinds = [json.loads(x)["kind"] for x in (tmp_path / "B.events.jsonl").read_text().splitlines()]
     assert kinds == ["session_start", "init", "tool_call", "tool_result", "result", "session_end"]
     assert (tmp_path / "B-r1.jsonl").read_text().count("\n") == 4
@@ -178,6 +179,44 @@ def test_an_agent_process_charges_no_model_time_before_its_clients_init(tmp_path
     )
     t[0] = 1030.0  # 30 s of startup: no init came
     assert p.model_s() == 0.0
+    p.stop()
+
+
+class GatedClient(ScriptClient):
+    """Prints its first line, waits for the file `gate`, prints its second, then thinks on until stopped."""
+
+    def __init__(self, first: dict, second: dict, gate: Path) -> None:
+        super().__init__([first, second])
+        self.gate = gate
+
+    def command(self, req: clients.Request) -> list[str]:
+        a, b = (json.dumps(x) + "\n" for x in self.lines)
+        code = (
+            f"import os, sys, time; sys.stdout.write({a!r}); sys.stdout.flush()\n"
+            f"while not os.path.exists({str(self.gate)!r}): time.sleep(0.01)\n"
+            f"sys.stdout.write({b!r}); sys.stdout.flush(); time.sleep(60)"
+        )
+        return [sys.executable, "-c", code]
+
+
+def test_silent_model_time_runs_from_the_streams_last_line(tmp_path):
+    gate = tmp_path / "gate"
+    client = GatedClient({"kind": "init", "tools": 3, "mcp": []}, {"kind": "usage", "cost_usd": 0.03}, gate)
+    t = [1000.0]
+    p = aagents.AgentProcess(
+        "A", aagents.SideClient(client, "m", None, {}, 3), "go", "c", False, "", tmp_path, {}, clock=lambda: t[0]
+    )
+    deadline = time.monotonic() + 20
+    while p.model.since is None and time.monotonic() < deadline:  # the pump read the init: the model clock runs
+        time.sleep(0.01)
+    t[0] = 1060.0
+    assert (p.model_s(), p.silent_model_s()) == (60.0, 60.0)
+    gate.touch()
+    while p.cost_usd() < 0.03 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert (p.model_s(), p.silent_model_s()) == (60.0, 0.0)  # the line reset it
+    t[0] = 1090.0
+    assert (p.model_s(), p.silent_model_s()) == (90.0, 30.0)
     p.stop()
 
 

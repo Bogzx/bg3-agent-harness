@@ -103,7 +103,12 @@ class AgentProcess:
         self.tool_calls = 0
         self.conversation = conversation
         stem = out / f"{side}{tag}"
-        env = {**sc.env, "BG3AI_METRICS_PATH": f"{stem}.metrics.jsonl"}
+        # the handles file is the side's, not this process's: a resume's conversation holds the ids it was shown
+        env = {
+            **sc.env,
+            "BG3AI_METRICS_PATH": f"{stem}.metrics.jsonl",
+            "BG3AI_HANDLES_PATH": str(out / f"{side}.handles.json"),
+        }
         self.env, self.tools_expected = env, sc.tools_expected
         req = clients.Request(
             prompt,
@@ -121,6 +126,7 @@ class AgentProcess:
         self.cost = spend.ProcessCost()
         self.model = ModelClock()
         self.last_output = clock()
+        self.model_at_output = 0.0  # the model clock at the stream's last line
         self.mcp: str | None = None
         self.api_texts: list[str] = []
         self.overflow: str | None = None  # pi's overflow result
@@ -159,6 +165,7 @@ class AgentProcess:
         assert self.proc.stdout is not None
         for line in self.proc.stdout:
             now = self.last_output = self.clock()
+            self.model_at_output = self.model.model_s(now)
             self.raw_f.write(line)
             self.raw_f.flush()
             try:
@@ -205,6 +212,10 @@ class AgentProcess:
 
     def model_s(self) -> float:
         return self.model.model_s(self.clock())
+
+    def silent_model_s(self) -> float:
+        """The model time since the stream's last line: a client that streams writes through a long thought."""
+        return self.model_s() - self.model_at_output
 
     def cost_usd(self) -> float:
         """The process's cost so far: spend.ProcessCost on its stream (pi: the running cost after each model

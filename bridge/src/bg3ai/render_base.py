@@ -3,7 +3,10 @@ text, and compact(). render.py re-exports these names."""
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import threading
 from typing import Any
 
 UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
@@ -12,23 +15,44 @@ PREFIXED_UUID_RE = re.compile(r"\b\w+_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 
 
 class Handles:
-    def __init__(self) -> None:
+    def __init__(self, path: str | None = None) -> None:
+        """`path`: the file that keeps the map across a restart of this process (an arena side's: a resumed agent's
+        conversation holds the ids it was shown, and a new numbering would point them at other characters)."""
         self.by_uuid: dict[str, str] = {}
         self.by_handle: dict[str, str] = {}
         self.names: dict[str, str] = {}  # handle -> last known display name
         self._n = 0
+        self.path = path
+        self.lock = threading.Lock()
+        if path and os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                saved = json.load(f)
+            self.by_uuid, self.names = saved["handles"], saved["names"]
+            self.by_handle = {h: u for u, h in self.by_uuid.items()}
+            self._n = max((int(h[1:]) for h in self.by_handle), default=0)
 
     def get(self, uuid: str, name: str | None = None) -> str:
         uuid = self._bare(uuid)
-        h = self.by_uuid.get(uuid)
-        if h is None:
-            self._n += 1
-            h = f"e{self._n}"
-            self.by_uuid[uuid] = h
-            self.by_handle[h] = uuid
-        if name:
-            self.names[h] = name
+        with self.lock:
+            h = self.by_uuid.get(uuid)
+            changed = h is None
+            if h is None:
+                self._n += 1
+                h = f"e{self._n}"
+                self.by_uuid[uuid] = h
+                self.by_handle[h] = uuid
+            if name and self.names.get(h) != name:
+                self.names[h] = name
+                changed = True
+            if changed and self.path:
+                self._save(self.path)
         return h
+
+    def _save(self, path: str) -> None:
+        """Written whole and moved into place, so a process killed mid-write leaves the last full map."""
+        with open(f"{path}.tmp", "w", encoding="utf-8") as f:
+            json.dump({"handles": self.by_uuid, "names": self.names}, f)
+        os.replace(f"{path}.tmp", path)
 
     @staticmethod
     def _bare(uuid: str) -> str:

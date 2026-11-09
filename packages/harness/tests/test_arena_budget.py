@@ -61,7 +61,7 @@ def test_an_ended_process_s_cost_counts_toward_the_cap(tmp_path):
     """A's first process exits mid-fight having spent $0.32; its resume spends on: the cap counts both."""
 
     def exits_then_spends(game: Game, side: str, run: Run) -> None:
-        if run.conversation == "conv-A" and run.prompt != am.RESUME:
+        if run.conversation == "conv-A" and "You play side" in run.prompt:  # its first process, not the resume
             run.cost = 0.32
             run.end()
             return

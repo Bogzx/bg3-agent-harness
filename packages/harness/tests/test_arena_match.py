@@ -294,6 +294,7 @@ class Run:
         self.agents, self.side, self.prompt = agents, side, prompt
         self.conversation = conversation or f"conv-{side}"
         self.model = 0.0
+        self.silent = 0.0  # the model time since its stream last wrote anything
         self.cost = 0.01  # its client's running cost (USD); a play may add to it
         self.ended: set[str] = set()  # ender_once's ended members
         self.exit: am.AgentExit | None = None
@@ -312,6 +313,9 @@ class Run:
 
     def model_s(self) -> float:
         return self.model
+
+    def silent_model_s(self) -> float:
+        return self.silent
 
     def cost_usd(self) -> float:
         return self.cost
@@ -774,7 +778,11 @@ def test_a_client_fault_is_resumed_once_then_the_match_is_invalid(tmp_path, reas
     assert (end["failed"], end["cause"]) == ("B", cause)
     assert (out.end["failed"], out.end["cause"]) == ("B", cause)  # arena.json's `end` (live.play writes out.end)
     assert out.invalid is not None and out.invalid.startswith("client_fault: side B's agent")
-    assert agents.started[2:] == [("B", "The fight is on.", "conv-B", "-r1")]  # one resume, same conversation
+    resumed = (
+        "The fight is on. Your client stopped and was restarted; the game kept running. "
+        "Now round 1, Wyll's turn (side B)."
+    )
+    assert agents.started[2:] == [("B", resumed, "conv-B", "-r1")]  # one resume, same conversation
     assert [e.reason for e in out.exits["B"]] == [reason, reason]
     g = grade(tmp_path)
     assert (g["valid"], g["invalid_reason"], g["result"], g["fault"]) == (
