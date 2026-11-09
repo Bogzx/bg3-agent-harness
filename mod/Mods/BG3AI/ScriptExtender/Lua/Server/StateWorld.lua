@@ -467,7 +467,8 @@ function S.combat(ctx)
                         -- HP (HIDE_NPC_HP), and an NPC reads 0 HP before it counts as dead.
                         local zero = h and h.hp == 0 and (ctx.is_party[u]
                             or (U.side() and BG3AI.Arena.side_of(u) and o.hp_pct ~= nil))
-                        if not o.dead and (truthy(osi(Osi.HasActiveStatus, u, "DOWNED")) or zero) then
+                        local down_status = truthy(osi(Osi.HasActiveStatus, u, "DOWNED"))
+                        if not o.dead and (down_status or zero) then
                             o.downed = true
                         end
                         if tb then
@@ -504,6 +505,12 @@ function S.combat(ctx)
                                         out.turn_group = out.turn_group or {}
                                         table.insert(out.turn_group, u)
                                         out.current = out.current or u
+                                        -- Dropped to 0 HP in its own turn, no DOWNED: no death save passes this turn,
+                                        -- the game waits for its end (windmill 01:39:19, 81 s). A DOWNED turn passes,
+                                        -- and in a match the phase tick ends this one itself (Arena passCantAct).
+                                        if zero and not down_status and not o.dead and not U.side() then
+                                            o.zero_hp_turn = true
+                                        end
                                     end
                                 end
                                 if tb.ActedThisRoundInCombat then o.acted = true end

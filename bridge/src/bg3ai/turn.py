@@ -127,3 +127,11 @@ def party_acting(combat: dict, party: set) -> list[str]:
     return [u for u in acting(combat) if u in party and u not in down]
 
 
+def zero_hp_turns(combat: dict, party: set) -> list[str]:
+    """Party members at 0 HP without the Downed status whose open turn the game keeps (state.combat `zero_hp_turn`).
+    They read downed, so party_acting leaves them out, but no death saving throw passes this turn: until it is ended
+    the game waits (windmill 01:39:19: 81 s of end_turn's wait, then 15 s of wait_for, on Gale's turn)."""
+    rows = {o.get("uuid"): o for o in (combat or {}).get("order") or [] if isinstance(o, dict)}
+    return [u for u in acting(combat) if u in party and rows.get(u, {}).get("zero_hp_turn")]
+
+

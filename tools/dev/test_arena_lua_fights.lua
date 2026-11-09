@@ -143,6 +143,38 @@ test("a team member at 0 HP without DOWNED: both sides read downed where its HP 
     if not ok then error(err, 0) end
 end)
 
+-- Windmill 01:39:19 (81 s): 0 HP without DOWNED in the member's own open turn: only its end moves the game on.
+test("zero_hp_turn: 0 HP, no DOWNED, its open turn; not in a match, whose phase tick ends that turn itself", function()
+    begin()
+    order = { A1, B1 }
+    world[A1].comps.Health.Hp = 0
+    setTurn(A1, true, false)
+    local c, r = combatAs()
+    eq(r[A1].zero_hp_turn, true, "the open turn at 0 HP, outside a side")
+    eq(c.turn_group and c.turn_group[1], A1, "in the group the wait reads")
+    local _, sided = combatAs("A")
+    eq(sided[A1].zero_hp_turn, nil, "a side's read: the phase tick ends it (passCantAct)")
+    setTurn(A1, false, false)
+    local _, idle = combatAs()
+    eq(idle[A1].zero_hp_turn, nil, "not its turn")
+    setTurn(A1, true, true)
+    local _, ended = combatAs()
+    eq(ended[A1].zero_hp_turn, nil, "its end is in")
+    setTurn(A1, true, false)
+    world[A1].comps.Health.Hp = 5
+    local _, alive = combatAs()
+    eq(alive[A1].zero_hp_turn, nil, "above 0 HP")
+    world[A1].comps.Health.Hp = 0
+    osiv[key("HasActiveStatus", A1, "DOWNED")] = 1
+    local _, down = combatAs()
+    eq(down[A1].downed, true, "downed by the status")
+    eq(down[A1].zero_hp_turn, nil, "the status's turn passes by itself")
+    osiv[key("HasActiveStatus", A1, "DOWNED")] = nil
+    osiv[key("IsDead", A1)] = 1
+    local _, dead = combatAs()
+    eq(dead[A1].zero_hp_turn, nil, "dead")
+end)
+
 -- A move's reactions (Actions.lua reaction_annotate) are read as the mover's side (RPC as_job): a reactor that side
 -- can't see is not named, nor its spell; the damage the mover took from it still shows (the event log's "Someone").
 test("a move's reactions as the mover's side sees them: an unseen reactor isn't named, its damage still shows",
