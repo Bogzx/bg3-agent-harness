@@ -14,7 +14,7 @@
   "properties": {
     "schema": {"const": 1},
     "run_id": {"type": "string", "minLength": 1},
-    "outcome": {"enum": ["reached", "failed", "timeout", "ended_by_agent", "over_budget", "gave_up", "runner_error"], "description": "failed (added 2026-10-22, still v1): a run its live verdict ended on a fired never or (2026-10-25) a party wipe. ended_by_agent (added 2026-11-05, still v1): a maximise run that ended at a turn's end with no acting call since its last restart, before its time cap; runs before bench-v0.11 say timeout"},
+    "outcome": {"enum": ["reached", "failed", "timeout", "ended_by_agent", "agent_exited", "over_budget", "gave_up", "runner_error"], "description": "agent_exited (added 2026-11-09, still v1): the agent ended its turn with time left and nothing resumed it; older runs say timeout. failed (added 2026-10-22, still v1): a run its live verdict ended on a fired never or (2026-10-25) a party wipe. ended_by_agent (added 2026-11-05, still v1): a maximise run that ended at a turn's end with no acting call since its last restart, before its time cap; runs before bench-v0.11 say timeout"},
     "valid": {"type": "boolean"},
     "invalid_reason": {"enum": [null, "runner_error", "foreign_save", "harness_failure", "operator", "off_route", "unseeded"], "description": "foreign_save (added 2026-10-25, still v1): the run's game loaded a save that is not its start save or its own"},
     "invalid_cause": {

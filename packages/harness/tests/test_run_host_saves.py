@@ -138,7 +138,7 @@ def test_the_agents_load_game_of_its_own_save_is_the_runs(rig: Rig):
     agent_loaded(START, 1201.0)
     assert not sw.check() and sw.known == "boot-own-2"
     rec = rig.h.record(JOB, SAVE_SC, run_dir("b"), outcome())
-    assert rec["outcome"] == "timeout" and "foreign_save" not in rec
+    assert rec["outcome"] == "agent_exited" and "foreign_save" not in rec
     assert rec["reloads"] == 2  # bg3bench result.json's reloads (the record had none: always 0)
 
 

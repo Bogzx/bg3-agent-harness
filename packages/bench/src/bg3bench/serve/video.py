@@ -68,7 +68,7 @@ def ending(res: Mapping[str, Any]) -> str:
         return ""
     if res.get("outcome") == "timeout":
         return "TIME CAP"
-    if res.get("outcome") == "ended_by_agent":
+    if res.get("outcome") in ("ended_by_agent", "agent_exited"):
         return "ENDED BY AGENT"
     if res.get("outcome") == "over_budget":
         return "COST CAP"

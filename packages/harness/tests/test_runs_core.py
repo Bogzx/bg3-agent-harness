@@ -244,6 +244,8 @@ class Caps(TmpDir):
         f = runs.outcome_failure("ended_by_agent", "why", 9, [{"class": "harness"}])
         self.assertEqual([(x["kind"], x["class"], x["detail"]) for x in f], [("ended_by_agent", "unknown", "why")])
         self.assertFalse(runs.is_clean("ended_by_agent", [], []))
+        f = runs.outcome_failure("agent_exited", "", 9, [])
+        self.assertEqual([(x["kind"], x["class"]) for x in f], [("agent_exited", "agent")])
 
 
 # ======================================================================== run metrics

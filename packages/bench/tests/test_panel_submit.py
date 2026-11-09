@@ -359,6 +359,7 @@ def test_video_job_and_command(run_dir):
         ({"passed": True, "outcome": "reached", "deaths": {"wipes": 1}}, []),  # a pass has no ending
         ({"passed": False, "outcome": "timeout"}, ["--ending", "TIME CAP"]),
         ({"passed": None, "outcome": "timeout"}, ["--ending", "TIME CAP"]),  # a maximise run ends on its cap
+        ({"passed": None, "outcome": "agent_exited"}, ["--ending", "ENDED BY AGENT"]),
         ({"passed": None, "outcome": "ended_by_agent"}, ["--ending", "ENDED BY AGENT"]),  # not its time cap
         ({"passed": False, "outcome": "over_budget"}, ["--ending", "COST CAP"]),
         ({"passed": False, "outcome": "failed", "deaths": {"fights": 2, "wipes": 1}}, ["--ending", "WIPED"]),
