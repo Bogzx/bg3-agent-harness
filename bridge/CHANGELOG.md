@@ -5,6 +5,14 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-09: a wait stops at an open turn at 0 HP
+
+- end_turn's wait and `wait_for('my_turn')` return when the game is waiting on a party member at 0 HP without the
+  Downed status, instead of running their caps: `now e2's turn`, then `e2 Gale is at 0 HP without the Downed status (no
+  death saving throws): the game kept its turn open`, no action block. `state.combat` rows carry `zero_hp_turn` for
+  that member (shown in the row). `end_turn` with no `who` ends that member when no one else can act. A turn under
+  the Downed status still passes by itself; a match is unchanged. Tool definitions don't change.
+
 ## 2026-11-08: a resumed session keeps its real end
 
 - An agent that ended its turn during a fight hold was resumed with the held end (up to 15 min later) as its deadline,

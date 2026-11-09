@@ -229,7 +229,15 @@ game unless it says so.
   fault interrupted keeps the model time it had used. An arena side's short ids (e12) now survive its restart, kept in
   `<side>.handles.json` (`BG3AI_HANDLES_PATH`, set by the arena only): a new process renumbered them, so an id from the
   conversation could name another character. A playthrough's resume still renumbers; out of scope here.
-  bench-v0.11's release cites it.
+  bench-v0.11's release cited it until 0.19.0.
+- 0.19.0 (2026-11-09): what the agent sees changed: end_turn's wait and wait_for('my_turn') stop when the game is
+  waiting on a party member at 0 HP without the Downed status, whose open turn only an end moves on (state.combat
+  `zero_hp_turn`), and say so: `now e2's turn`, then `e2 Gale is at 0 HP without the Downed status (no death saving
+  throws): the game kept its turn open`, with no action block. The row also reads `zero_hp_turn`. They left that
+  member out as downed and ran their caps (windmill 01:39:19: 81 s, then 15 s, one of 223 end_turn calls in the v0.11
+  pilot's 19 sessions). A turn under the Downed status still passes by itself, enemy turns and the other side's are
+  waited out as before, and a match is unchanged: its phase tick ends that turn itself. Tool definitions don't
+  change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
