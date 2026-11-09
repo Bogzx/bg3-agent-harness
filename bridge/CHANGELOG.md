@@ -5,6 +5,13 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-09: a lockpick with no roll says what the game did
+
+- A Lockpick row pressed with no roll read `lockpick: FAILED — nothing happened`. When the game answered with a failed
+  Use of the target by the actor and the actor stayed put, it now reads `the game ran a plain Use of it, which failed;
+  no lockpicking started; the actor did not move`. Any other no-effect keeps `nothing happened`. Why the game does
+  this is not known. Tool definitions don't change.
+
 ## 2026-11-09: a wait stops at an open turn at 0 HP
 
 - end_turn's wait and `wait_for('my_turn')` return when the game is waiting on a party member at 0 HP without the

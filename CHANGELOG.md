@@ -236,8 +236,10 @@ game unless it says so.
   throws): the game kept its turn open`, with no action block. The row also reads `zero_hp_turn`. They left that
   member out as downed and ran their caps (windmill 01:39:19: 81 s, then 15 s, one of 223 end_turn calls in the v0.11
   pilot's 19 sessions). A turn under the Downed status still passes by itself, enemy turns and the other side's are
-  waited out as before, and a match is unchanged: its phase tick ends that turn itself. Tool definitions don't
-  change. bench-v0.11's release cites it.
+  waited out as before, and a match is unchanged: its phase tick ends that turn itself. A Lockpick row pressed with no
+  roll that the game answered with a failed Use of the door by the actor, who stayed put, reads `the game ran a plain
+  Use of it, which failed; no lockpicking started; the actor did not move` (read live: 16 of 16 no-rolls), no longer
+  `nothing happened`. Tool definitions don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
