@@ -216,9 +216,10 @@ game unless it says so.
   a run's verdict and grade read only those, so a down the game undoes at once can't end a run. No way up is recorded:
   the game reports up before a death and before the Downed status lands (fight_act1_windmill at 678.9). What the agent
   sees doesn't change. bench-v0.11's release cited it until 0.18.0.
-- 0.18.0 (2026-11-09): what the agent sees changed: an arena agent restarted mid-fight is told that its client stopped
-  and was restarted (after a client fault) and the round and whose turn it is, facts only, where it was told only "The
-  fight is on." A stalled stream is infrastructure, not play (owner, 2026-11-09; the v0.11 pilot's L12 match was lost
+- 0.18.0 (2026-11-09): what the agent sees changed: an arena agent restarted mid-fight is told, facts only, where it
+  was told only "The fight is on.": after a client fault, that its client stopped and was restarted, the game kept
+  running, and an order sent before it stopped may have run (live: one did); and the round and whose turn it is,
+  naming only its own side's character, else "the other side's turn". A stalled stream is infrastructure, not play (owner, 2026-11-09; the v0.11 pilot's L12 match was lost
   by forfeit to one stalled DeepSeek response): a phase capped with its side's stream silent through a whole
   `turn_cap_s` of model time, or in progress when its side's client failed, is forced as before but counts toward no
   forfeit and breaks the run (`arena_turn_forced`'s `excused`, `stream_silent` or `client_fault`). A second fault is

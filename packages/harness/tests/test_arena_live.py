@@ -220,6 +220,34 @@ def test_silent_model_time_runs_from_the_streams_last_line(tmp_path):
     p.stop()
 
 
+def test_a_tool_held_for_200_s_is_no_silence(tmp_path):
+    """Silence is model time: the clock is stopped while a tool is out, and the wall clock isn't what counts."""
+    lines = [
+        {"kind": "init", "tools": 3, "mcp": []},
+        {"kind": "tool_call", "tool": "wait_for", "call_id": "c1"},
+        {"kind": "usage", "cost_usd": 0.03},
+    ]
+    t = [1000.0]
+    p = aagents.AgentProcess(
+        "A",
+        aagents.SideClient(SpendingClient(lines), "m", None, {}, 3),
+        "go",
+        "c",
+        False,
+        "",
+        tmp_path,
+        {},
+        clock=lambda: t[0],
+    )
+    deadline = time.monotonic() + 20
+    while p.cost_usd() < 0.03 and time.monotonic() < deadline:  # the pump read all three lines
+        time.sleep(0.01)
+    t[0] = 1200.0
+    assert p.clock() - p.last_output == 200.0
+    assert (p.model_s(), p.silent_model_s()) == (0.0, 0.0)
+    p.stop()
+
+
 def test_an_agent_with_the_wrong_tool_count_is_an_mcp_failure(tmp_path):
     client = ScriptClient([{"kind": "init", "tools": 90, "mcp": ["bg3:connected"]}])
     sc = aagents.SideClient(client, "m", None, {"BG3AI_TOOLS_OFF": "arena-v1"}, tools_expected=60)

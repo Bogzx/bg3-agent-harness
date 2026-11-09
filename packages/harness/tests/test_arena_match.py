@@ -779,8 +779,8 @@ def test_a_client_fault_is_resumed_once_then_the_match_is_invalid(tmp_path, reas
     assert (out.end["failed"], out.end["cause"]) == ("B", cause)  # arena.json's `end` (live.play writes out.end)
     assert out.invalid is not None and out.invalid.startswith("client_fault: side B's agent")
     resumed = (
-        "The fight is on. Your client stopped and was restarted; the game kept running. "
-        "Now round 1, Wyll's turn (side B)."
+        "The fight is on. Your client stopped and was restarted; the game kept running, and an order sent before it "
+        "stopped may have run. Now round 1, Wyll's turn (side B)."
     )
     assert agents.started[2:] == [("B", resumed, "conv-B", "-r1")]  # one resume, same conversation
     assert [e.reason for e in out.exits["B"]] == [reason, reason]

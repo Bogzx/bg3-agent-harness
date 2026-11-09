@@ -184,6 +184,9 @@ CONTEXT_OVERFLOW = "context_overflow"  # an agent's exit reason and its forfeit'
 KICKOFF_OVERFLOW = "kickoff_overflow"  # an overflow before the side's first tool call: a client fault's cause
 KICKOFF = "The fight is on. You play side {side}: {names}."
 RESUME = "The fight is on."
+FAULT_RESUME = (
+    " Your client stopped and was restarted; the game kept running, and an order sent before it stopped may have run."
+)
 
 
 class Rpc(Protocol):
@@ -432,11 +435,13 @@ class _Ended(Exception):  # noqa: N818 - control flow inside run_arena
         self.capped = capped  # over_budget: the sides over their cap
 
 
-def resume_prompt(fault: bool, turn: Turn | None) -> str:
-    """What a restarted agent is told, facts only: the fight, that its client failed (a fault), and whose turn it is
-    (not while a capped phase is ending: the next one isn't known)."""
-    fell = " Your client stopped and was restarted; the game kept running." if fault else ""
-    now = f" Now round {turn.round}, {turn.name}'s turn (side {turn.side})." if turn and not turn.capped else ""
+def resume_prompt(fault: bool, turn: Turn | None, side: str) -> str:
+    """What `side`'s restarted agent is told, facts only: the fight, that its client failed (a fault), and whose turn
+    it is (not while a capped phase is ending: the next one isn't known). Only its own side's character is named: the
+    other team's are listed only while seen (rules/arena.md)."""
+    fell = FAULT_RESUME if fault else ""
+    who = f"{turn.name}'s turn (side {side})" if turn and turn.side == side else "the other side's turn"
+    now = f" Now round {turn.round}, {who}." if turn and not turn.capped else ""
     return f"{RESUME}{fell}{now}"
 
 
@@ -844,7 +849,7 @@ def run_arena(
                         detail=f"side {s}'s agent: {ex.reason}",
                     )
                 n = faults[s] + exits[s]
-                told = resume_prompt(ex.fault, ref.turn)
+                told = resume_prompt(ex.fault, ref.turn, s)
                 log(f"arena {spec.name}: side {s} resumed: {told}")
                 runs[s] = agents.start(s, told, ex.conversation, f"-r{n}")
             cost, caps = spent(), side_caps or {}

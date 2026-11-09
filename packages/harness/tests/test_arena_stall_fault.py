@@ -110,6 +110,29 @@ def test_a_fault_on_the_other_sides_turn_excuses_nothing(tmp_path):
     out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
     assert out.end is not None and (out.end["reason"], out.end["forfeit"]) == ("forfeit", "A")
     assert all("excused" not in e for e in forced_rows(tmp_path))
+    assert agents.started[2][0] == "B" and agents.started[2][1].endswith("Now round 1, the other side's turn.")
+
+
+def test_a_plain_exit_excuses_nothing_and_a_full_third_cap_forfeits(tmp_path):
+    """Two counted caps, the agent ends its process (exit 0) inside the third phase, the resumed one overruns it."""
+    seen = {"last": None, "phases": 0, "left": False}
+
+    def play(game: Game, side: str, run: Run) -> None:
+        char = my_turn(game, side)
+        if not char:
+            return
+        if char != seen["last"]:
+            seen.update(last=char, phases=seen["phases"] + 1)
+        if seen["phases"] == 3 and not seen["left"]:
+            seen["left"] = True
+            run.end()
+            return
+        run.model += 20
+
+    _model, game, clock, agents, spec = setup({"A": passer, "B": play})
+    out = am.run_arena(spec, SIDES, game, agents, tmp_path, clock)
+    assert out.end is not None and (out.end["reason"], out.end["forfeit"]) == ("forfeit", "B")
+    assert all("excused" not in e for e in forced_rows(tmp_path))
 
 
 def test_three_caps_with_the_stream_writing_still_forfeit(tmp_path):
@@ -164,19 +187,28 @@ def test_a_cap_with_output_inside_it_is_not_excused(tmp_path):
     assert out.end is not None and out.end["reason"] == "forfeit"
 
 
+FELL = (
+    "The fight is on. Your client stopped and was restarted; the game kept running, and an order sent before it "
+    "stopped may have run."
+)
+
+
 @pytest.mark.parametrize(
-    ("fault", "turn", "text"),
+    ("fault", "turn", "side", "text"),
     [
+        (True, am.Turn("B", "u", "Blue Dune", 5, ["u"]), "B", f"{FELL} Now round 5, Blue Dune's turn (side B)."),
         (
-            True,
-            am.Turn("B", "u", "Blue Dune", 5, ["u"]),
-            "The fight is on. Your client stopped and was restarted; the game kept running. "
-            "Now round 5, Blue Dune's turn (side B).",
+            False,
+            am.Turn("A", "u", "Red Dune", 5, ["u"]),
+            "A",
+            "The fight is on. Now round 5, Red Dune's turn (side A).",
         ),
-        (False, am.Turn("A", "u", "Red Dune", 5, ["u"]), "The fight is on. Now round 5, Red Dune's turn (side A)."),
-        (True, None, "The fight is on. Your client stopped and was restarted; the game kept running."),
-        (False, am.Turn("A", "u", "Red Dune", 5, ["u"], capped=True), "The fight is on."),
+        (False, am.Turn("A", "u", "Red Rogue", 3, ["u"]), "B", "The fight is on. Now round 3, the other side's turn."),
+        (True, am.Turn("A", "u", "Red Rogue", 3, ["u"]), "B", f"{FELL} Now round 3, the other side's turn."),
+        (True, None, "B", FELL),
+        (False, am.Turn("A", "u", "Red Dune", 5, ["u"], capped=True), "A", "The fight is on."),
+        (False, am.Turn("A", "u", "Red Dune", 5, ["u"], capped=True), "B", "The fight is on."),
     ],
 )
-def test_a_resumed_agent_is_told_the_facts(fault, turn, text):
-    assert am.resume_prompt(fault, turn) == text
+def test_a_resumed_agent_is_told_the_facts(fault, turn, side, text):
+    assert am.resume_prompt(fault, turn, side) == text
