@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.17.1 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.18.0 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -215,7 +215,20 @@ game unless it says so.
   debriefs against 21 records over six v0.11 pilot sessions). `downed`, `revived` and the snapshots stay the poll's and
   a run's verdict and grade read only those, so a down the game undoes at once can't end a run. No way up is recorded:
   the game reports up before a death and before the Downed status lands (fight_act1_windmill at 678.9). What the agent
-  sees doesn't change. bench-v0.11's release cites it.
+  sees doesn't change. bench-v0.11's release cited it until 0.18.0.
+- 0.18.0 (2026-11-09): what the agent sees changed: an arena agent restarted mid-fight is told that its client stopped
+  and was restarted (after a client fault) and the round and whose turn it is, facts only, where it was told only "The
+  fight is on." A stalled stream is infrastructure, not play (owner, 2026-11-09; the v0.11 pilot's L12 match was lost
+  by forfeit to one stalled DeepSeek response): a phase capped with its side's stream silent through a whole
+  `turn_cap_s` of model time, or in progress when its side's client failed, is forced as before but counts toward no
+  forfeit and breaks the run (`arena_turn_forced`'s `excused`, `stream_silent` or `client_fault`). A second fault is
+  still `client_fault`, invalid. Limits: a stall that starts inside what would be a side's third forced phase in a row
+  doesn't fill a whole cap, and still forfeits; a client that writes nothing during a response (`claude -p` writes
+  whole messages) reads as silent through a single response longer than the cap, while pi streams deltas. The turn the
+  fault interrupted keeps the model time it had used. An arena side's short ids (e12) now survive its restart, kept in
+  `<side>.handles.json` (`BG3AI_HANDLES_PATH`, set by the arena only): a new process renumbered them, so an id from the
+  conversation could name another character. A playthrough's resume still renumbers; out of scope here.
+  bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
@@ -654,6 +667,8 @@ game unless it says so.
   as a whole-party down still reads as a won combat in a `combats_won` goal, as before (none on record). Reading the
   ring there would fail at grade a run the live verdict had ended as passed, and a last member's down and straight up
   just before a win would grade the win as a defeat.
+  The arena grader's forfeit streak skips a forced turn carrying `excused`, as it does `charged_cap`: the runner and
+  the grader read the same run. `arena.py` isn't a suite file, so no digest; no match on record carries it.
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.
