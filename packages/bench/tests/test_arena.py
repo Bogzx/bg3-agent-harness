@@ -695,6 +695,7 @@ INVALID = {
     "abort": {"winner": None, "reason": "abort", "hp": (0.5, 0.5)},
     "fault": {"winner": None, "reason": "fault", "hp": (0.5, 0.5)},
     "client_fault": {"winner": None, "reason": "client_fault", "failed": "B", "cause": "api_error", "hp": (0.5, 0.5)},
+    "tool_faults": {"invalid": "tool_faults"},
 }
 INCONSISTENT = {
     "wipe with the loser standing": {"hp": (0.5, 0.1)},

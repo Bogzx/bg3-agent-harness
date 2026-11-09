@@ -61,6 +61,7 @@
         "arena_group_end_written",
         "arena_turn_readmitted",
         "arena_control_lost",
+        "arena_tool_faults",
         "arena_reaction_budget_spent",
         "arena_turn_charged",
         "arena_round",
@@ -448,8 +449,11 @@
             "description": "the runner's own end, when the mod's end came before it"
           },
           "invalid": {
-            "const": "scripted",
-            "description": "a side was the harness's scripted no-model client: a live check, never graded"
+            "enum": [
+              "scripted",
+              "tool_faults"
+            ],
+            "description": "the match can't be graded whatever its end: scripted (a side was the harness's scripted no-model client: a live check) or tool_faults (a side's tool timeouts and exceptions past the one tolerated: infrastructure, rerun)"
           },
           "cost": {
             "type": "object",
@@ -789,6 +793,40 @@
           },
           "why": {
             "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ev": {
+            "const": "arena_tool_faults"
+          }
+        }
+      },
+      "then": {
+        "description": "A side's tool timeouts and tool exceptions in the match, counted once its agent stopped (one record for a side with any): one tolerated, a second makes the match invalid (arena_end's invalid: tool_faults).",
+        "required": [
+          "side",
+          "n",
+          "faults"
+        ],
+        "properties": {
+          "side": {
+            "$ref": "#/$defs/side"
+          },
+          "n": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "faults": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "description": "each failure as runs.stream_failures details it: the process, the tool, the error"
           }
         }
       }

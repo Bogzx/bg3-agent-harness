@@ -36,8 +36,8 @@ after its resume (`client_fault`: an API or provider error, a 400 that is no con
 before the side's first tool call (cause `kickoff_overflow`: the harness's prompt filled the context), our bg3 MCP
 server, a hang or a crash; `failed` names the
 side, `cause` the failure; owner D459: the model's infrastructure, not its play) or the match reached its money
-cap (`over_budget`: no winner; `capped` names the sides over their cap), or when the facts
-don't match the arena or contradict themselves (INVALID). With the match's rolls.jsonl rows, `luck` is each side's
+cap (`over_budget`: no winner; `capped` names the sides over their cap), when a side's second tool fault made it so
+(arena_end's `invalid: tool_faults`), or when the facts don't match the arena or contradict themselves (INVALID). With the match's rolls.jsonl rows, `luck` is each side's
 stats.luck_z over its own characters' d20 faces (a row's `roller` uuid in arena_start's `uuids`).
 
 `results(matches, seed)` is the v1 table, over valid matches with the pairing as the resampled unit:
@@ -600,8 +600,8 @@ def grade(
         why = _facts_problem(records, arena)
     starts, ends = _events(records, "arena_start"), _events(records, "arena_end")
     start, end = starts[0] if starts else {}, ends[0] if ends else {}
-    if why is None and end.get("reason") in FAULT_REASONS:
-        why = end["reason"]
+    if why is None:  # a fault end, or arena_end's `invalid` (tool_faults; scripted was _facts_problem's)
+        why = end["reason"] if end.get("reason") in FAULT_REASONS else end.get("invalid")
     turns = _turns(records, end.get("t", math.inf)) or []
     ok = why is None
     uuids = start.get("uuids")

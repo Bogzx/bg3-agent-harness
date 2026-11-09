@@ -242,7 +242,7 @@ UI_BUSY = "bg3le: UI busy"
 UI_HANG_MIN_N, UI_HANG_MIN_S, UI_HANG_GAP_S = 5, 300.0, 180.0
 
 
-def stream_failures(stream: Path) -> list[dict]:
+def stream_failures(stream: Path) -> list[dict[str, Any]]:
     """One play stream (Sxxx.jsonl / Sxxx-rN.jsonl, any client): MCP server not connected, model API/usage errors
     (kind claude_api, whichever client), tool exceptions and timeouts, fairness-guard blocks, fairness leaks, Game
     Over. Same-kind failures of one tool and error are grouped (n)."""
