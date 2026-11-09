@@ -24,6 +24,6 @@ def test_record_carries_the_referee_rings_health(rig: Rig):
     rig.calls.clear()
     rec = h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())
     assert rec["referee"] == {"ring_lost": 3, "never_fired": ["Osiris:ShortRested"]}
-    assert rig.calls == ["end_facts(timeout)", "ring_health", "scenario_undo", "end_run_game(run end)"]
+    assert rig.calls == ["end_facts(agent_exited)", "ring_health", "scenario_undo", "end_run_game(run end)"]
     h.start(JOB, SAVE_SC, run_dir("m-grove"))
     assert h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())["referee"] is None  # no ring polled

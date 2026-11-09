@@ -73,7 +73,7 @@ def test_a_bench_run_is_recorded_from_the_game_up_to_its_run_end(rig: Rig):
     rig.calls.clear()
     rig.h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())
     # after run_end, before the game stops (the recording covers the whole run)
-    assert rig.calls == ["end_facts(timeout)", "ffmpeg stop", "scenario_undo", "end_run_game(run end)"]
+    assert rig.calls == ["end_facts(agent_exited)", "ffmpeg stop", "scenario_undo", "end_run_game(run end)"]
     idx = json.loads((out / "index.json").read_text())
     assert idx["segments"] == [] and [e["ev"] for e in idx["events"]] == ["start", "stop"]  # the fake wrote none
     assert idx["events"][-1]["reason"] == "shutdown"
