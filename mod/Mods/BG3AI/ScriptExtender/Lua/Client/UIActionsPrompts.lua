@@ -170,14 +170,19 @@ local function reactRows(w)
     return UI.findAll(w, function(e) return UI.name(e) == "ReactButton" end, { prune = true })
 end
 
--- Done when the shown prompt has one event fewer than `before`, or none. The next prompt comes back as the answering
--- side sees it (a job's checks run as its side): REVIEW-reactions F1.
-local function reactClosed(before)
+-- Done when the shown prompt has one event fewer than `before`, none, or another first event than `held` (the event
+-- answered, read before the answer went). The popup is down 30-82 ms between two prompts, under the 80 ms between
+-- checks, so the next prompt is often up at the same count (live.md 'React-timeout read': 3 of 5 declines read as a
+-- 10 s TIMEOUT). `==` holds an event's identity: stable over 2666 frames, false on all 3 next prompts read; its text
+-- can't, two saves can roll alike. A first event that doesn't read is no new prompt. The next prompt comes back as
+-- the answering side sees it (a job's checks run as its side): REVIEW-reactions F1.
+local function reactClosed(before, held)
     return function()
         local w2 = reactionPopup()
         local d2 = w2 and try(function() return w2.DataContext end)
         local n = d2 and UI.count(UI.path(d2, "Data.InterruptEvents")) or 0
-        if n < before or n == 0 then
+        local first = n > 0 and UI.path(d2, "Data.InterruptEvents.1")
+        if n < before or n == 0 or (first and first ~= held) then
             local next_prompt = n > 0 and S.sideReaction(S.reaction(UI.widgetMap())) or nil
             return "done", { pending = n > 0 and n or nil, reaction = next_prompt }
         end
@@ -185,8 +190,8 @@ local function reactClosed(before)
 end
 
 -- The job after an answer.
-local function reactWait(dc)
-    return waitJob("ui.react", 10000, reactClosed(UI.count(UI.path(dc, "Data.InterruptEvents"))))
+local function reactWait(dc, held)
+    return waitJob("ui.react", 10000, reactClosed(UI.count(UI.path(dc, "Data.InterruptEvents")), held))
 end
 
 -- The interruptors with a row chosen. Each is what InterruptUndecidedCommand takes (ReactionDecisionPopup.xaml:84).
@@ -207,8 +212,8 @@ end
 -- declined, the attack did no damage on a roll that hit, with nothing paid and no status; the same decline with nothing
 -- chosen landed. A click that chose a row and an accept that didn't follow leave this (a failed read, the runner's
 -- bound).
-local function untickThenDecline(dc, ticked)
-    local closed = reactClosed(UI.count(UI.path(dc, "Data.InterruptEvents")))
+local function untickThenDecline(dc, ticked, held)
+    local closed = reactClosed(UI.count(UI.path(dc, "Data.InterruptEvents")), held)
     for _, vm in ipairs(ticked) do check(UI.command(dc, "InterruptUndecidedCommand", vm)) end
     local declined = false
     return waitJob("ui.react", 10000, function()
@@ -263,13 +268,13 @@ RPC.register("ui.react", function(args)
     end
     if args.use == false then
         local ticked = not args.dry and chosenInterruptors(w) or {}
-        if #ticked > 0 then return untickThenDecline(dc, ticked) end
+        if #ticked > 0 then return untickThenDecline(dc, ticked, ev) end
         check(UI.command(dc, "InterruptDontReactPlayerCommand", ev, args.dry))
     else
         check(UI.command(dc, "InterruptAcceptPlayerCommand", ev, args.dry))
     end
     if args.dry then return { can = true } end
-    return reactWait(dc)
+    return reactWait(dc, ev)
 end)
 
 -- What a prompt's observers hold, all resources summed. A reaction that happened spent something; the prompt closing

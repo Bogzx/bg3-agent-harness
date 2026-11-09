@@ -131,6 +131,9 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
 Both agents are stopped at the end; their exits and costs are in the outcome. A match a side of which the harness's
 scripted client plays (a player "scripted/...") is a live check: invalid ("scripted: ...") whatever its end, and its
 arena_end carries `invalid: "scripted"`.
+
+Once both are stopped, each side's tool timeouts and exceptions are counted: one is recorded, a side's second makes the
+match invalid, `invalid: "tool_faults"` on its arena_end (arena/faults.py).
 """
 
 from __future__ import annotations
@@ -143,6 +146,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from bg3harness import facts
+from bg3harness.arena.faults import excuse_fault, record_tool_faults
 from bg3harness.arena.scripted_client import SCRIPTED
 from bg3harness.arena.spec import SIDES, ArenaSpec, Side, other
 from bg3harness.arena.unanswered import BUDGET_SHARE, Unanswered, cap_words, charge_phase, note_declined
@@ -443,13 +447,6 @@ def resume_prompt(fault: bool, turn: Turn | None, side: str) -> str:
     who = f"{turn.name}'s turn (side {side})" if turn and turn.side == side else "the other side's turn"
     now = f" Now round {turn.round}, {who}." if turn and not turn.capped else ""
     return f"{RESUME}{fell}{now}"
-
-
-def excuse_fault(turn: Turn | None, side: str) -> None:
-    """`side`'s client failed: the phase of its in progress counts toward no forfeit. One already forced stays counted:
-    its arena_turn_forced is written, and the grader has to read the same streak."""
-    if turn is not None and turn.side == side and not turn.forced:
-        turn.excused = "client_fault"
 
 
 def _fault_cause(ex: AgentExit) -> str:
@@ -989,11 +986,13 @@ def run_arena(
     finally:
         for s, run in runs.items():
             outcome.exits[s].append(run.stop())
+        tool_faults = record_tool_faults(out, ref.event, ref.pending_end)
         ref.write_end()
     if outcome.invalid is None and ref.scripted:
         sides_ = " and ".join(ref.scripted)
         outcome.invalid = f"{SCRIPTED}: side {sides_} played the scripted client (a live check, never graded)"
         log(f"arena {spec.name}: invalid, {outcome.invalid}")
+    outcome.invalid = outcome.invalid or tool_faults
     with contextlib.suppress(Exception):  # a dead game: what was read is what there is
         feed.poll()  # the last rolls
     writer.mark("run_end", {"arena_end": outcome.end.get("reason") if outcome.end else None})

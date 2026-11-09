@@ -410,7 +410,8 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
         # game moves the selection within a shared turn group; ending that one is what the agent means).
         char = plumbing._active()
         cs = core.game.try_rpc("state.combat") or {}
-        mine = turn.party_acting(cs, turn_plan._party_set()) if cs.get("active") else []
+        party_set = turn_plan._party_set()
+        mine = (turn.party_acting(cs, party_set) or turn.zero_hp_turns(cs, party_set)) if cs.get("active") else []
         if char not in mine and len(mine) == 1:
             char = mine[0]
     args = {"char": char}
@@ -461,8 +462,7 @@ def end_turn(who: str | None = None, wait: bool = True) -> str:
         # read Lae'zel's after={...} as Claude's (claude-run-2 S001).
         body = body.replace("end_turn:", f"end_turn {queueing._label(char)}:", 1)
     if down_row and r.status == "done":
-        body += (f"\n{queueing._label(char)} is at 0 HP without the Downed status (no death saving throws): the game "
-                 "kept its turn open")
+        body += "\n" + _zero_hp_line(char)
     if r.status == "done" and wait and not reporting._batch["active"]:
         body += "\n" + _wait_for_party_turn(80.0)
     elif r.status == "done" and wait:
@@ -511,6 +511,17 @@ def _nothing_to_end(r) -> str:
 _PROMPT_SCREENS = ("reaction", "dialogue", "roll", "popup", "game_over")
 
 
+def _zero_hp_line(u: str) -> str:
+    return (f"{queueing._label(u)} is at 0 HP without the Downed status (no death saving throws): the game kept its "
+            "turn open")
+
+
+def _zero_hp_turn_text(cs: dict, members: list[str], notes: tuple | list = ()) -> str:
+    """A wait's end on members only an end_turn moves on (turn.zero_hp_turns): no action block, nothing to play."""
+    return "\n".join([_now_turn_text(members)] + [_zero_hp_line(u) for u in members] + list(notes)
+                     + turn.disabled_lines(cs, queueing._label))
+
+
 def _now_turn_text(mine: list[str]) -> str:
     """'now e1's turn', or for a shared party turn group 'now e46's and e1's turn (shared: any order)'."""
     if len(mine) == 1:
@@ -536,6 +547,9 @@ def _wait_for_party_turn(max_s: float) -> str:
             cur = st.get("active") if st.get("active") in mine else mine[0]
             return "\n".join([_now_turn_text(mine)] + notes + turn.disabled_lines(cs, queueing._label)
                              + [x for x in (observe._turn_block(cs, cur),) if x])
+        zero = turn.zero_hp_turns(cs, party)
+        if zero:
+            return _zero_hp_turn_text(cs, zero, notes)
         key = (cs.get("round"), cs.get("current"), tuple(turn.passing(cs)))
         if key != seen:
             seen, since = key, time.monotonic()

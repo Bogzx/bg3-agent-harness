@@ -229,7 +229,33 @@ game unless it says so.
   fault interrupted keeps the model time it had used. An arena side's short ids (e12) now survive its restart, kept in
   `<side>.handles.json` (`BG3AI_HANDLES_PATH`, set by the arena only): a new process renumbered them, so an id from the
   conversation could name another character. A playthrough's resume still renumbers; out of scope here.
-  bench-v0.11's release cites it.
+  bench-v0.11's release cited it until 0.19.0.
+- 0.19.0 (2026-11-09): what the agent sees changed: end_turn's wait and wait_for('my_turn') stop when the game is
+  waiting on a party member at 0 HP without the Downed status, whose open turn only an end moves on (state.combat
+  `zero_hp_turn`), and say so: `now e2's turn`, then `e2 Gale is at 0 HP without the Downed status (no death saving
+  throws): the game kept its turn open`, with no action block. The row also reads `zero_hp_turn`. They left that
+  member out as downed and ran their caps (windmill 01:39:19: 81 s, then 15 s, one of 223 end_turn calls in the v0.11
+  pilot's 19 sessions). A turn under the Downed status still passes by itself, enemy turns and the other side's are
+  waited out as before, and a match is unchanged: its phase tick ends that turn itself. A Lockpick row pressed with no
+  roll that the game answered with a failed Use of the door by the actor, who stayed put, reads `the game ran a plain
+  Use of it, which failed; no lockpicking started; the actor did not move` (read live: 16 of 16 no-rolls), no longer
+  `nothing happened`; when the game walked the actor, the last clause gives the distance (`the actor moved 1.4 m`), and
+  with no failed Use read it is `no roll came; the actor moved 1.4 m`. The game's own notices during the wait now follow
+  as its words (`the game said "Can't reach this", "Can't reach"`, on all 32 no-roll tries read and none of the 26 that
+  rolled). On the one door read (e482, Makeshift Prison) whether the roll came depended on where another party member
+  stood; why is still not known. A walked
+  actor's `after=` gives where it ended. A `react` answered while the next reaction prompt comes up no longer reports `TIMEOUT` after 10 s;
+  it comes back done, with that prompt. The answer had landed: the game's popup is down 30-82 ms between two prompts,
+  under the 80 ms between the job's checks, so the next prompt read as the same one at the same event count (the v0.11
+  pilot's L12 match; 3 of 5 declines with a next prompt in a live read). The job now holds the event it answered and
+  compares it by identity (`==`, stable over 2666 frames in that read and false on all 3 next prompts; a prompt's text
+  can't tell two saves that rolled the same). A chosen row's decline reads the same way, so another prompt at the same
+  count is no longer declined by mistake. Not read in a live match on this code. An arena side's tool timeouts and
+  tool exceptions are now counted after the match, over all its processes (`arena_tool_faults {side, n, faults}`): one
+  per side is tolerated and recorded, and a side's second makes the match invalid, rerun and never rated (`arena_end`'s
+  `invalid: "tool_faults"`; its reason and winner stay what happened). Our tools failing is infrastructure, not the
+  side's play, and a real timeout can decide a match. The bench still voids a run at the first. Tool definitions don't
+  change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at

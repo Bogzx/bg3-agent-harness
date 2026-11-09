@@ -5,6 +5,29 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
+## 2026-11-09: a lockpick with no roll says what the game did
+
+- A Lockpick row pressed with no roll read `lockpick: FAILED — nothing happened`. When the game answered with a failed
+  Use of the target by the actor and the actor stayed put, it now reads `the game ran a plain Use of it, which failed;
+  no lockpicking started; the actor did not move`. If the actor ended more than 0.15 m from where it stood, it reads the
+  same with `the actor moved 1.4 m` (the distance read), and with no failed Use read, `no roll came; the actor moved
+  1.4 m`. The game's own notices during the wait follow as its words, `; the game said "Can't reach this", "Can't
+  reach"` (32 of 32 no-roll tries, 0 of 26 that rolled; on lockpick only, and the click detail no longer repeats them).
+  With a notice and neither a failed Use nor a move it reads `no roll came; the game said ...`; with neither and no
+  notice, `nothing happened`, as with a read that fails. The wait keeps notices from all its polls (every `no_effect`
+  click's detail gains them: the notice was gone before the wait's last poll). A walked actor's `after=` now gives
+  where it ended; it was the mod's, from before the click. Why the game says it can't reach here, depending on where
+  another party member stands, is not known. Tool definitions don't change.
+- A lockpick can fail on a door for a reason we couldn't read: seen on one door (e482, Makeshift Prison), where the roll came only with a party member 0.45 to 0.94 m from the door's point (18 of 18, 0 of 16 otherwise); the theory that the actor must stand on the door's floor was tested live and rejected (0 of 9, 2026-11-09), so the approach point is unchanged.
+
+## 2026-11-09: a wait stops at an open turn at 0 HP
+
+- end_turn's wait and `wait_for('my_turn')` return when the game is waiting on a party member at 0 HP without the
+  Downed status, instead of running their caps: `now e2's turn`, then `e2 Gale is at 0 HP without the Downed status (no
+  death saving throws): the game kept its turn open`, no action block. `state.combat` rows carry `zero_hp_turn` for
+  that member (shown in the row). `end_turn` with no `who` ends that member when no one else can act. A turn under
+  the Downed status still passes by itself; a match is unchanged. Tool definitions don't change.
+
 ## 2026-11-08: a resumed session keeps its real end
 
 - An agent that ended its turn during a fight hold was resumed with the held end (up to 15 min later) as its deadline,

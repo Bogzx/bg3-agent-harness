@@ -132,6 +132,15 @@ hits it on the first call, before any tool call, so it ends as `kickoff_overflow
 
 None of the 26 paid matches on record had a context-length error.
 
+### Tool timeouts and exceptions
+
+A timeout or an exception from one of our tools is our infrastructure, not the side's play, and it can still decide a
+match. Each side's are counted after the match, over all of its processes, and written as `arena_tool_faults`. One per
+side is tolerated and the match stands. A second on the same side makes the match invalid: `arena_end` keeps what
+happened and carries `invalid: "tool_faults"`. A refusal from the game (no action left, out of range) isn't one.
+
+The bench is stricter on purpose: a bench run is void at its first tool timeout or exception (`results.py`).
+
 ### R4: money caps
 
 A model's cap per side per match is at least 3x its measured per-side p95, per arena. `tools/dev/arena_caps.py` computes

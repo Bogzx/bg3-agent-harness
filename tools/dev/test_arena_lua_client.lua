@@ -104,10 +104,11 @@ end
 function UI.dc() return nil end
 function UI.anyDC() return nil end
 function UI.pcall(f, ...) return pcall(f, ...) end
-UI.commands, UI.params = {}, {}
-function UI.command(_, name, param)
+UI.commands, UI.params, UI.contexts = {}, {}, {}
+function UI.command(dc, name, param)
     UI.commands[#UI.commands + 1] = name
     UI.params[#UI.commands] = param
+    UI.contexts[#UI.commands] = dc
     return true
 end
 
@@ -156,7 +157,7 @@ local failures, count = 0, 0
 local function test(name, fn)
     count = count + 1
     env = { BG3AI_ARENA = "1" }
-    pages, entities, UI.commands, UI.params = { HotBar = { name = "HotBar" } }, {}, {}, {}
+    pages, entities, UI.commands, UI.params, UI.contexts = { HotBar = { name = "HotBar" } }, {}, {}, {}, {}
     clock, RPC.jobs, RPC.sideInputAt = 1000, {}, {}
     channel({ teams = { A = { A1 }, B = { B1 } }, names = { A = { "Ana" }, B = { "Bo" } } })
     local ok, err = pcall(fn)
@@ -308,6 +309,76 @@ test("the same with the side's own next: it reads its prompt", function()
     eq(r.result.reaction.options[1].who, "Ana", "its row")
 end)
 
+-- live.md 'React-timeout read': the popup is down 30-82 ms between two prompts, so a job checking every 80 ms often
+-- finds the next prompt up at the same count: v011-pilot L12 m1's react TIMEOUT, its decline had landed.
+test("an answered prompt replaced by the next at the same count is done, with that prompt", function()
+    prompt("Ana")
+    local data = pages.ReactionDecisionPopup.DataContext.Data
+    data.InterruptEvents = { { id = "first" } }
+    eq(rpc("ui.react", "{use=false}", "A").ok, true, "answered")
+    data.InterruptEvents = { { id = "next" } }
+    local r = tickJob()
+    eq(r.status, "done", "status")
+    eq(r.result.pending, 1, "pending")
+    eq(r.result.reaction.options[1].who, "Ana", "the next prompt")
+end)
+
+test("an answered prompt whose event stays is not closed, in a new popup too", function()
+    prompt("Ana")
+    local ev = { id = "first" }
+    pages.ReactionDecisionPopup.DataContext.Data.InterruptEvents = { ev }
+    rpc("ui.react", "{use=false}", "A")
+    eq(tickJob().status, "running", "the same popup")
+    prompt("Ana")
+    pages.ReactionDecisionPopup.DataContext.Data.InterruptEvents = { ev }
+    eq(tickJob().status, "running", "a new popup with the same event")
+    pages.ReactionDecisionPopup.DataContext.Data.InterruptEvents = {}
+    eq(tickJob().status, "done", "gone")
+end)
+
+test("the event held is the one answered: read before the answer goes", function()
+    prompt("Ana")
+    local data = pages.ReactionDecisionPopup.DataContext.Data
+    data.InterruptEvents = { { id = "first" } }
+    local send = UI.command
+    UI.command = function(...) -- the game moves on inside the command
+        data.InterruptEvents = { { id = "next" } }
+        return send(...)
+    end
+    local job = rpc("ui.react", "{use=false}", "A")
+    UI.command = send
+    eq(job.ok, true, tostring(job.error))
+    eq(tickJob().status, "done", "the next prompt isn't taken for the one answered")
+end)
+
+test("an answer the game took inside the command, the list empty: closed", function()
+    prompt("Ana")
+    local data = pages.ReactionDecisionPopup.DataContext.Data
+    local send = UI.command
+    UI.command = function(...)
+        data.InterruptEvents = {}
+        return send(...)
+    end
+    local job = rpc("ui.react", "{use=false}", "A")
+    UI.command = send
+    eq(job.ok, true, tostring(job.error))
+    eq(tickJob().status, "done", "no event left, none counted before")
+end)
+
+test("a first event that doesn't read is no new prompt", function()
+    prompt("Ana")
+    pages.ReactionDecisionPopup.DataContext.Data.InterruptEvents = { { id = "first" } }
+    rpc("ui.react", "{use=false}", "A")
+    local path = UI.path
+    UI.path = function(o, p)
+        if p == "Data.InterruptEvents.1" then return nil end
+        return path(o, p)
+    end
+    local status = tickJob().status
+    UI.path = path
+    eq(status, "running", "still waiting")
+end)
+
 -- live.md 03:44:15 read 4b: chosen, then Do Not React: a roll that hit did no damage, nothing paid.
 test("Do Not React on a chosen row unchooses it first, and waits for that", function()
     prompt("Ana")
@@ -341,19 +412,34 @@ test("Do Not React on a chosen row: an event gone before the first tick is decli
     eq(#UI.commands, 1, "only the unchoosing: Bo's prompt isn't declined, nor Ana's stale event sent")
 end)
 
-test("Do Not React on a chosen row: the decline reads the event afresh (U1)", function()
+test("Do Not React on a chosen row: the decline reads the context afresh, same event (U1)", function()
+    prompt("Ana")
+    local page = pages.ReactionDecisionPopup
+    local ev = { id = "ev" }
+    page.DataContext.Data.InterruptEvents = { ev }
+    local row = page.children[1].children[1]
+    row.DataContext = { Decision = "Use" }
+    rpc("ui.react", "{use=false}", "A")
+    local fresh = { Data = { InterruptEvents = { ev } } }
+    page.DataContext = fresh
+    row.DataContext.Decision = "Undecided"
+    eq(tickJob().status, "running", "the same event: not closed")
+    eq(UI.commands[2], "InterruptDontReactPlayerCommand", "the decline")
+    eq(UI.contexts[2], fresh, "today's context")
+    eq(UI.params[2], ev, "the event")
+end)
+
+test("Do Not React on a chosen row: another event at the same count is another prompt, declined by nobody", function()
     prompt("Ana")
     local data = pages.ReactionDecisionPopup.DataContext.Data
     data.InterruptEvents = { { id = "old" } }
     local row = pages.ReactionDecisionPopup.children[1].children[1]
     row.DataContext = { Decision = "Use" }
     rpc("ui.react", "{use=false}", "A")
-    local now = { id = "now" }
-    data.InterruptEvents = { now }
+    data.InterruptEvents = { { id = "now" } }
     row.DataContext.Decision = "Undecided"
-    tickJob()
-    eq(UI.commands[2], "InterruptDontReactPlayerCommand", "the decline")
-    eq(UI.params[2], now, "today's event")
+    eq(tickJob().status, "done", "closed")
+    eq(#UI.commands, 1, "only the unchoosing")
 end)
 
 test("Do Not React with nothing chosen: only the decline", function()
