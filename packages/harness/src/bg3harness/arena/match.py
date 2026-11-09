@@ -79,7 +79,10 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    wipe already there when arena.end comes is the end: the mod checks for one first). A phase capped only because of
    an unanswered prompts' charge (arena/unanswered.py), its model time under turn_cap_s, is forced like any (told the
    time it had, `arena_turn_forced`'s `charged_cap`) but counts toward no forfeit and breaks the run: only a side's own
-   full cap can lose it the match (owner, 2026-11-08).
+   full cap can lose it the match (owner, 2026-11-08). So with a phase capped while its side's stream wrote nothing
+   for a whole turn_cap_s of model time, or in progress when its side's client failed (`arena_turn_forced`'s `excused`,
+   stream_silent or client_fault): a stalled stream is infrastructure, not play (owner, 2026-11-09). A stall that starts
+   inside what would be a side's third forced phase in a row doesn't fill a whole cap, and still forfeits.
    Stall: a phase's idle clock (wall time less the phase's own side's model time gain, tick by tick; the other
    side thinking during it is no progress of the phase; once the phase was capped, no model time counts; before the
    first phase, the larger of the two sides' gains) runs from its last progress: a new phase, a
@@ -121,7 +124,7 @@ two-team GameModel) and scripted clients drive it in tests; bg3harness.arena.liv
    first read, no model-time cap, no forfeit count, and the stall's model-time excuse doesn't apply. No end is sent for
    it: live, the game's AI ends such a turn itself, also with nothing in reach; one that hangs is a stall "game", a
    fault.
-6. An agent that exits while the fight is on is resumed in the same conversation with RESUME; exit 0 counts toward
+6. An agent that exits while the fight is on is resumed in the same conversation (resume_prompt); exit 0 counts toward
    EXIT_RESUMES (then a forfeit), anything else (a crash, an API or MCP failure, a hang) toward FAULT_RESUMES (then
    client_fault: invalid).
 
@@ -181,6 +184,9 @@ CONTEXT_OVERFLOW = "context_overflow"  # an agent's exit reason and its forfeit'
 KICKOFF_OVERFLOW = "kickoff_overflow"  # an overflow before the side's first tool call: a client fault's cause
 KICKOFF = "The fight is on. You play side {side}: {names}."
 RESUME = "The fight is on."
+FAULT_RESUME = (
+    " Your client stopped and was restarted; the game kept running, and an order sent before it stopped may have run."
+)
 
 
 class Rpc(Protocol):
@@ -208,6 +214,7 @@ class AgentExit:
 class AgentRun(Protocol):
     def done(self) -> AgentExit | None: ...  # None while the process runs
     def model_s(self) -> float: ...  # the process's model time so far
+    def silent_model_s(self) -> float: ...  # the model time since its stream last wrote anything
     def cost_usd(self) -> float: ...  # the process's cost so far (USD)
     def stop(self) -> AgentExit: ...  # end the process (if it runs) and return its exit
 
@@ -249,6 +256,7 @@ class Turn:
     control_lost: bool = False  # arena_control_lost was written for it
     charged_s: float = 0.0  # what its side's unanswered prompts took off its cap
     charged_cap: bool = False  # capped under that charge with its model time short of the full cap: no forfeit count
+    excused: str | None = None  # stream_silent or client_fault: its side's infrastructure, no forfeit count
 
 
 class Referee:
@@ -368,16 +376,21 @@ class Referee:
         assert not t.forced
         t.forced = True
         self.event(
-            "arena_turn_forced", side=t.side, character=t.name, **({"charged_cap": True} if t.charged_cap else {})
+            "arena_turn_forced",
+            side=t.side,
+            character=t.name,
+            **({"charged_cap": True} if t.charged_cap else {}),
+            **({"excused": t.excused} if t.excused else {}),
         )
 
     def forfeits(self) -> bool:
-        """Forcing the turn in progress makes FORFEIT_TURNS forced turns in a row of its side (a charged cap breaks
-        the run: Turn.charged_cap)."""
+        """Forcing the turn in progress makes FORFEIT_TURNS forced turns in a row of its side (a charged cap or an
+        excused turn breaks the run: Turn.charged_cap, Turn.excused)."""
         t = self.turn
         assert t is not None
         own = [x for x in self.turns if x.side == t.side][-FORFEIT_TURNS:]
-        return len(own) == FORFEIT_TURNS and not t.charged_cap and all(x.forced and not x.charged_cap for x in own[:-1])
+        counted = [x.forced and not x.charged_cap and not x.excused for x in own[:-1]]
+        return len(own) == FORFEIT_TURNS and not (t.charged_cap or t.excused) and all(counted)
 
     def end(self, **fields: Any) -> dict[str, Any]:
         self.pending_end = {"ev": "arena_end", **fields, **self.invalid()}
@@ -420,6 +433,23 @@ class _Ended(Exception):  # noqa: N818 - control flow inside run_arena
         self.rounds, self.game_up = rounds, game_up  # game_up: the game answers, the mod hears the end
         self.failed = failed  # client_fault: the side whose client failed
         self.capped = capped  # over_budget: the sides over their cap
+
+
+def resume_prompt(fault: bool, turn: Turn | None, side: str) -> str:
+    """What `side`'s restarted agent is told, facts only: the fight, that its client failed (a fault), and whose turn
+    it is (not while a capped phase is ending: the next one isn't known). Only its own side's character is named: the
+    other team's are listed only while seen (rules/arena.md)."""
+    fell = FAULT_RESUME if fault else ""
+    who = f"{turn.name}'s turn (side {side})" if turn and turn.side == side else "the other side's turn"
+    now = f" Now round {turn.round}, {who}." if turn and not turn.capped else ""
+    return f"{RESUME}{fell}{now}"
+
+
+def excuse_fault(turn: Turn | None, side: str) -> None:
+    """`side`'s client failed: the phase of its in progress counts toward no forfeit. One already forced stays counted:
+    its arena_turn_forced is written, and the grader has to read the same streak."""
+    if turn is not None and turn.side == side and not turn.forced:
+        turn.excused = "client_fault"
 
 
 def _fault_cause(ex: AgentExit) -> str:
@@ -724,8 +754,11 @@ def run_arena(
     def cap_phase(turn: Turn, why: str, told: str, charged_cap: bool = False) -> None:
         """End the phase at a cap (`why`; `told`: the cap as its side is told): its side's forfeit when it is the
         FORFEIT_TURNS-th in a row, else act.end_turn for each member and arena_turn_forced once they went through.
-        `charged_cap`: reached only because of a charge, so it can't count toward the forfeit."""
+        `charged_cap`: reached only because of a charge, so it can't count toward the forfeit; neither does a cap its
+        side's stream was silent through (checked here: the client's fault isn't known until its silence limit)."""
         turn.capped, turn.charged_cap = True, charged_cap
+        if runs[turn.side].silent_model_s() >= spec.turn_cap_s:
+            turn.excused = "stream_silent"
         if ref.forfeits():
             ref.forced(turn)
             log(f"arena {spec.name}: {turn.name}'s turn (side {turn.side}) hit the {why}")
@@ -791,6 +824,7 @@ def run_arena(
                 closed_model[s] += runs.pop(s).model_s()
                 if ex.fault:
                     faults[s] += 1
+                    excuse_fault(ref.turn, s)
                 else:
                     exits[s] += 1
                 log(f"arena {spec.name}: side {s}'s agent ended mid-fight ({ex.reason}, exit {ex.exit_code})")
@@ -815,7 +849,9 @@ def run_arena(
                         detail=f"side {s}'s agent: {ex.reason}",
                     )
                 n = faults[s] + exits[s]
-                runs[s] = agents.start(s, RESUME, ex.conversation, f"-r{n}")
+                told = resume_prompt(ex.fault, ref.turn, s)
+                log(f"arena {spec.name}: side {s} resumed: {told}")
+                runs[s] = agents.start(s, told, ex.conversation, f"-r{n}")
             cost, caps = spent(), side_caps or {}
             capped = [s for s in SIDES if s in caps and cost[s] >= caps[s]]
             if capped or (max_cost is not None and sum(cost.values()) >= max_cost):

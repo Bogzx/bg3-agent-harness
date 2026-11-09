@@ -28,6 +28,8 @@ KNOWN = frozenset(
         "BG3AI_END_HUD_FIRST",
         "BG3AI_FIGHT_HOLD_PATH",
         "BG3AI_FIX_NOTES",
+        "BG3AI_HANDLES_PATH",  # a side's ids across a client restart (the arena runner sets it to
+        # out/<side>.handles.json, and that file in the run's folder is the record)
         "BG3AI_JOB_PUSH",
         "BG3AI_KEEPER_HANDOFF_SECTION",
         "BG3AI_KEEPER_MODE",

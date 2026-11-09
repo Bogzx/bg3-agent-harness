@@ -410,6 +410,16 @@ listen("Died", 1, function(char)
     R.record("died", { name = name(u) or "Unknown", party = isParty(u), uuid = u })
 end)
 
+-- A party member going down, as it happens: a 15 s poll misses one the game undoes inside an interval (a capture stood
+-- the last member up before the next poll, v011-pilot act1_gold_max). For the losses statistic only (party_down, bench
+-- facts.party_losses): a run's verdict reads the poll. No way up: DownedChanged also reports up before a death and
+-- before the Downed status lands (fight_act1_windmill 678.9: down, up, status Downed, and she stayed down).
+listen("DownedChanged", 2, function(char, downed)
+    if not truthy(downed) then return end
+    local u = uuid(char)
+    if u and isParty(u) then R.record("party_down", { name = name(u) or "Unknown", party = true, uuid = u }) end
+end)
+
 -- Combat: only fights the party is in; EnteredCombat/LeftCombat fire for every item in range too (live1 §6), so
 -- membership keeps characters only.
 local function partyIn(g)

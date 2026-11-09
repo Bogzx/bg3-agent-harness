@@ -436,7 +436,7 @@ def _turns(records: list[dict], end_t: float) -> list[dict] | None:
             turn = _forced_turn(turns, r)
             if turn is None:
                 return None
-            turn["forced"], turn["charged_cap"] = True, bool(r.get("charged_cap"))
+            turn["forced"], turn["charged_cap"] = True, bool(r.get("charged_cap") or r.get("excused"))
     return turns
 
 
@@ -486,7 +486,7 @@ def round_first(records: Iterable[dict]) -> list[dict]:
 
 
 def _forced_out(turns: list[dict]) -> str | None:
-    """The first side forced FORFEIT_TURNS of its own turns in a row (a charged_cap turn breaks it), None if neither."""
+    """The first side forced FORFEIT_TURNS of its own turns in a row (a charged or excused turn breaks it), None if neither."""
     streak = dict.fromkeys(SIDES, 0)
     for turn in turns:
         streak[turn["side"]] = streak[turn["side"]] + 1 if turn["forced"] and not turn.get("charged_cap") else 0

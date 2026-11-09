@@ -67,7 +67,7 @@
       "required": ["ev"],
       "properties": {
         "ev": {"enum": [
-          "combat_started", "combat_ended", "died", "downed", "revived", "level_up", "joined",
+          "combat_started", "combat_ended", "died", "downed", "revived", "party_down", "level_up", "joined",
           "gold", "item_added", "trade_open", "trade_end", "pickpocket", "stole", "crime", "kill", "loot",
           "quest_added", "quest_done", "region", "area", "level_changed", "game_end", "choice",
           "game_over", "pos", "approval", "arena_start", "arena_turn", "arena_turn_forced", "arena_end",
@@ -78,7 +78,7 @@
         ]}
       },
       "allOf": [
-        {"if": {"properties": {"ev": {"enum": ["died", "downed", "revived"]}}},
+        {"if": {"properties": {"ev": {"enum": ["died", "downed", "revived", "party_down"]}}},
          "then": {"required": ["name", "party"], "properties": {"name": {"$ref": "#/$defs/name"}, "party": {"type": "boolean"}}}},
         {"if": {"properties": {"ev": {"const": "level_up"}}},
          "then": {"required": ["name", "level"], "properties": {"name": {"$ref": "#/$defs/name"}, "level": {"type": "integer", "minimum": 1}}}},
@@ -163,7 +163,7 @@
         {"if": {"properties": {"ev": {"const": "arena_turn_forced"}}},
          "then": {"description": "the harness ended the phase in progress at its model-time cap or a held stall (arena_stall stall held; act.end_turn for each of its members); side and character are the phase's; charged_cap, only when true: capped because of an unanswered prompts' charge with its model time under the full turn cap, so it counts toward no forfeit and breaks the run",
                   "required": ["side", "character"],
-                  "properties": {"side": {"enum": ["A", "B"]}, "character": {"$ref": "#/$defs/name"}, "charged_cap": {"type": "boolean"}}}},
+                  "properties": {"side": {"enum": ["A", "B"]}, "character": {"$ref": "#/$defs/name"}, "charged_cap": {"type": "boolean"}, "excused": {"enum": ["stream_silent", "client_fault"], "description": "only when set: its side's stream was silent through the whole cap, or its client failed during the phase; counts toward no forfeit and breaks the run"}}}},
         {"if": {"properties": {"ev": {"const": "arena_reaction_unowned"}}},
          "then": {"description": "the harness declined a reaction prompt no team owns (neither side's to answer): the round and the prompt's text",
                   "required": ["round", "detail"],

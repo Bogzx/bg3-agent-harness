@@ -354,6 +354,44 @@ class Facts(unittest.TestCase):
         r["status"]["gold"] = 50
         self.assertEqual([x["ev"] for x in self.w.observe(r, INV, now=2100.0)], ["gold"])
 
+    def down_feed(self):
+        ring = FakeRing()
+        feed = F.RingFeed(ring, self.w, self.path.with_name("rolls.jsonl"), wall=lambda: 2000.0)
+        self.w.mark("run_start", now=1000.0)
+        feed.poll()
+        return ring, feed
+
+    def down_read(self, **flags):
+        """READ in a fight with the named members' flags, e.g. Tav={"downed": True, "hp": 0}."""
+        r = copy.deepcopy(READ)
+        r["status"]["in_combat"] = True
+        for row in r["status"]["party"]:
+            row.update(flags.get(row["name"], {}))
+        return r
+
+    def party_events(self):
+        kinds = ("downed", "revived", "party_down")
+        return [(x["ev"], x["name"]) for x in self.records() if x.get("ev") in kinds]
+
+    def test_a_rings_party_down_is_written_and_changes_nothing_the_poll_reads(self):
+        ring, feed = self.down_feed()
+        self.w.observe(self.down_read(), INV, now=2000.0)
+        ring.ref.append({"seq": 4, "t": 9_000, "ev": "party_down", "name": "Tav", "party": True, "uuid": "Tav_0000"})
+        feed.poll()
+        self.w.observe(self.down_read(), INV, now=2015.0)  # the read has Tav up: he stays up in the file
+        snaps = [x for x in self.records() if x["kind"] == "snapshot"]
+        self.assertEqual(self.party_events(), [("party_down", "Tav")])
+        self.assertFalse(any(m["downed"] for s in snaps for m in s["party"]))
+
+    def test_while_the_ring_answers_the_poll_still_writes_downed_and_revived(self):
+        _ring, feed = self.down_feed()
+        self.w.observe(self.down_read(), INV, now=2000.0)
+        feed.poll()
+        self.assertTrue(self.w.referee_live)
+        self.w.observe(self.down_read(Tav={"downed": True, "hp": 0}), INV, now=2015.0)
+        self.w.observe(self.down_read(), INV, now=2030.0)
+        self.assertEqual(self.party_events(), [("downed", "Tav"), ("revived", "Tav")])
+
     def test_ring_feed_marks_its_outages_and_reports_its_health(self):
         # REVIEW-16 A1: a failing poll only flipped referee_live; facts.jsonl had no trace of the window in which
         # trade, theft, crime, kill, loot and approval events were missing

@@ -96,7 +96,7 @@ local function item(tag, n) return string.format("%s_%08x-0000-0000-0000-0000000
 -- Listeners are registered at the live arities, and the quiet op list knows the poll.
 for _, key in ipairs({ "RequestTrade/4", "TradeEnds/2", "GoldChanged/2", "AddedTo/3", "TemplateAddedTo/4",
     "RemovedFrom/2", "RequestPickpocket/2", "CharacterPickpocketFailed/2", "CrimeIsRegistered/8", "KilledBy/4",
-    "AttackedBy/7", "Died/1", "CombatStarted/1", "CombatEnded/1", "CombatRoundStarted/2", "EnteredCombat/2", "LeftCombat/2",
+    "AttackedBy/7", "Died/1", "DownedChanged/2", "CombatStarted/1", "CombatEnded/1", "CombatRoundStarted/2", "EnteredCombat/2", "LeftCombat/2",
     "ApprovalRatingChanged/3", "StatusApplied/4", "StatusRemoved/4", "TurnStarted/1", "TurnEnded/1" }) do
     check("listens " .. key, listeners[key] ~= nil)
 end
@@ -482,6 +482,28 @@ do
     check("probe op refused without the flag", not pcall(ops["ref.status_fields"], { char = GOB }))
     os.getenv = realGetenv
     entities[GOB] = nil
+end
+
+-- A party member going down is a party_down row, for the losses statistic; nothing else the verdict reads is written.
+do
+    local downs0, polled0, ups0 = #recs("party_down"), #recs("downed"), #recs("revived")
+    fire("DownedChanged/2", P, 1)
+    local d = lastOf("party_down")
+    check("a party member's down is recorded", #recs("party_down") == downs0 + 1 and d.name == "Tav" and d.party == true
+        and d.uuid == HOST, #recs("party_down"))
+    fire("DownedChanged/2", GOB, 1)
+    check("nobody outside the party", #recs("party_down") == downs0 + 1, #recs("party_down"))
+    fire("DownedChanged/2", P, 0)
+    check("an up isn't recorded", #recs("party_down") == downs0 + 1, #recs("party_down"))
+    fire("DownedChanged/2", P, 1)
+    check("every report is a row: the reader counts them", #recs("party_down") == downs0 + 2, #recs("party_down"))
+    check("no downed or revived: those are the poll's", #recs("downed") == polled0 and #recs("revived") == ups0)
+    -- the capture's order: the last down before the gold taken
+    fire("DownedChanged/2", SH, 1)
+    gold = gold - 1
+    fire("GoldChanged/2", P, -1)
+    local down, money = lastOf("party_down"), lastOf("gold")
+    check("the last down precedes the gold taken", down.name == "Shadowheart" and down.seq < money.seq, down.seq)
 end
 
 -- Self-check: fired listeners leave `never`; ones that didn't fire stay.
