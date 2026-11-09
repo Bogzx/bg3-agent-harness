@@ -1,4 +1,3 @@
-# pyright: basic
 """A run its agent left with time on the clock, as bg3harness.runner.run_host records it (`agent_exited`, not the
 time cap: v011-pilot act1_gold_max and act3_gold_max read `timeout` at 39.1 and 42.5 of 45 min, cap_hit null)."""
 
