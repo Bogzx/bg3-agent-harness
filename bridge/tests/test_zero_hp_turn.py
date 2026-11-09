@@ -132,3 +132,14 @@ class EndTurn(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EndTurnPriority(Base):
+    def test_end_turn_without_who_keeps_the_selected_member_who_can_act(self):
+        self.g.watch["combat"] = True
+        cs = combat_state()
+        cs["order"] = [{"uuid": P1, "name": "Claude", "relation": "party", "is_current": True}, cs["order"][1]]
+        cs["turn_group"] = [P1, P2]
+        self.g.combat = cs
+        combat.end_turn(wait=False)
+        self.assertEqual(self.g.ops("act.end_turn")[0][1]["char"], P1)
