@@ -1,15 +1,30 @@
-# bench-v0.11 Codex subset, part 3 of 3: one mirror match per 4v4 tier, L12 first because its 120 min wall cap asks the
-# disk guard for the most (4096 + 120 x 16 = 6016 MB free). A self-pair is graded, never rated, and `single` plays m1
-# only. Played last by `runner/play.py arena-matrix --matrix packages/bench/matrices/v011-sol-arena.toml`.
-# Same ledger and rule as v011-sol-windmill.toml, per side here: a match reserves twice its max_cost. An invalid match
-# is rerun, at most 2 times.
+# bench-v0.11 Codex subset, part 3 of 3 (owner 2026-11-09: "yes deepseek vs sol"): gpt-6.1-sol at medium against DeepSeek
+# flash through pi at effort high, one pairing per 4v4 tier, 2 matches with the sides swapped, 6 in all. L12 first
+# because its 120 min wall cap asks the disk guard for the most (4096 + 120 x 16 = 6016 MB free). Played last by
+# `runner/play.py arena-matrix --matrix packages/bench/matrices/v011-sol-arena.toml`.
+#
+# Ledgers: runtime/budget-v011-sol.json keeps sol's side (1 ledger dollar is 25 credits, cap 60 = 1,500 credits, shared
+# with v011-sol-windmill and v011-sol-bench) and DeepSeek's side charges the machine's real DeepSeek ledger, a sibling
+# checkout's, so no write-back is needed. The matrix's own file holds both sides' reserves and must not be either of
+# those: an own file is charged both sides, which would put DeepSeek's dollars into the credits ledger.
+# runtime/budget-v011-sol-arena.json: {"cap": 21.6, "spent": 0}, the sum of the six matches' reserves.
+#
+# max_cost per side and match: sol's high estimate x 1.5 / 25 by tier. DeepSeek's is one figure for every tier, S6's
+# L12 cap ($0.30); its dearest side in the DeepSeek subset's mirrors was $0.07. An invalid match is rerun, at most 2
+# times; one that ends at its cap is not.
 name = "v011-sol-arena"
-pairs = [["profiles/gpt-6.1-sol-pi.toml", "profiles/gpt-6.1-sol-pi.toml"]]
+pairs = [["profiles/gpt-6.1-sol-pi.toml", "profiles/deepseek-flash.toml"]]
 arenas = ["builds-l12-4v4-v1", "builds-l5-4v4-v1", "builds-l2-4v4-v1"]
 repeats = 1
-single = true
-allow_unverified = true  # the profile's status is offline until its first live run
+allow_unverified = true  # the sol profile's status is offline until it is marked verified
 
 [budget]
-file = "runtime/budget-v011-sol.json"
+file = "runtime/budget-v011-sol-arena.json"
 max_cost = { "builds-l12-4v4-v1" = 5.3, "builds-l5-4v4-v1" = 2.4, "builds-l2-4v4-v1" = 2.2 }
+
+[budget.models]
+"profiles/gpt-6.1-sol-pi.toml" = ["runtime/budget-v011-sol.json"]
+"profiles/deepseek-flash.toml" = ["../ovh-e2e/runtime/budget-deepseek.json"]
+
+[budget.max_cost_models]
+"profiles/deepseek-flash.toml" = 0.30
