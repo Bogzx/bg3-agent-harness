@@ -5,7 +5,7 @@ version:
 
 | Package | Version lives in | Now |
 |---|---|---|
-| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.16.0 |
+| harness (mod, bg3 MCP server, runner, clients) | `packages/harness/pyproject.toml` (`bg3-agent-harness`; `bg3harness.__version__`) | 0.17.0 |
 | benchmark | `packages/bench/pyproject.toml` (`bg3bench`; `bg3bench.__version__`) | 0.11.0 |
 | benchmark suite | derived: `bench-vX.Y` of bg3bench `X.Y.Z` (`bg3bench.suite`), its files pinned in `packages/bench/suite.json` | bench-v0.11 |
 | playthrough app | `packages/playthrough/pyproject.toml` (`bg3play`) | 0.1.0 |
@@ -206,7 +206,10 @@ game unless it says so.
   Also the session clock: a run resumed during a fight hold keeps its real end (the fight's end plus its wrap-up), not
   the held ceiling, which gave S001 about 10 min of play it wasn't due; and a bench run isn't resumed with less than 8
   min left when its agent ends its turn (the runner's log says so). Owner rulings, 2026-11-08.
-  Tool definitions and the bench prompts don't change. bench-v0.11's release cites it.
+  Tool definitions and the bench prompts don't change. bench-v0.11's release cited it until 0.17.0.
+- 0.17.0 (2026-11-09): what the agent sees changed: a maximise run's resume text says the run ends at the Game Over
+  screen, no longer at a party wipe (bench-v0.11's third digest moved that rule). Tool definitions and the first prompt
+  don't change. bench-v0.11's release cites it.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
@@ -635,6 +638,10 @@ game unless it says so.
   the score. Goal runs keep the wipe rule. This can move a maximise score, so by the rule above it would be a new
   minor; it is bench-v0.11's third digest instead because v0.11 is untagged and has no published results. bench-v0.8's
   published scores and results-144.json don't change.
+  A run its agent left with time on the clock and no cap hit is recorded `agent_exited` (run record, facts' run_end,
+  result.v1 still, the render's ENDED BY AGENT ending), not `timeout`; older runs keep `timeout`. The v0.11 pilot's two
+  gold runs read `timeout` at 39.1 and 42.5 of 45 minutes. results.py lists the new outcome: bench-v0.11's fourth
+  digest, no score moves.
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.
