@@ -3,9 +3,10 @@
 
 import math
 import unittest
+from typing import Any
 from unittest import mock
 
-from bg3ai import clicker
+from bg3ai import click_use, clicker
 
 
 class FakeInput:
@@ -616,6 +617,85 @@ class ToolCheck(unittest.TestCase):
             r = clicker.run_click_action(g, object(), "act.disarm", {"char": "U1", "target": "T"})
         self.assertEqual(r.status, "failed")
         self.assertEqual(r.error, "the book screen covers the world (press_key ESCAPE closes it)")  # D630: a fact
+
+    def _no_roll(self, events=(), end=(1.0, 2.0, 3.0), op="act.lockpick", item="Thieves' Tools", latest=5,
+                 reason="no_effect"):
+        """A Lockpick row pressed with no roll: the failure's text and the seq the events were read from."""
+        g: Any = self.Inv([{"name": item, "owner": "U1"}])
+        g.run_job = lambda o, args, wait_s=40.0: clicker.JobResult(
+            "done", {"needs_click": "D", "expect": "roll", "button": "R", "menu": "Lockpick"})
+        real, pos, read = g.rpc, [(1.0, 2.0, 3.0), end], []
+
+        def rpc(o, args: Any = None, context="server"):
+            if o == "events.since":
+                if args["seq"] == 10**12:
+                    return {"events": [], "latest": latest}
+                read.append(args["seq"])
+                return {"events": list(events), "latest": latest + len(events)}
+            if o == "nav.activity":
+                return {"pos": {"U1": list(pos.pop(0))}}
+            return real(o, args, context)
+        g.rpc = rpc
+        with mock.patch.object(clicker, "finish_needs_click", lambda game, inp, res: {
+                "expect": "roll", "click": {"ok": False, "reason": reason}}):
+            r = clicker.run_click_action(g, mock.Mock(), op, {"char": "U1", "target": "D"})
+        self.assertEqual(r.status, "failed")
+        return r.error, read
+
+    @staticmethod
+    def used(char="U1", item="D", success=False):
+        return {"seq": 6, "kind": "used", "data": {"char": {"uuid": char, "name": "Gale"},
+                                                   "item": {"uuid": item, "name": "Door"}, "success": success}}
+
+    def test_a_failed_use_with_no_roll_says_what_the_game_did(self):
+        error, read = self._no_roll([self.used()])
+        self.assertEqual(error, click_use.PLAIN_USE_FAILED)
+        self.assertEqual(read, [5])  # only what came after the click
+
+    def test_no_use_event_keeps_the_plain_words(self):
+        self.assertEqual(self._no_roll()[0], "nothing happened")
+
+    def test_the_actor_walking_keeps_the_plain_words(self):
+        self.assertEqual(self._no_roll([self.used()], end=(1.0, 2.0, 4.0))[0], "nothing happened")
+
+    def test_a_step_under_the_walk_threshold_is_not_a_walk(self):
+        self.assertEqual(self._no_roll([self.used()], end=(1.0, 2.0, 3.1))[0], click_use.PLAIN_USE_FAILED)
+
+    def test_another_kind_of_event_keeps_the_plain_words(self):
+        self.assertEqual(self._no_roll([dict(self.used(), kind="picked_up")])[0], "nothing happened")
+
+    def test_a_click_that_never_landed_keeps_its_own_reason(self):
+        self.assertEqual(self._no_roll([self.used()], reason="hover_miss")[0], "could not point at the target")
+
+    def test_a_successful_use_keeps_the_plain_words(self):
+        self.assertEqual(self._no_roll([self.used(success=True)])[0], "nothing happened")
+
+    def test_another_members_use_keeps_the_plain_words(self):
+        self.assertEqual(self._no_roll([self.used(char="U2")])[0], "nothing happened")
+
+    def test_a_use_of_something_else_keeps_the_plain_words(self):
+        self.assertEqual(self._no_roll([self.used(item="X")])[0], "nothing happened")
+
+    def test_a_game_full_uuid_matches_the_short_one(self):
+        u = "aaaaaaaa-0000-0000-0000-000000000001"
+        g = {"seq": 6, "kind": "used", "data": {"char": {"uuid": "S_Player_" + u}, "item": {"uuid": "D"}, "success": False}}
+        self.assertFalse(click_use.plain_use_failed(self._reader([g]), {"seq": 5, "pos": [0, 0, 0]}, "U1", "D"))
+        self.assertTrue(click_use.plain_use_failed(self._reader([g], u), {"seq": 5, "pos": [0, 0, 0]}, u, "D"))
+
+    @staticmethod
+    def _reader(events, char="U1"):
+        g = mock.Mock()
+        g.rpc = lambda o, args=None, context="server": ({"events": events} if o == "events.since"
+                                                        else {"pos": {char: [0, 0, 0]}})
+        return g
+
+    def test_an_unreadable_game_keeps_the_plain_words(self):
+        self.assertFalse(click_use.plain_use_failed(self._reader([self.used()]), {}, "U1", "D"))
+
+    def test_disarm_keeps_its_words(self):
+        error, read = self._no_roll([self.used()], op="act.disarm", item="Trap Disarm Toolkit")
+        self.assertEqual(error, "nothing happened")
+        self.assertEqual(read, [])
 
     def test_actor_has_tools_runs_the_job(self):
         g = self.Inv([{"name": "Thieves' Tools", "owner": "U1", "count": 2}])
