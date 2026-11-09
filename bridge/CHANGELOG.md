@@ -11,8 +11,13 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   Use of the target by the actor and the actor stayed put, it now reads `the game ran a plain Use of it, which failed;
   no lockpicking started; the actor did not move`. If the actor ended more than 0.15 m from where it stood, it reads the
   same with `the actor moved 1.4 m` (the distance read), and with no failed Use read, `no roll came; the actor moved
-  1.4 m`. No failed Use and no move keeps `nothing happened`, as does a read that fails. Why the game does this is not
-  known. Tool definitions don't change.
+  1.4 m`. The game's own notices during the wait follow as its words, `; the game said "Can't reach this", "Can't
+  reach"` (32 of 32 no-roll tries, 0 of 26 that rolled; on lockpick only, and the click detail no longer repeats them).
+  With a notice and neither a failed Use nor a move it reads `no roll came; the game said ...`; with neither and no
+  notice, `nothing happened`, as with a read that fails. The wait keeps notices from all its polls (every `no_effect`
+  click's detail gains them: the notice was gone before the wait's last poll). A walked actor's `after=` now gives
+  where it ended; it was the mod's, from before the click. Why the game says it can't reach here, depending on where
+  another party member stands, is not known. Tool definitions don't change.
 - A lockpick can fail on a door for a reason we couldn't read: seen on one door (e482, Makeshift Prison), where the roll came only with a party member 0.45 to 0.94 m from the door's point (18 of 18, 0 of 16 otherwise); the theory that the actor must stand on the door's floor was tested live and rejected (0 of 9, 2026-11-09), so the approach point is unchanged.
 
 ## 2026-11-09: a wait stops at an open turn at 0 HP

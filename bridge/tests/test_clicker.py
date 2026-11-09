@@ -621,6 +621,12 @@ class ToolCheck(unittest.TestCase):
     def _no_roll(self, events=(), end=(1.0, 2.0, 3.0), op="act.lockpick", item="Thieves' Tools", latest=5,
                  reason="no_effect", start=(1.0, 2.0, 3.0)):
         """A Lockpick row pressed with no roll: the failure's text and the seq the events were read from."""
+        r, read = self._no_roll_job(events, end, op, item, latest, reason, start)
+        return r.error, read
+
+    def _no_roll_job(self, events=(), end=(1.0, 2.0, 3.0), op="act.lockpick", item="Thieves' Tools", latest=5,
+                     reason="no_effect", start=(1.0, 2.0, 3.0), notices=None, after=None):
+        """The whole failed job: its error and result, with the click's notices and the mod's `after`."""
         g: Any = self.Inv([{"name": item, "owner": "U1"}])
         g.run_job = lambda o, args, wait_s=40.0: clicker.JobResult(
             "done", {"needs_click": "D", "expect": "roll", "button": "R", "menu": "Lockpick"})
@@ -636,11 +642,16 @@ class ToolCheck(unittest.TestCase):
                 return {"pos": {"U1": list(pos.pop(0))}}
             return real(o, args, context)
         g.rpc = rpc
-        with mock.patch.object(clicker, "finish_needs_click", lambda game, inp, res: {
-                "expect": "roll", "click": {"ok": False, "reason": reason}}):
+        click: dict = {"ok": False, "reason": reason}
+        merged: dict = {"expect": "roll", "click": click}
+        if notices:
+            click["notifications"] = list(notices)
+        if after:
+            merged["after"] = after
+        with mock.patch.object(clicker, "finish_needs_click", lambda game, inp, res: merged):
             r = clicker.run_click_action(g, mock.Mock(), op, {"char": "U1", "target": "D"})
         self.assertEqual(r.status, "failed")
-        return r.error, read
+        return r, read
 
     @staticmethod
     def used(char="U1", item="D", success=False):
@@ -672,6 +683,100 @@ class ToolCheck(unittest.TestCase):
     def test_a_click_that_never_landed_keeps_its_own_reason_after_a_walk(self):
         self.assertEqual(self._walked([self.used()], reason="hover_miss"), "could not point at the target")
 
+    # Every no_effect try of the 2026-11-09 reads (rd, lockpick, lockpick2): these two, in this order.
+    CANT_REACH = ("Can't reach this", "Can't reach")
+    SAID = '; the game said "Can\'t reach this", "Can\'t reach"'
+    START_4B, END_4B = (178.75, 21.85, 598.75), (179.75, 21.54, 599.75)
+
+    def test_the_games_notice_follows_a_walked_failed_use(self):
+        r, _ = self._no_roll_job([self.used()], start=self.START_4B, end=self.END_4B, notices=self.CANT_REACH)
+        self.assertEqual(r.error, "the game ran a plain Use of it, which failed; no lockpicking started; the actor "
+                                  "moved 1.4 m" + self.SAID)
+        self.assertNotIn("notifications", r.result["click"])  # said once, in the words
+
+    def test_the_games_notice_follows_a_failed_use_where_the_actor_stayed(self):
+        r, _ = self._no_roll_job([self.used()], notices=self.CANT_REACH)
+        self.assertEqual(r.error, click_use.PLAIN_USE_FAILED + self.SAID)
+
+    def test_a_notice_with_no_use_read_and_no_move_replaces_nothing_happened(self):
+        self.assertEqual(self._no_roll_job(notices=self.CANT_REACH)[0].error, "no roll came" + self.SAID)
+
+    def test_a_walk_with_no_use_read_gives_the_notice_too(self):
+        r, _ = self._no_roll_job(start=self.START_4B, end=self.END_4B, notices=self.CANT_REACH)
+        self.assertEqual(r.error, "no roll came; the actor moved 1.4 m" + self.SAID)
+
+    def test_a_read_that_fails_keeps_the_plain_words_and_the_detail(self):
+        click = {"ok": False, "reason": "no_effect", "notifications": list(self.CANT_REACH)}
+        text = click_use.plain_use_text("nothing happened", "no_effect", self._reader([]), {}, {"char": "U1"}, {"click": click})
+        self.assertEqual(text, "nothing happened")
+        self.assertEqual(click["notifications"], list(self.CANT_REACH))
+
+    def test_a_notice_is_not_put_on_another_reason(self):
+        r, _ = self._no_roll_job([self.used()], reason="hover_miss", notices=self.CANT_REACH)
+        self.assertEqual(r.error, "could not point at the target")
+        self.assertEqual(r.result["click"]["notifications"], list(self.CANT_REACH))
+
+    def test_disarm_is_out_of_scope_for_the_words(self):
+        r, _ = self._no_roll_job([self.used()], op="act.disarm", item="Trap Disarm Toolkit", notices=self.CANT_REACH)
+        self.assertEqual(r.error, "nothing happened")
+
+    def test_a_walked_actors_after_is_where_it_ended(self):
+        after = {"pos": [178.8, 21.9, 598.8], "hp": 8}  # row 4b's after=, from the job's end, before the click
+        r, _ = self._no_roll_job([self.used()], start=self.START_4B, end=self.END_4B, after=after)
+        self.assertEqual(r.result["after"], {"pos": [179.8, 21.5, 599.8], "hp": 8})
+
+    def test_an_actor_that_stayed_keeps_the_mods_after(self):
+        r, _ = self._no_roll_job([self.used()], after={"pos": [9.0, 9.0, 9.0]})  # not the position read at the end
+        self.assertEqual(r.result["after"], {"pos": [9.0, 9.0, 9.0]})
+
+    def test_a_result_with_no_after_gets_none(self):
+        r, _ = self._no_roll_job([self.used()], start=self.START_4B, end=self.END_4B)
+        self.assertNotIn("after", r.result)
+
+    @staticmethod
+    def _wait_polls(polls):
+        """clicker's wait after a landed click, on a clock that ticks per read: every poll of ui.state is taken."""
+        clock = [0.0]
+
+        def monotonic():
+            clock[0] += 0.05
+            return clock[0]
+
+        g: Any = mock.Mock()
+        left = list(polls)
+
+        def rpc(op, args=None, context="server"):
+            if op == "ui.state" and context == "client":
+                return left.pop(0) if left else {"screen": "game"}
+            if op == "act.target_state":
+                return {"locked": True}
+            raise clicker.GameError(op)  # no other source of notices, and no walk info
+        g.rpc = rpc
+        fake = mock.Mock(monotonic=monotonic, sleep=lambda s: None)
+        with mock.patch.object(clicker, "time", fake):
+            return clicker._finish_click(g, mock.Mock(), "door", "R", "roll", 1.0, None, "game", False, [], {}, {},
+                                         (816, 500), 13, {}), left
+
+    def test_the_wait_keeps_every_polls_notices_in_order_once(self):
+        # row 4b's client ticks: nothing, "Can't reach this", "Can't reach", then nothing again before the wait ended
+        none, this, reach = {"screen": "game"}, {"screen": "game", "notifications": ["Can't reach this"]}, \
+            {"screen": "game", "notifications": ["Can't reach"]}
+        r, left = self._wait_polls([none, this, this, reach, reach, none, none])
+        self.assertEqual(r.reason, "no_effect")
+        self.assertEqual(left, [])  # every poll read: the last ones had no notice
+        self.assertEqual(r.detail["notifications"], ["Can't reach this", "Can't reach"])
+
+    def test_a_wait_with_no_notice_reports_none(self):
+        self.assertNotIn("notifications", self._wait_polls([{"screen": "game"}])[0].detail)
+
+    def test_two_notices_in_one_poll_keep_their_order_and_appear_once(self):
+        seen = click_use.SeenNotices()
+        state = {"screen": "game", "notifications": ["b", "a", "b"]}
+        self.assertIs(seen.note(state), state)
+        seen.note({"notifications": ["a", "c"]})
+        seen.note({})
+        self.assertEqual(seen.seen, ["b", "a", "c"])
+
     def test_a_step_under_the_walk_threshold_is_not_a_walk(self):
         self.assertEqual(self._no_roll([self.used()], end=(1.0, 2.0, 3.1))[0], click_use.PLAIN_USE_FAILED)
 
@@ -693,8 +798,9 @@ class ToolCheck(unittest.TestCase):
     def test_a_game_full_uuid_matches_the_short_one(self):
         u = "aaaaaaaa-0000-0000-0000-000000000001"
         g = {"seq": 6, "kind": "used", "data": {"char": {"uuid": "S_Player_" + u}, "item": {"uuid": "D"}, "success": False}}
-        self.assertEqual(click_use.after_click(self._reader([g]), {"seq": 5, "pos": [0, 0, 0]}, "U1", "D"), (False, 0.0))
-        self.assertEqual(click_use.after_click(self._reader([g], u), {"seq": 5, "pos": [0, 0, 0]}, u, "D"), (True, 0.0))
+        here = [0, 0, 0]
+        self.assertEqual(click_use.after_click(self._reader([g]), {"seq": 5, "pos": here}, "U1", "D"), (False, 0.0, here))
+        self.assertEqual(click_use.after_click(self._reader([g], u), {"seq": 5, "pos": here}, u, "D"), (True, 0.0, here))
 
     @staticmethod
     def _reader(events, char="U1"):

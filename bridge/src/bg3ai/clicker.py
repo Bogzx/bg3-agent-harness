@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .click_use import WALK_EPS_M, before_click, plain_use_text
+from .click_use import WALK_EPS_M, SeenNotices, before_click, plain_use_text
 from .game import Game, GameError, JobResult
 from .input import InputClient
 
@@ -710,10 +710,10 @@ def _finish_click(game: Game, inp: InputClient, uuid: str, button: str, expect: 
     wanted = EXPECT_SCREENS.get(expect, {expect})
     t_click = time.monotonic()
     deadline = t_click + verify_timeout
-    st: dict = {}
+    notices = SeenNotices()
     walk = _WalkWatch(game) if expect == "roll" else None
     while True:
-        st = _screen(game)
+        st = notices.note(_screen(game))
         scr = st.get("screen")
         if (wanted and scr in wanted) or (not wanted and scr != before):
             if walk and walk.walked_m > 0.3:
@@ -751,8 +751,8 @@ def _finish_click(game: Game, inp: InputClient, uuid: str, button: str, expect: 
             return ClickResult(True, None, "unlocked", pos, tries, extra)
         if trap and ts.get("trap_armed"):
             extra["trap"] = "still armed"
-    if st.get("notifications"):
-        extra["notifications"] = st["notifications"]
+    if notices.seen:
+        extra["notifications"] = notices.seen
     return ClickResult(False, "no_effect", st.get("screen"), pos, tries, extra)
 
 
@@ -860,7 +860,7 @@ def run_click_action(game: Game, inp: InputClient | None, op: str, args: dict, w
                     "interrupted": ("a conversation started instead (someone saw it: lockpicking, disarming "
                                     "or picking a pocket in sight of its owner or a guard is a crime)"),
                     "no_menu_entry": "the right-click menu had no such entry"}.get(reason, reason)
-        jr.error = plain_use_text(jr.error, reason, game, before, args)
+        jr.error = plain_use_text(jr.error, reason, game, before, args, merged)
         if merged.get("click", {}).get("trap") == "still armed":
             jr.error = ("the trap is still armed after Disarm (no roll and no change within 4 s; opening or using it now sets it "
                         "off)")
