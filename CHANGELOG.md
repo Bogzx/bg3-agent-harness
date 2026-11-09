@@ -239,7 +239,8 @@ game unless it says so.
   waited out as before, and a match is unchanged: its phase tick ends that turn itself. A Lockpick row pressed with no
   roll that the game answered with a failed Use of the door by the actor, who stayed put, reads `the game ran a plain
   Use of it, which failed; no lockpicking started; the actor did not move` (read live: 16 of 16 no-rolls), no longer
-  `nothing happened`. A `react` answered while the next reaction prompt comes up no longer reports `TIMEOUT` after 10 s;
+  `nothing happened`; when the game walked the actor, the last clause gives the distance (`the actor moved 1.4 m`), and
+  with no failed Use read it is `no roll came; the actor moved 1.4 m`. A `react` answered while the next reaction prompt comes up no longer reports `TIMEOUT` after 10 s;
   it comes back done, with that prompt. The answer had landed: the game's popup is down 30-82 ms between two prompts,
   under the 80 ms between the job's checks, so the next prompt read as the same one at the same event count (the v0.11
   pilot's L12 match; 3 of 5 declines with a next prompt in a live read). The job now holds the event it answered and

@@ -619,12 +619,12 @@ class ToolCheck(unittest.TestCase):
         self.assertEqual(r.error, "the book screen covers the world (press_key ESCAPE closes it)")  # D630: a fact
 
     def _no_roll(self, events=(), end=(1.0, 2.0, 3.0), op="act.lockpick", item="Thieves' Tools", latest=5,
-                 reason="no_effect"):
+                 reason="no_effect", start=(1.0, 2.0, 3.0)):
         """A Lockpick row pressed with no roll: the failure's text and the seq the events were read from."""
         g: Any = self.Inv([{"name": item, "owner": "U1"}])
         g.run_job = lambda o, args, wait_s=40.0: clicker.JobResult(
             "done", {"needs_click": "D", "expect": "roll", "button": "R", "menu": "Lockpick"})
-        real, pos, read = g.rpc, [(1.0, 2.0, 3.0), end], []
+        real, pos, read = g.rpc, [start, end], []
 
         def rpc(o, args: Any = None, context="server"):
             if o == "events.since":
@@ -655,8 +655,22 @@ class ToolCheck(unittest.TestCase):
     def test_no_use_event_keeps_the_plain_words(self):
         self.assertEqual(self._no_roll()[0], "nothing happened")
 
-    def test_the_actor_walking_keeps_the_plain_words(self):
-        self.assertEqual(self._no_roll([self.used()], end=(1.0, 2.0, 4.0))[0], "nothing happened")
+    def _walked(self, events=(), reason="no_effect"):
+        """Round live read 2026-11-09 row 4b: Gale's positions at the click and when the text was worded."""
+        return self._no_roll(events, start=(178.75, 21.85, 598.75), end=(179.75, 21.54, 599.75), reason=reason)[0]
+
+    def test_a_failed_use_after_the_game_walked_the_actor_says_both(self):
+        self.assertEqual(self._walked([self.used()]),
+                         "the game ran a plain Use of it, which failed; no lockpicking started; the actor moved 1.4 m")
+
+    def test_a_walk_with_no_failed_use_read_claims_none(self):
+        self.assertEqual(self._walked(), "no roll came; the actor moved 1.4 m")
+
+    def test_a_walk_with_a_successful_use_claims_no_failure(self):
+        self.assertEqual(self._walked([self.used(success=True)]), "no roll came; the actor moved 1.4 m")
+
+    def test_a_click_that_never_landed_keeps_its_own_reason_after_a_walk(self):
+        self.assertEqual(self._walked([self.used()], reason="hover_miss"), "could not point at the target")
 
     def test_a_step_under_the_walk_threshold_is_not_a_walk(self):
         self.assertEqual(self._no_roll([self.used()], end=(1.0, 2.0, 3.1))[0], click_use.PLAIN_USE_FAILED)
@@ -679,8 +693,8 @@ class ToolCheck(unittest.TestCase):
     def test_a_game_full_uuid_matches_the_short_one(self):
         u = "aaaaaaaa-0000-0000-0000-000000000001"
         g = {"seq": 6, "kind": "used", "data": {"char": {"uuid": "S_Player_" + u}, "item": {"uuid": "D"}, "success": False}}
-        self.assertFalse(click_use.plain_use_failed(self._reader([g]), {"seq": 5, "pos": [0, 0, 0]}, "U1", "D"))
-        self.assertTrue(click_use.plain_use_failed(self._reader([g], u), {"seq": 5, "pos": [0, 0, 0]}, u, "D"))
+        self.assertEqual(click_use.after_click(self._reader([g]), {"seq": 5, "pos": [0, 0, 0]}, "U1", "D"), (False, 0.0))
+        self.assertEqual(click_use.after_click(self._reader([g], u), {"seq": 5, "pos": [0, 0, 0]}, u, "D"), (True, 0.0))
 
     @staticmethod
     def _reader(events, char="U1"):
@@ -690,7 +704,7 @@ class ToolCheck(unittest.TestCase):
         return g
 
     def test_an_unreadable_game_keeps_the_plain_words(self):
-        self.assertFalse(click_use.plain_use_failed(self._reader([self.used()]), {}, "U1", "D"))
+        self.assertIsNone(click_use.after_click(self._reader([self.used()]), {}, "U1", "D"))
 
     def test_disarm_keeps_its_words(self):
         error, read = self._no_roll([self.used()], op="act.disarm", item="Trap Disarm Toolkit")

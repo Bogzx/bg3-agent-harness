@@ -9,8 +9,10 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 
 - A Lockpick row pressed with no roll read `lockpick: FAILED — nothing happened`. When the game answered with a failed
   Use of the target by the actor and the actor stayed put, it now reads `the game ran a plain Use of it, which failed;
-  no lockpicking started; the actor did not move`. Any other no-effect keeps `nothing happened`. Why the game does
-  this is not known. Tool definitions don't change.
+  no lockpicking started; the actor did not move`. If the actor ended more than 0.15 m from where it stood, it reads the
+  same with `the actor moved 1.4 m` (the distance read), and with no failed Use read, `no roll came; the actor moved
+  1.4 m`. No failed Use and no move keeps `nothing happened`, as does a read that fails. Why the game does this is not
+  known. Tool definitions don't change.
 - A lockpick can fail on a door for a reason we couldn't read: seen on one door (e482, Makeshift Prison), where the roll came only with a party member 0.45 to 0.94 m from the door's point (18 of 18, 0 of 16 otherwise); the theory that the actor must stand on the door's floor was tested live and rejected (0 of 9, 2026-11-09), so the approach point is unchanged.
 
 ## 2026-11-09: a wait stops at an open turn at 0 HP
