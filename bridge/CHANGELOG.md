@@ -11,6 +11,7 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
   Use of the target by the actor and the actor stayed put, it now reads `the game ran a plain Use of it, which failed;
   no lockpicking started; the actor did not move`. Any other no-effect keeps `nothing happened`. Why the game does
   this is not known. Tool definitions don't change.
+- A lockpick can fail on a door for a reason we couldn't read: seen on one door (e482, Makeshift Prison), where the roll came only with a party member 0.45 to 0.94 m from the door's point (18 of 18, 0 of 16 otherwise); the theory that the actor must stand on the door's floor was tested live and rejected (0 of 9, 2026-11-09), so the approach point is unchanged.
 
 ## 2026-11-09: a wait stops at an open turn at 0 HP
 
