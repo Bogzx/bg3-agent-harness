@@ -198,13 +198,25 @@ def party_losses(records: Iterable[dict]) -> dict[str, int]:
     member (no summon) going down or dying, seen by its event or by a snapshot (DeepSeek x Balthazar: Wyll dead in a
     snapshot, no died event), `revived` standing it up again; and the party wiped (every real member down or dead,
     once a snapshot has listed the party, or the Game Over screen: State.wiped) from not. A summon is a name any snapshot or died event marks summon (its
-    downed/revived events carry no flag)."""
+    downed/revived events carry no flag). The referee ring's `party_down` counts a down the 15 s poll can miss (a
+    capture, a down and straight up): one per member until a read shows them up, and the read of that same down isn't
+    a second. Only `downs` reads it: wipes and State stay the poll's, so it can't end a run or move a goal."""
     records = list(records)
     summons = {p["name"] for r in records if r["kind"] == "snapshot" for p in r["party"] if p.get("summon")}
     summons |= {r["name"] for r in records if r["kind"] == "event" and r["ev"] == "died" and r.get("summon")}
     st, party = State(), {}  # name -> [dead, downed]
     downs = deaths = wipes = 0
     listed = was_wiped = False
+    ring_down: set[str] = set()  # a party_down has them down, and no read has shown them up since
+    ring_counted: set[str] = set()  # a party_down counted a down that no read has shown yet
+
+    def read_down(name: str) -> int:
+        """A down a read showed: 1, or 0 when its party_down already counted it."""
+        if name in ring_counted:
+            ring_counted.remove(name)
+            return 0
+        return 1
+
     for r in records:
         st.apply(r)
         if r["kind"] == "snapshot":
@@ -214,9 +226,17 @@ def party_losses(records: Iterable[dict]) -> dict[str, int]:
                     continue
                 dead, downed = party.get(p["name"], [False, False])
                 deaths += bool(p.get("dead")) and not dead
-                downs += bool(p.get("downed")) and not p.get("dead") and not (dead or downed)
+                if p.get("downed") and not p.get("dead") and not (dead or downed):
+                    downs += read_down(p["name"])
+                ring_down.discard(p["name"])  # read down or dead, `party` has them now
                 now[p["name"]] = [bool(p.get("dead")), bool(p.get("downed"))]
             party = now
+        elif r["kind"] == "event" and r["ev"] == "party_down" and r["name"] not in summons:
+            dead, downed = party.get(r["name"], [False, False])
+            if not (dead or downed or r["name"] in ring_down):
+                downs += 1
+                ring_down.add(r["name"])
+                ring_counted.add(r["name"])
         elif (
             r["kind"] == "event"
             and r["ev"] in ("died", "downed", "revived")
@@ -228,10 +248,11 @@ def party_losses(records: Iterable[dict]) -> dict[str, int]:
                 deaths += not m[0]
                 m[0] = True
             elif r["ev"] == "downed":
-                downs += not (m[0] or m[1])
+                downs += read_down(r["name"]) if not (m[0] or m[1]) else 0
                 m[1] = True
             else:
                 m[:] = [False, False]
+                ring_down.discard(r["name"])
         wiped = st.game_over or (listed and bool(party) and all(dead or downed for dead, downed in party.values()))
         wipes += wiped and not was_wiped
         was_wiped = wiped

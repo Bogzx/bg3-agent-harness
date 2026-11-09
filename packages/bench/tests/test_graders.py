@@ -619,3 +619,182 @@ def test_a_goal_run_still_ends_when_every_member_reads_as_down():
     assert graders.verdict({"gold": {"gte": 5000}}, tl) == "wiped"
     out = grade({"gold": {"gte": 5000}}, tl)
     assert out["violations"] == [{"t_s": 21, "node": {"wipe": True}}]
+
+
+# The referee ring's party_down: counted in deaths.downs only. The shapes are real runs' (v011-pilot and diverse).
+PARTY_FOUR = ("Wyll", "Gale", "Shadowheart", "Tav")
+DOWN = {"downed": True, "hp": 0}
+
+
+def four(**flags):
+    return [member(n, **flags.get(n, {})) for n in PARTY_FOUR]
+
+
+def party_down(g, name):
+    return ev(g, "party_down", name=name, party=True, uuid=f"{name}_0000")
+
+
+def without_ring(timeline):
+    return [r for r in timeline if r.get("ev") != "party_down"]
+
+
+def windmill():
+    """fight_act1_windmill from its read at 1061.9 to the Game Over: Tav down and straight up at 1 HP, Gale down, the
+    read with Tav standing; later Tav down, a raw up, down again, and the real Game Over at 1107.4."""
+    return run(
+        ev(172.9, "combat_started"),
+        snap(1061.9, party=four(Wyll=DOWN, Shadowheart=DOWN), combat=True),
+        party_down(1077.0, "Tav"),
+        party_down(1077.05, "Gale"),
+        ev(1077.1, "downed", name="Gale", party=True),
+        snap(1077.1, party=four(Wyll=DOWN, Gale=DOWN, Shadowheart=DOWN, Tav={"hp": 1}), combat=True),
+        party_down(1098.8, "Tav"),
+        party_down(1098.85, "Tav"),
+        ev(1107.4, "game_over"),
+        ev(1107.4, "downed", name="Tav", party=True),
+        snap(1107.4, party=four(Wyll=DOWN, Gale=DOWN, Shadowheart=DOWN, Tav=DOWN), combat=True),
+        mark(1110, "run_end"),
+    )
+
+
+def act1_capture():
+    """act1_gold_max: Shadowheart and Tav down, Gale's down seen only by the ring, the fight's end, the gold taken, and
+    everyone up at 1 HP in the prison: no read ever had the whole party down."""
+    gold = 685
+    return run(
+        ev(1943.0, "combat_started"),
+        snap(1983.2, gold=gold, party=four(), combat=True),
+        party_down(1990.0, "Shadowheart"),
+        party_down(1995.0, "Tav"),
+        ev(1998.3, "downed", name="Shadowheart", party=True),
+        snap(1998.3, gold=gold, party=four(Shadowheart=DOWN, Tav={"hp": 1}), combat=True),
+        party_down(2050.0, "Tav"),
+        ev(2058.8, "downed", name="Tav", party=True),
+        snap(2058.8, gold=gold, party=four(Shadowheart=DOWN, Tav=DOWN), combat=True),
+        party_down(2064.0, "Gale"),
+        ev(2065.9, "combat_ended"),
+        ev(2066.4, "gold", gold=0, delta=-685),
+        ev(2073.9, "revived", name="Shadowheart", party=True),
+        ev(2073.9, "revived", name="Tav", party=True),
+        snap(2073.9, gold=0, party=four()),
+        mark(2700, "run_end"),
+    )
+
+
+def windmill_goal():
+    return json.loads((ROOT / "packages/bench/scenarios/fight_act1_windmill.json").read_text())["goal"]
+
+
+def test_party_down_counts_the_downs_the_poll_missed_in_the_windmill():
+    assert facts.party_losses(without_ring(windmill()))["downs"] == 4  # Wyll, Shadowheart, Gale, Tav once
+    assert facts.party_losses(windmill()) == {"fights": 1, "downs": 5, "deaths": 0, "wipes": 1}  # Tav's first down too
+
+
+def test_party_down_counts_the_capture_the_poll_missed():
+    assert facts.party_losses(without_ring(act1_capture()))["downs"] == 2
+    assert facts.party_losses(act1_capture()) == {"fights": 1, "downs": 4, "deaths": 0, "wipes": 0}
+
+
+def poll_then_ring():
+    """The ring read after the poll: Tav's row comes after the poll already has her down, then the last member falls."""
+    return run(
+        snap(10, party=four(Wyll=DOWN, Gale=DOWN), combat=True),
+        ev(11, "downed", name="Tav", party=True),
+        party_down(12, "Tav"),
+        ev(13, "downed", name="Shadowheart", party=True),
+    )
+
+
+@pytest.mark.parametrize(
+    "timeline",
+    [windmill(), act1_capture(), poll_then_ring()],
+    ids=["windmill", "act1_capture", "poll_then_ring"],
+)
+def test_party_down_changes_no_verdict_grade_or_score(timeline):
+    plain = without_ring(timeline)
+    goal = {"combats_won": {"gte": 1}}
+    for g in (goal, windmill_goal(), None):
+        for n in range(1, len(timeline) + 1):
+            cut = timeline[:n]
+            assert graders.verdict(g, cut) == graders.verdict(g, without_ring(cut))
+    assert grade(goal, timeline) == grade(goal, plain)
+    assert graders.measure("gold", timeline, start_state=133) == graders.measure("gold", plain, start_state=133)
+    assert facts.party_losses(timeline)["wipes"] == facts.party_losses(plain)["wipes"]
+
+
+def test_the_windmill_is_not_wiped_until_its_game_over():
+    tl = windmill()
+    over = next(i for i, r in enumerate(tl) if r.get("ev") == "game_over")
+    assert all(graders.verdict(windmill_goal(), tl[:n]) is None for n in range(1, over + 1))
+    assert graders.verdict(windmill_goal(), tl[: over + 1]) == "wiped"
+
+
+def test_the_last_member_down_and_straight_up_is_no_wipe():
+    # diverse-2026-10-25 act1_gold_max at 50282.2: Tav's down and up in one result, the next read has her at 1 HP
+    tl = run(
+        snap(10, party=four(Wyll=DOWN, Gale=DOWN, Shadowheart=DOWN), combat=True),
+        party_down(20, "Tav"),
+        snap(21, party=four(Wyll=DOWN, Gale=DOWN, Shadowheart=DOWN, Tav={"hp": 1}), combat=True),
+    )
+    assert graders.verdict({"combats_won": {"gte": 1}}, tl) is None
+    assert facts.party_losses(tl)["wipes"] == 0
+
+
+def test_a_capture_still_reads_as_a_won_combat():
+    # the known gap, ruled 2026-11-09: goals read the poll, and the poll never had the whole party down
+    assert grade({"combats_won": {"gte": 1}}, act1_capture())["passed"]
+
+
+def test_party_down_and_the_polls_read_of_it_are_one_down():
+    both_ways = {
+        "ring then poll": [party_down(11, "Tav"), ev(12, "downed", name="Tav", party=True)],
+        "poll then ring": [ev(11, "downed", name="Tav", party=True), party_down(12, "Tav")],
+        "ring then a snapshot's read": [party_down(11, "Tav"), snap(12, party=four(Tav=DOWN), combat=True)],
+        "a stale read between": [
+            party_down(11, "Tav"),
+            snap(12, party=four(Tav={"hp": 3}), combat=True),
+            ev(13, "downed", name="Tav", party=True),
+            snap(13, party=four(Tav=DOWN), combat=True),
+        ],
+        "reports with no read between": [party_down(11, "Tav"), party_down(12, "Tav"), party_down(13, "Tav")],
+    }
+    for why, rows in both_ways.items():
+        assert facts.party_losses(run(snap(10, party=four(), combat=True), *rows))["downs"] == 1, why
+
+
+def test_a_read_up_between_two_party_downs_makes_two():
+    tl = run(
+        snap(10, party=four(), combat=True),
+        party_down(11, "Tav"),
+        snap(12, party=four(Tav={"hp": 1}), combat=True),
+        party_down(13, "Tav"),
+    )
+    assert facts.party_losses(tl)["downs"] == 2
+
+
+def test_a_polled_revived_also_closes_a_party_down():
+    tl = run(
+        snap(10, party=four(), combat=True),
+        party_down(11, "Tav"),
+        ev(12, "downed", name="Tav", party=True),
+        ev(13, "revived", name="Tav", party=True),
+        party_down(14, "Tav"),
+    )
+    assert facts.party_losses(tl)["downs"] == 2
+
+
+def test_party_down_of_a_summon_or_the_dead_is_no_down():
+    summon = member("Wolf", summon=True)
+    tl = run(snap(10, party=[TAV, summon], combat=True), party_down(11, "Wolf"))
+    assert facts.party_losses(tl)["downs"] == 0
+    tl = run(snap(10, party=four(), combat=True), ev(11, "died", name="Tav", party=True), party_down(12, "Tav"))
+    assert facts.party_losses(tl) == {"fights": 1, "downs": 0, "deaths": 1, "wipes": 0}
+
+
+def test_the_facts_schema_requires_party_downs_name():
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(FACTS_SCHEMA.read_text())
+    row = party_down(11, "Tav")
+    jsonschema.validate(row, schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({k: v for k, v in row.items() if k != "name"}, schema)

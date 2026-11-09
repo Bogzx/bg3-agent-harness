@@ -67,7 +67,7 @@
       "required": ["ev"],
       "properties": {
         "ev": {"enum": [
-          "combat_started", "combat_ended", "died", "downed", "revived", "level_up", "joined",
+          "combat_started", "combat_ended", "died", "downed", "revived", "party_down", "level_up", "joined",
           "gold", "item_added", "trade_open", "trade_end", "pickpocket", "stole", "crime", "kill", "loot",
           "quest_added", "quest_done", "region", "area", "level_changed", "game_end", "choice",
           "game_over", "pos", "approval", "arena_start", "arena_turn", "arena_turn_forced", "arena_end",
@@ -78,7 +78,7 @@
         ]}
       },
       "allOf": [
-        {"if": {"properties": {"ev": {"enum": ["died", "downed", "revived"]}}},
+        {"if": {"properties": {"ev": {"enum": ["died", "downed", "revived", "party_down"]}}},
          "then": {"required": ["name", "party"], "properties": {"name": {"$ref": "#/$defs/name"}, "party": {"type": "boolean"}}}},
         {"if": {"properties": {"ev": {"const": "level_up"}}},
          "then": {"required": ["name", "level"], "properties": {"name": {"$ref": "#/$defs/name"}, "level": {"type": "integer", "minimum": 1}}}},
