@@ -1,0 +1,15 @@
+# bench-v0.11 Codex subset, part 3 of 3: one mirror match per 4v4 tier, L12 first because its 120 min wall cap asks the
+# disk guard for the most (4096 + 120 x 16 = 6016 MB free). A self-pair is graded, never rated, and `single` plays m1
+# only. Played last by `runner/play.py arena-matrix --matrix packages/bench/matrices/v011-sol-arena.toml`.
+# Same ledger and rule as v011-sol-windmill.toml, per side here: a match reserves twice its max_cost. An invalid match
+# is rerun, at most 2 times.
+name = "v011-sol-arena"
+pairs = [["profiles/gpt-6.1-sol-pi.toml", "profiles/gpt-6.1-sol-pi.toml"]]
+arenas = ["builds-l12-4v4-v1", "builds-l5-4v4-v1", "builds-l2-4v4-v1"]
+repeats = 1
+single = true
+allow_unverified = true  # the profile's status is offline until its first live run
+
+[budget]
+file = "runtime/budget-v011-sol.json"
+max_cost = { "builds-l12-4v4-v1" = 5.3, "builds-l5-4v4-v1" = 2.4, "builds-l2-4v4-v1" = 2.2 }
