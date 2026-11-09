@@ -414,6 +414,8 @@ def test_a_maximise_run_the_end_rule_ended_keeps_its_score_and_an_old_timeout_st
     _, records = load_series()
     res = results.from_record({**records[0], "outcome": "ended_by_agent"}, "r", grade=NO_PASS, score=SCORE)
     assert (res["outcome"], res["valid"], res["passed"], res["score"]) == ("ended_by_agent", True, None, SCORE)
+    left = results.from_record({**records[0], "outcome": "agent_exited"}, "r", grade=NO_PASS, score=SCORE)
+    assert (left["outcome"], left["valid"], left["score"]) == ("agent_exited", True, SCORE)
     assert_valid("result.v1.schema.json", res)
     old = results.from_record({**records[0], "outcome": "timeout"}, "r", grade=NO_PASS, score=SCORE)
     assert old["outcome"] == "timeout"  # a run recorded before the outcome existed is never renamed

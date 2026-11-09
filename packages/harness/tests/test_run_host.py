@@ -508,8 +508,8 @@ def test_record_ends_the_facts_stops_the_game_and_returns_the_run(rig: Rig):
     calls.clear()
     rig.runners[-1].end_at = 1000.0 + 25 * 60  # the run_end mark
     rec = h.record(JOB, SAVE_SC, run_dir("m-grove"), outcome())
-    assert calls == ["end_facts(timeout)", "scenario_undo", "end_run_game(run end)"]
-    assert (rec["outcome"], rec["reason"], rec["wall_min"], rec["sessions"]) == ("timeout", "exited", 25.0, 1)
+    assert calls == ["end_facts(agent_exited)", "scenario_undo", "end_run_game(run end)"]
+    assert (rec["outcome"], rec["reason"], rec["wall_min"], rec["sessions"]) == ("agent_exited", "exited", 25.0, 1)
     moved = ["nav_aa.json", "nav_guard_aa.json"]
     assert (rec["cost_usd"], rec["reset"]) == (0.0, {"nav_files": moved, "restored": moved, "saves": []})
     assert rec["served"] is None  # runs.claude_totals' served: no stream, nothing served
@@ -543,7 +543,7 @@ def test_a_verdict_that_raises_doesnt_end_the_run(rig: Rig):
 
     rig.h.start({**JOB, "verdict": broken}, SAVE_SC, run_dir("g"))
     assert not rig.h.watches[run_dir("g")].check() and rig.runners[-1].until_hit is None
-    assert rig.h.record(JOB, SAVE_SC, run_dir("g"), outcome())["outcome"] == "timeout"
+    assert rig.h.record(JOB, SAVE_SC, run_dir("g"), outcome())["outcome"] == "agent_exited"
 
 
 def test_record_outcomes_and_the_game_stops_even_when_the_facts_fail(rig: Rig):
@@ -558,7 +558,7 @@ def test_record_outcomes_and_the_game_stops_even_when_the_facts_fail(rig: Rig):
     calls.clear()
     with pytest.raises(RuntimeError):
         h.record(JOB, SAVE_SC, run_dir("c"), outcome())
-    assert calls == ["end_facts(timeout)", "scenario_undo", "end_run_game(run end)"]
+    assert calls == ["end_facts(agent_exited)", "scenario_undo", "end_run_game(run end)"]
 
 
 def se_names() -> list[str]:
@@ -577,7 +577,7 @@ def test_record_of_a_run_that_reached_its_until_milestone(rig: Rig):
     h.start(JOB, SAVE_SC, run_dir("grove"))  # the end credits stop any run; a goal scenario isn't "reached" by them
     runners[-1].until_hit = {"id": "game_end", "label": "The end", "t": 1720.0}
     rec = h.record(JOB, SAVE_SC, run_dir("grove"), outcome())
-    assert (rec["outcome"], rec["milestone"]) == ("timeout", None)
+    assert (rec["outcome"], rec["milestone"]) == ("agent_exited", None)
 
 
 QUICK = [("claude_quick_exit", "harness")]
@@ -707,7 +707,7 @@ def test_record_tags_the_runs_failures_and_an_ending_that_was_ours(rig: Rig):
     ]
     rig.h.start(JOB, SAVE_SC, run_dir("m-grove-2"))
     rec = rig.h.record(JOB, SAVE_SC, run_dir("m-grove-2"), outcome())
-    assert (rec["harness_failures"], [f["kind"] for f in rec["failures"]]) == (0, ["timeout"])
+    assert (rec["harness_failures"], [f["kind"] for f in rec["failures"]]) == (0, ["agent_exited"])
 
 
 def test_bench_hooks_turn_a_play_process_that_cant_start_into_a_setup_failed_result():
@@ -840,8 +840,8 @@ def test_an_agent_that_keeps_ending_its_turn_is_recorded_as_an_early_exit_not_a_
     assert len(r.plays) == 1 + STOP_RESUMES and out.result.reason == "exited"
     rec = rig.h.record(JOB, sc, run_dir("m-naut"), out)
     assert (rec["outcome"], [(f["kind"], f["class"], f["detail"]) for f in rec["failures"]]) == (
-        "timeout",
-        [("timeout", "agent", "S001: the agent ended its turn with 233.0 min of the run left, before the goal")],
+        "agent_exited",
+        [("agent_exited", "agent", "S001: the agent ended its turn with 233.0 min of the run left, before the goal")],
     )
 
 

@@ -525,7 +525,8 @@ def undecided_why(r: RunRunner, sc: Json, session_end: float, now: float) -> str
     if (fact := maximised(sc)) is not None:
         return (
             f"The run isn't over: it has no pass and scores the party's {fact} gained when it ends: at its time cap, "
-            "at a party wipe, or after a stretch with no acting call since a restart (this restart begins a new one)."
+            "at the Game Over screen, or after a stretch with no acting call since a restart (this restart begins a "
+            "new one)."
         )
     return (
         "The run isn't decided: the grader hasn't seen its goal "
@@ -548,9 +549,9 @@ def run_failures(
     over the run's runner_events.jsonl, its play streams and the agent's reloads; its one session as the history),
     plus the session's ending when it was ours (runs.reason_failures: mcp_failed, setup_failed, aborted, api_limit).
     A harness failure makes the run invalid (bg3bench results.validity): it doesn't score the model. name: the
-    outcome to classify ("stopped" for an operator stop: listed apart, not a failure). A `timeout` whose agent ended
-    its turn with more than EARLY_EXIT_MINUTES of the session_minutes left (no stop resume left) says so, not that the
-    time ran out (fixlive D4: "the run's time ran out" at 7.9 of 240 min). `start`: (run_start, start save): a launch
+    outcome to classify ("stopped" for an operator stop: listed apart, not a failure). `agent_exited`: the agent ended
+    its turn with time left and nothing resumed it, which says so, not that the time ran out (fixlive D4: "the run's
+    time ran out" at 7.9 of 240 min). `start`: (run_start, start save): a launch
     recovered before it is the run's note, not a failure (runs.recovered_launch). `maximise`: the run has no goal or
     milestone, so its ending says what happened (its stop check ended it at a turn's end with no acting call since
     the agent's last (re)start: `ended_by_agent`, or the cap) instead of "before the goal / the milestone" (v010 pilot:
@@ -571,13 +572,12 @@ def run_failures(
             f"{SID}: the run ended at its turn's end with no acting call since its last (re)start, {left} min of "
             "the cap left"
         )
-    if name == "timeout" and session_minutes is not None:
-        left = rpolicy.early_exit_minutes(res.reason, outcome.started, res.ended, session_minutes)
-        if left is not None:
-            ending_why = f"{SID}: the agent ended its turn with {left} min of the run left"
-            ending_why += "" if maximise else ", before the goal"
-        elif maximise:
-            ending_why = "the run's time cap was reached"
+    if name == "agent_exited" and session_minutes is not None:
+        left = round((outcome.started + session_minutes * 60 - res.ended) / 60, 1)
+        ending_why = f"{SID}: the agent ended its turn with {left} min of the run left"
+        ending_why += "" if maximise else ", before the goal"
+    if name == "timeout" and maximise and session_minutes is not None:
+        ending_why = "the run's time cap was reached"
     if name == "over_budget" and maximise:
         ending_why = f"the run's {cap or 'cost'} cap was used up"
     return runs.classify_run(state_dir, t0, res.ended, [session], events, actions, name, ending_why, cap, ending)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
@@ -848,7 +848,10 @@ class LiveRunHost:
             name = "reached" if goal["verdict"] == "passed" else "failed"  # the live verdict ended the run
         else:
             early = run_dir in self.ended_by_agent
-            name = "reached" if hit else "over_budget" if r.cap_hit else "ended_by_agent" if early else "timeout"
+            left = rpolicy.early_exit_minutes(res.reason, outcome.started, res.ended, r.opt.session_minutes, 0.0)
+            exited = left is not None  # its agent ended its turn with time left and nothing resumed it: not the cap
+            ending = "ended_by_agent" if early else "agent_exited" if exited else "timeout"
+            name = "reached" if hit else "over_budget" if r.cap_hit else ending
         referee_health = None
         try:
             ended = r.end_facts(name)

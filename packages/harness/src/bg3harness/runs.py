@@ -343,7 +343,7 @@ STREAM_KINDS = (
     "bg_timeout",
     "ui_hang",
 )
-OUTCOME_KINDS = ("timeout", "ended_by_agent", "cost_cap", "tokens_cap", "time_cap")
+OUTCOME_KINDS = ("timeout", "ended_by_agent", "agent_exited", "cost_cap", "tokens_cap", "time_cap")
 
 
 def restream_failures(record: dict, state_dir: Path) -> list[dict]:
@@ -383,12 +383,13 @@ def reload_failures(actions: list[dict]) -> list[dict]:
 def outcome_failure(outcome: str, why: str, t: float, others: list[dict], cap: str | None = None) -> list[dict]:
     """The run's own ending as a failure: a timeout, a maximise run's end rule (ended_by_agent) or a cost/token cap is
     the agent's (unknown when harness failures hit the run), a give-up and a runner error are ours."""
-    if outcome in ("timeout", "ended_by_agent", "over_budget"):
+    if outcome in ("timeout", "ended_by_agent", "agent_exited", "over_budget"):
         cls = UNKNOWN if any(f["class"] == HARNESS for f in others) else AGENT
         kind = f"{cap or 'cost'}_cap" if outcome == "over_budget" else outcome
         default = {
             "timeout": "the run's time ran out before the milestone",
             "ended_by_agent": "the run ended at its turn's end with no acting call since its last (re)start",
+            "agent_exited": "the agent ended its turn with time left",
         }.get(outcome, f"the run's {cap or 'cost'} cap was used up before the milestone")
         return [failure(t, kind, cls, why or default)]
     if outcome == "gave_up":

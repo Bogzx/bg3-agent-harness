@@ -573,8 +573,49 @@ def test_a_wipe_fails_a_goal_run_and_nothing_after_it_counts():
     assert graders.verdict({"gold": {"gte": 50}}, tl) == "passed"
 
 
-def test_a_wipe_ends_a_maximise_run_at_its_gain_so_far():
-    tl = balthazar_wipe()
-    assert graders.verdict(None, tl) == "wiped" and graders.verdict(None, tl[:6]) is None
+def test_a_game_over_ends_a_maximise_run_at_its_gain_so_far():
+    down = balthazar_wipe()
+    tl = [*down[:7], ev(303, "game_over"), *down[7:]]  # after Tav went down, before the other save's 1200 gold
+    assert graders.verdict(None, tl) == "wiped" and graders.verdict(None, tl[:7]) is None
     m = graders.measure("gold", tl)
     assert (m["start"], m["end"], m["gain"], m["peak"]) == (60, 60, 0, 60)  # not the other save's 1200
+
+
+def prison_defeat():
+    """The v0.11 pilot's act1_gold_max: every member down in a fight, no Game Over, the game moves the party to a
+    prison and takes its gold; a chest there gives some back."""
+    party = [{**member("Tav", 2), "avatar": True}, member("Gale", 1)]
+    return run(
+        snap(10, gold=903, party=party, combat=True),
+        ev(20, "downed", name="Gale", party=True),
+        ev(21, "downed", name="Tav", party=True),
+        ev(30, "combat_ended"),
+        snap(40, gold=0, party=party, region="Makeshift Prison"),
+        snap(50, gold=868, party=party, region="Makeshift Prison"),
+        snap(60, gold=648, party=party, region="Makeshift Prison"),
+        mark(70, "run_end"),
+    )
+
+
+def test_every_member_down_with_no_game_over_leaves_a_maximise_run_playing_to_its_real_end():
+    tl = prison_defeat()
+    st = facts.State()
+    for r in tl[:4]:
+        st.apply(r)
+    assert st.wiped() and not st.game_over  # the goal runs' wipe is true at this record, the Game Over isn't
+    for upto in range(1, len(tl) + 1):
+        assert graders.verdict(None, tl[:upto]) is None
+    m = graders.measure("gold", tl)
+    assert (m["end"], m["gain"], m["peak"]) == (648, -255, 903)  # the gold at run_end, not the 903 at the wipe
+
+
+def test_a_game_over_with_a_member_standing_closes_a_maximise_score_too():
+    tl = [*run(snap(10, gold=70, party=[member("Tav", 1)])), ev(20, "game_over"), snap(30, gold=500)]
+    assert graders.measure("gold", tl)["end"] == 70 and graders.verdict(None, tl) == "wiped"
+
+
+def test_a_goal_run_still_ends_when_every_member_reads_as_down():
+    tl = prison_defeat()
+    assert graders.verdict({"gold": {"gte": 5000}}, tl) == "wiped"
+    out = grade({"gold": {"gte": 5000}}, tl)
+    assert out["violations"] == [{"t_s": 21, "node": {"wipe": True}}]

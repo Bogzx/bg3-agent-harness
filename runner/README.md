@@ -147,7 +147,7 @@ Kept on purpose: `runtime/levelup_clicks.json` (UI click calibration), the wiki 
 (the runner sets it every session), `runtime/actions.jsonl` (read by time window).
 
 **Run record** (`runs.jsonl`, one line per run): `outcome` (`reached` | `timeout` | `over_budget` | `gave_up` |
-`runner_error`; a bench run also `failed` or `ended_by_agent`: docs/BENCHMARK.md section 4), `cap` (`time` | `cost` | `tokens` when a cap ended it), `why`, `clean`, counts, cost and `tokens`
+`runner_error`; a bench run also `failed`, `ended_by_agent` or `agent_exited`: docs/BENCHMARK.md section 4), `cap` (`time` | `cost` | `tokens` when a cap ended it), `why`, `clean`, counts, cost and `tokens`
 as above, `failures` (each `{t, kind, class, detail, n?}`), `operator` (each `{t, what}`), `caps`, `pins`,
 `version_drift`, `cap_changes`, `persona` and `judge_change` (above), and the benchmark metrics (`runs.run_metrics`, pure functions over the run's files):
 

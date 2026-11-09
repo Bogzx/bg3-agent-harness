@@ -190,7 +190,7 @@ uv run python runner/play.py run --scenario nautiloid --runs 5 --client codex --
 One line per run in `runtime/sessions/<series>/runs.jsonl`; the fields are listed in
 [runner/README.md](../runner/README.md), "Run record". The ones a comparison uses:
 
-- `outcome` (`reached` | `failed` | `timeout` | `ended_by_agent` | `over_budget` | `gave_up` | `runner_error`; `failed`: a goal
+- `outcome` (`reached` | `failed` | `timeout` | `ended_by_agent` | `agent_exited` | `over_budget` | `gave_up` | `runner_error`; `agent_exited`: the agent ended its turn with time left and nothing resumed it, earlier runs keep `timeout`; `failed`: a goal
   run that its live verdict ended on a fired "never"; `ended_by_agent`: a maximise run that ended at a turn's end with no
   acting call since its last restart, before its time cap, from bench-v0.11 on: earlier runs keep `timeout`), `cap`, `clean`
 - `time_to_milestone_s`, `wall_min`, `play_min`, `sessions`, `turns`
