@@ -1,5 +1,7 @@
 # bench-v0.11 night queue (owner 2026-11-09): group 3, DeepSeek flash, cheapest fight first. max_cost as the DeepSeek subset; ledger cap $3.
 # max_cost is the run's cap and its reserve. An invalid run is rerun, at most 2 times.
+# act1_level_3 and crash_site_grove added 2026-11-10 (owner: "I want act1level3 and crash site grove"), max_cost as
+# the rule above: flash's dearest launch-v1 run x 1.5 ($0.43; $0.21, so the $0.50 floor).
 name = "v011-night-deepseek"
 order = "cell"
 allow_gaps = false
@@ -9,6 +11,8 @@ scenarios = [
   "fight_act2_moonrise_assault",
   "fight_act2_balthazar",
   "fight_act1_windmill",
+  "act1_level_3",
+  "crash_site_grove",
   "act1_gold_max",
   "act3_gold_max",
 ]
@@ -18,4 +22,4 @@ repeats = 1
 [budget]
 file = "runtime/budget-v011-night-deepseek.json"
 shared = ["../ovh-e2e/runtime/budget-deepseek.json"]
-max_cost = { fight_act2_moonrise_assault = 0.5, fight_act2_balthazar = 0.5, fight_act1_windmill = 0.5, act1_gold_max = 0.69, act3_gold_max = 0.69 }
+max_cost = { fight_act2_moonrise_assault = 0.5, fight_act2_balthazar = 0.5, fight_act1_windmill = 0.5, act1_gold_max = 0.69, act3_gold_max = 0.69, act1_level_3 = 0.65, crash_site_grove = 0.5 }

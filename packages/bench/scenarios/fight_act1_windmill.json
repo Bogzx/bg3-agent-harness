@@ -2,9 +2,9 @@
  "schema": 2,
  "name": "fight_act1_windmill",
  "title": "Act 1 fight: the windmill goblins",
- "task": "Win the fight: defeat the goblins at the windmill.",
- "scored_by": "Passed the first moment the fight ahead of you is won (a combat that ends with the enemies beaten and the party standing; a fight with other enemies doesn't count). Nothing else counts toward the score: party members downed or killed, game time and cost are reported next to it.",
- "about": "Fight (family 1), an Act 1 ambush: the goblins and worgs tormenting the gnome at the Blighted Village windmill, nine enemies with archers on high ground. claude-run-2 S014 won it in 7 rounds with one down (111 party HP lost).",
+ "task": "Win the fight: defeat Fezzerk and the goblins at the windmill.",
+ "scored_by": "Passed the first moment the fight ahead of you is won (a combat that ends with the enemies beaten, Fezzerk among the dead, and the party standing; a fight with other enemies, such as the goblin pack east of the windmill, doesn't count). Nothing else counts toward the score: party members downed or killed, game time and cost are reported next to it.",
+ "about": "Fight (family 1), an Act 1 ambush: the goblins and worgs tormenting the gnome at the Blighted Village windmill, nine enemies with archers on high ground, led by Fezzerk. claude-run-2 S014 won it in 7 rounds with one down (111 party HP lost).",
  "family": "fight",
  "holdout": false,
  "start": {
@@ -13,7 +13,7 @@
   "save_sha1": "ca8dae135db0df99b21c9e59197e0953144b63be",
   "note": {
    "where": "The Blighted Village, east of the windmill; goblins and worgs ahead, out of combat.",
-   "objective": "Defeat the goblins at the windmill.",
+   "objective": "Defeat Fezzerk and the goblins at the windmill.",
    "party": [
     "Tav (Paladin 3)",
     "Wyll (Warlock 3)",
@@ -25,7 +25,7 @@
  "goal": {
   "combats_won": {
    "gte": 1,
-   "enemy": "^(goblin .+|worg|fezzerk)$"
+   "enemy": "^fezzerk$"
   }
  },
  "runs": 5,

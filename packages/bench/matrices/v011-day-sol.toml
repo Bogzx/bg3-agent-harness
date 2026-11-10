@@ -1,0 +1,18 @@
+# bench-v0.11 day round (2026-11-10), GPT-6.1 Sol: fight_act1_windmill again on the new goal (Fezzerk's group, owner
+# 2026-11-10; the night run wiped and was graded on the old goal) and the two new scenarios (owner: "I want act1level3
+# and crash site grove"). Same ledger as v011-sol-windmill.toml (1 ledger dollar is 25 credits). max_cost: windmill as
+# that file; the 1 h runs act3_gold_max's $24.4 x 60/45 (no Codex record of a 1 h run). An invalid run is rerun, at
+# most 2 times.
+# Played by `runner/play.py bench run --matrix packages/bench/matrices/v011-day-sol.toml`.
+name = "v011-day-sol"
+order = "cell"
+allow_gaps = false
+allow_unverified = true  # the profile's status is offline
+models = ["profiles/gpt-6.1-sol-pi.toml"]
+scenarios = ["fight_act1_windmill", "act1_level_3", "crash_site_grove"]
+conditions = ["rules"]
+repeats = 1
+
+[budget]
+file = "runtime/budget-v011-sol.json"
+max_cost = { fight_act1_windmill = 6.6, act1_level_3 = 32.5, crash_site_grove = 32.5 }

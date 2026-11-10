@@ -191,7 +191,20 @@ def test_a_fight_goal_names_its_enemies():
     opus = facts.load(TL / "windmill_opus_goblins.facts.jsonl")
     assert grade({"combats_won": {"gte": 1}}, haiku)["passed"]
     assert not grade(goal, haiku)["passed"]
-    assert grade(goal, opus)["t_pass_s"] == 249.9  # the combat_ended after Goblin Brawler's kill
+    # Opus beat the goblin pack east of the windmill (Booyahg, Tracker, Sharp-Eye, Brawler): not Fezzerk's group
+    # (owner 2026-11-10), so not the windmill fight. v011-night Haiku r2 passed the old goal the same way.
+    assert grade({"combats_won": {"gte": 1, "enemy": "^goblin .+$"}}, opus)["t_pass_s"] == 249.9
+    assert not grade(goal, opus)["passed"]
+    # v011-sol windmill: Fezzerk died in the windmill combat; won, it passes when that combat ends.
+    fezzerk = run(
+        snap(50, party=[TAV, member("Gale")]),
+        ev(56.7, "combat_started"),
+        ev(134.3, "kill", victim="Fezzerk", killer="Tav"),
+        ev(134.6, "died", name="Fezzerk", party=False),
+        ev(300.0, "kill", victim="Goblin Archer", killer="Gale"),
+        ev(300.5, "combat_ended"),
+    )
+    assert grade(goal, fezzerk)["t_pass_s"] == 300.5
     # Balthazar died, then his guards wiped the party: the fight was not won.
     wiped = facts.load(TL / "balthazar_haiku_wipe.facts.jsonl")
     assert not grade({"combats_won": {"gte": 1, "enemy": "^balthazar$"}}, wiped)["passed"]
