@@ -26,7 +26,7 @@ def test_scenario_entries_have_the_sites_fields():
         "seed": 1003,
         "difficulty": "Balanced",
         "holdout": False,
-        "task": "Win the fight: defeat the goblins at the windmill.",
+        "task": "Win the fight: defeat Fezzerk and the goblins at the windmill.",
     }
     assert catalog.scenario_entry(SCS["act1_gold_max"])["mode"] == "maximise"
     karlach = catalog.scenario_entry(SCS["choice_act1_karlach"])
