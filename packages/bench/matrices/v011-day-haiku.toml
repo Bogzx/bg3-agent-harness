@@ -1,26 +1,28 @@
-# bench-v0.11 day round (2026-11-10), Haiku: what v011-night-haiku didn't finish, the two new scenarios (owner: "I want
-# act1level3 and crash site grove") and two replays. fight_act1_windmill plays the new goal (Fezzerk's group; the night
-# r2 pass was the east goblin pack and doesn't count). fight_act2_moonrise_assault: the night r1 bundle shared its run
-# dir with an attempt killed before its record (X02, X03, X06, G02), so it doesn't count either.
-# max_cost: as v011-night-haiku; act1_level_3 and crash_site_grove Haiku's dearest launch-v1 run x 1.5 ($4.22, $4.01).
+# bench-v0.11 at 3 runs per scenario (owner 2026-11-10: "make it 3 runs for the secnarios"), claude-haiku-5-5. Played round by
+# round (order "repeat": every scenario's next run before any scenario's run after it), shortest first, so the model is
+# on the board early and a stop leaves even coverage. A valid run already counts for fight_act2_balthazar (v011-night/v011-sol-bench, accepted
+# against bench-v0.11), so those get 2 more (each round after the
+# scenarios with none) and the rest 3.
+# max_cost: as v011-night-haiku (dearest recorded x 1.5, at least $0.50); act1_level_3 and crash_site_grove Haiku's dearest
+# launch-v1 run x 1.5 ($4.22, $4.01).
 # max_cost is the run's cap and its reserve. An invalid run is rerun, at most 2 times.
 name = "v011-day-haiku"
-order = "cell"
 allow_gaps = false
 allow_unverified = false
+
+[[group]]
 models = ["profiles/claude-haiku-5-5.toml"]
-scenarios = [
-  "fight_act2_moonrise_assault",
-  "fight_act1_windmill",
-  "act1_level_3",
-  "crash_site_grove",
-  "act1_gold_max",
-  "act3_gold_max",
-]
+scenarios = ["fight_act2_moonrise_assault", "fight_act1_windmill", "crash_site_grove", "act1_level_3", "act1_gold_max", "act3_gold_max"]
 conditions = ["rules"]
-repeats = 1
+repeats = 3
+
+[[group]]
+models = ["profiles/claude-haiku-5-5.toml"]
+scenarios = ["fight_act2_balthazar"]
+conditions = ["rules"]
+repeats = 2
 
 [budget]
 file = "runtime/budget-v011-night-claude.json"
 shared = ["../ovh-e2e/runtime/budget-haiku.json", "../ovh-e2e/runtime/budget-anthropic.json"]
-max_cost = { fight_act2_moonrise_assault = 0.5, fight_act1_windmill = 1.83, act1_level_3 = 6.34, crash_site_grove = 6.01, act1_gold_max = 3.68, act3_gold_max = 3.68 }
+max_cost = { fight_act2_balthazar = 0.5, fight_act2_moonrise_assault = 0.5, fight_act1_windmill = 1.83, crash_site_grove = 6.01, act1_level_3 = 6.34, act1_gold_max = 3.68, act3_gold_max = 3.68 }

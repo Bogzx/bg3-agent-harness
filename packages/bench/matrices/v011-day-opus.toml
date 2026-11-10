@@ -1,14 +1,11 @@
-# bench-v0.11 day round (2026-11-10), Claude Opus 5.5 on the v0.11 playlist (owner: "and then also the opus on the
-# scenarios"), after its L5 pairs. Shortest first by launch-v1's Opus wall minutes (balthazar 6.6, moonrise 8.8,
-# crash_site_grove 31.9, act1_level_3 36.2 mean; the gold runs play their 45 min cap), so the most finish by the last
-# start. fight_act1_windmill plays the new goal (Fezzerk's group): launch-v1's 7.4 min were the east goblin pack, and
-# sol took 32 min on the new fight, so it goes after moonrise.
-# max_cost: Opus's dearest launch-v1 run x 1.5 (balthazar $0.91, moonrise $1.73, crash_site_grove $10.27, act1_level_3
-# $17.47); windmill moonrise's $2.60, since launch-v1's $1.19 was the shorter east-pack fight; the gold runs have no
-# launch-v1 Opus record: the estimate's Opus high per gold run ($14.88, ops/logs/pilot-v011-estimate.md) x 1.5.
+# bench-v0.11 at 3 runs per scenario (owner 2026-11-10: "make it 3 runs for the secnarios"), claude-opus-5-5. Played round by
+# round (order "repeat": every scenario's next run before any scenario's run after it), shortest first, so the model is
+# on the board early and a stop leaves even coverage. No v0.11 run of this model counts yet: 3 runs of each.
+# max_cost: Opus's dearest launch-v1 run x 1.5 (balthazar $0.91, moonrise $1.73, crash_site_grove $10.27, act1_level_3 $17.47);
+# windmill moonrise's $2.60 (launch-v1's $1.19 was the shorter east-pack fight); gold: the estimate's Opus high per gold
+# run ($14.88, ops/logs/pilot-v011-estimate.md) x 1.5.
 # max_cost is the run's cap and its reserve. An invalid run is rerun, at most 2 times.
 name = "v011-day-opus"
-order = "cell"
 allow_gaps = false
 allow_unverified = false
 models = ["profiles/claude-opus-5-5.toml"]
@@ -22,7 +19,7 @@ scenarios = [
   "act3_gold_max",
 ]
 conditions = ["rules"]
-repeats = 1
+repeats = 3
 
 [budget]
 file = "runtime/budget-v011-day-opus.json"

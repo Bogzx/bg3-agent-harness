@@ -1,18 +1,27 @@
-# bench-v0.11 day round (2026-11-10), GPT-6.1 Sol: fight_act1_windmill again on the new goal (Fezzerk's group, owner
-# 2026-11-10; the night run wiped and was graded on the old goal) and the two new scenarios (owner: "I want act1level3
-# and crash site grove"). Same ledger as v011-sol-windmill.toml (1 ledger dollar is 25 credits). max_cost: windmill as
-# that file; the 1 h runs act3_gold_max's $24.4 x 60/45 (no Codex record of a 1 h run). An invalid run is rerun, at
-# most 2 times.
-# Played by `runner/play.py bench run --matrix packages/bench/matrices/v011-day-sol.toml`.
+# bench-v0.11 at 3 runs per scenario (owner 2026-11-10: "make it 3 runs for the secnarios"), gpt-6.1-sol-pi. Played round by
+# round (order "repeat": every scenario's next run before any scenario's run after it), shortest first, so the model is
+# on the board early and a stop leaves even coverage. A valid run already counts for fight_act2_balthazar, fight_act2_moonrise_assault, act1_gold_max, act3_gold_max (v011-night/v011-sol-bench, accepted
+# against bench-v0.11), so those get 2 more (each round after the
+# scenarios with none) and the rest 3.
+# max_cost: as v011-sol-windmill/-bench (high estimate x 1.5 / 25, 1 ledger dollar = 25 credits); the 1 h runs act3_gold_max's
+# $24.4 x 60/45.
+# max_cost is the run's cap and its reserve. An invalid run is rerun, at most 2 times.
 name = "v011-day-sol"
-order = "cell"
 allow_gaps = false
-allow_unverified = true  # the profile's status is offline
+allow_unverified = true
+
+[[group]]
 models = ["profiles/gpt-6.1-sol-pi.toml"]
-scenarios = ["fight_act1_windmill", "act1_level_3", "crash_site_grove"]
+scenarios = ["fight_act1_windmill", "crash_site_grove", "act1_level_3"]
 conditions = ["rules"]
-repeats = 1
+repeats = 3
+
+[[group]]
+models = ["profiles/gpt-6.1-sol-pi.toml"]
+scenarios = ["fight_act2_balthazar", "fight_act2_moonrise_assault", "act1_gold_max", "act3_gold_max"]
+conditions = ["rules"]
+repeats = 2
 
 [budget]
 file = "runtime/budget-v011-sol.json"
-max_cost = { fight_act1_windmill = 6.6, act1_level_3 = 32.5, crash_site_grove = 32.5 }
+max_cost = { fight_act2_balthazar = 5.6, fight_act2_moonrise_assault = 5.7, fight_act1_windmill = 6.6, crash_site_grove = 32.5, act1_level_3 = 32.5, act1_gold_max = 18.8, act3_gold_max = 24.4 }

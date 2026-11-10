@@ -1,9 +1,10 @@
-# bench-v0.11 night queue (owner 2026-11-09): group 1, Sonnet, cheapest fight first. max_cost: dearest recorded cost x 1.5, at least $0.50. Charges its model file and budget-anthropic; no cap raised.
+# bench-v0.11 at 3 runs per scenario (owner 2026-11-10: "make it 3 runs for the secnarios"), claude-sonnet-5-5. Played round by
+# round (order "repeat": every scenario's next run before any scenario's run after it), shortest first, so the model is
+# on the board early and a stop leaves even coverage. No v0.11 run of this model counts yet: 3 runs of each.
+# max_cost: dearest recorded cost x 1.5, at least $0.50; act1_level_3 and crash_site_grove Sonnet's dearest launch-v1 run x 1.5
+# ($1.61, $3.06).
 # max_cost is the run's cap and its reserve. An invalid run is rerun, at most 2 times.
-# act1_level_3 and crash_site_grove added 2026-11-10 (owner: "I want act1level3 and crash site grove"), max_cost as
-# the rule above: Sonnet's dearest launch-v1 run x 1.5 ($1.61 and $3.06).
 name = "v011-night-sonnet"
-order = "cell"
 allow_gaps = false
 allow_unverified = false
 models = ["profiles/claude-sonnet-5-5.toml"]
@@ -11,15 +12,15 @@ scenarios = [
   "fight_act2_balthazar",
   "fight_act2_moonrise_assault",
   "fight_act1_windmill",
-  "act1_level_3",
   "crash_site_grove",
+  "act1_level_3",
   "act1_gold_max",
   "act3_gold_max",
 ]
 conditions = ["rules"]
-repeats = 1
+repeats = 3
 
 [budget]
 file = "runtime/budget-v011-night-claude.json"
 shared = ["../ovh-e2e/runtime/budget-sonnet.json", "../ovh-e2e/runtime/budget-anthropic.json"]
-max_cost = { fight_act2_balthazar = 0.5, fight_act2_moonrise_assault = 0.87, fight_act1_windmill = 2.7, act1_gold_max = 2.28, act3_gold_max = 2.28, act1_level_3 = 2.41, crash_site_grove = 4.59 }
+max_cost = { fight_act2_balthazar = 0.5, fight_act2_moonrise_assault = 0.87, fight_act1_windmill = 2.7, crash_site_grove = 4.59, act1_level_3 = 2.41, act1_gold_max = 2.28, act3_gold_max = 2.28 }
