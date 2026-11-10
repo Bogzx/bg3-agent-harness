@@ -1,4 +1,4 @@
--- Part of test_act_lua.lua (split for the 1000-line cap): pick_up and interact on a target nobody can walk to.
+-- Part of test_act_lua.lua (split for the 1000-line cap): pick_up on a target nobody can walk to.
 -- test_act_lua.lua runs it after its stubs and helpers, which it shares as globals.
 
 -- path_preview's read (nav.path, NavigationReach.lua) as the game answered it for Omotola's Chest Key
@@ -55,17 +55,30 @@ test("pickup: the second re-send gone with nothing picked fails then, not at the
     eq(#called("Pickup"), 3, "no 4th order")
 end)
 
-test("interact: a ring-spot target whose walkable path ends short is refused; a ladder is not read", function()
+test("pickup: a big target used from its rim, or a walk with no path answer, is not read (S044 the Hollow Tower)",
+    function()
+    -- rim: every ring spot lies over it, the closest walkable spot is within reach of its edge (approach_point)
+    nav.fn = function() return { reachable = false } end
+    local savedV = BG3AI.Visibility
+    BG3AI.Visibility = setmetatable({ bounds = function() return { radius = 2.0, height = 1 } end },
+        { __index = savedV })
+    BG3AI.Nav.closestReach = function(_, goal)
+        return { pos = { goal[1] - 3, goal[2], goal[3] }, path_m = 6, to_goal_m = 3.0, dy_to_goal = 0 }
+    end
+    local ok, err = pcall(with_nav_path, KEY_SHORT, function(asked)
+        local j = job(op("pickup", { char = P1, item = GEM }))
+        eq(j.status, "running", "from the rim " .. tostring(j.error))
+        eq(#asked, 0, "rim: not read")
+    end)
+    BG3AI.Visibility, BG3AI.Nav.closestReach = savedV, nil
+    if not ok then error(err, 0) end
+    -- unverified: no path answer, close and in sight
+    reset()
+    nav.fn = function() return { reachable = nil } end
+    world[P1].pos = { 4, 0, 0 }
     with_nav_path(KEY_SHORT, function(asked)
-        local r = job(op("interact", { char = P1, target = GEM }))
-        eq(r.status, "failed", "refused")
-        eq(r.error, "can't reach it: the walkable ground ends 4.0m short of it, at (-164.0,24.0,-63.0)")
-        eq(#called("Use") + #called("CharacterMoveToPosition"), 0, "nothing sent")
-        reset()
-        RPC.ops["nav.path"] = function(args) asked[#asked + 1] = args return KEY_SHORT end
-        local n = #asked
-        local j = job(op("interact", { char = P1, target = LADDER }))
-        eq(j.status, "running", "ladder " .. tostring(j.error))
-        eq(#asked, n, "a ladder is used from its ends: not read")
+        local j = job(op("pickup", { char = P1, item = GEM }))
+        eq(j.status, "running", "unverified " .. tostring(j.error))
+        eq(#asked, 0, "unverified: not read")
     end)
 end)

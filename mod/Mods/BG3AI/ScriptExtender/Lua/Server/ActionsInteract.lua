@@ -265,8 +265,6 @@ reg("interact", function(args)
     end
 
     local plan = carried and { here = true, length_m = 0 } or G.approach_point(char, target, A.USE_REACH)
-    -- a walk to a ring spot (not a ladder's ends, a big target's rim, or an unverified walk): the target's own reach
-    if plan.pos and not (ladder or plan.rim or plan.unverified) then A.walk_short(char, target) end
 
     return start("interact", char, {
         eta_s = walk_eta(plan.length_m) + 1.0, route_m = plan.length_m,

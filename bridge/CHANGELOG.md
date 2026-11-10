@@ -5,13 +5,13 @@ entry here, and the golden dump (tests/golden/tools_list.json) is regenerated wi
 `cd bridge && uv run python tests/test_tools_golden.py --update` in the same commit. The package version stays
 0.1.0 until uv.lock can be relocked.
 
-## 2026-11-10: pick_up and interact refuse a target nobody can walk to
+## 2026-11-10: pick_up refuses an item nobody can walk to
 
-- `pick_up` and `interact` refuse, before any order, a target whose walkable path still ends short after the free
-  spots around it were checked (path_preview's `NOT REACHED`): `can't reach it: the walkable ground ends 4.0m short of
-  it, at (-164.0,24.0,-63.0)`. Only when the tool would walk to a spot around the target: not from within reach, not for
-  a ladder's ends, a big target's rim or a walk with no path answer. They were sent, the game dropped them without a
-  word, and the job waited out its timeout (v011-day-opus act3_gold_max, Omotola's Chest Key, twice).
+- `pick_up` refuses, before any order, an item whose walkable path still ends short after the free spots around it
+  were checked (path_preview's `NOT REACHED`): `can't reach it: the walkable ground ends 4.0m short of it, at
+  (-164.0,24.0,-63.0)`. Only when the tool would walk to a spot around the item: not from within reach, not for a big
+  target's rim or a walk with no path answer. Such orders were sent, the game dropped them without a word, and the job
+  waited out its timeout (v011-day-opus act3_gold_max, Omotola's Chest Key, twice). `interact` doesn't take this read.
 - A `pick_up` whose order leaves the queue a third time with nothing picked up fails then: `the game didn't run the
   pickup: sent 3 times, each order left the queue with nothing picked up and no failure from the game (2.3m from it)`.
   It used to run to the timeout. Tool definitions don't change.
