@@ -707,6 +707,9 @@ game unless it says so.
   passed the old goal and is another fight (claude-run-2's Opus fixture and the v0.11 night's Haiku r2 won only it).
   bench-v0.11's sixth digest; only these two scenarios' digests move in its release, so runs of the other scenarios
   still match it. The night's two windmill runs (sol, Haiku) no longer validate (P01) and are played again.
+  An arena matrix file may set `first_repeat` (default 1): its repeats are numbered from there, with the seed of that
+  number. The v0.11 division files go on from the placement round's repeat 1 with `first_repeat = 2`, so no division
+  pairing replays placement's dice. `arena_matrix.py` isn't a suite or code-pin file, so no digest moves.
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.
