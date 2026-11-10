@@ -18,6 +18,7 @@ to write your own.
 | `haiku-5.5-claude-code.toml` | claude | offline | none: a subscription; `total_cost_usd` is recorded, never charged |
 | `gpt-6-astra-pi.toml` | pi | offline | pi's estimate at the profile's `cost` table; a dollar there is 25 Codex credits |
 | `gpt-6-luna-pi.toml` | pi | offline | pi's estimate at the profile's `cost` table; a dollar there is 25 Codex credits |
+| `gpt-6-sol-pi.toml` | pi | offline | pi's estimate at the profile's `cost` table and its over-272K-token tier; a dollar there is 25 Codex credits |
 | `gpt-6.1-sol-pi.toml` | pi | offline | pi's estimate at the profile's `cost` table and its over-272K-token tier; a dollar there is 25 Codex credits |
 | `codex.toml` | codex | offline | none: a subscription; an estimate from `clients.CODEX_PRICES`, unknown for a model not in it |
 | `gemini-cli.toml` | gemini | unsupported | none: a subscription; an estimate from `clients.GEMINI_PRICES` |
