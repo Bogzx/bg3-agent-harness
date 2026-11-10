@@ -9,6 +9,8 @@ relative to the repo):
     pairs = [["profiles/a.toml", "profiles/a.toml"]]  # or: the pairs to play, instead of every pair of models
     arenas = ["open_field"]                           # packages/bench/arenas/<name>.json
     repeats = 1
+    first_repeat = 1                                  # the first repeat's number: 2 continues a matrix that played
+                                                      # repeat 1 (its seed) under another file, so no dice replay
     single = false                                    # true: a self-pair plays one match per repeat, not two
     allow_unverified = false                          # true: profiles whose status is "offline"
     allow_drift = false                               # true: a match whose pins differ from the first's is recorded
@@ -126,15 +128,20 @@ def plan(
     max_cost_models: Mapping[str, float] | None = None,
     seeds: Mapping[str, int],
     single: bool = False,
+    first_repeat: int = 1,
 ) -> list[dict[str, Any]]:
     """The matches. A model is matrix_cli.load_profile's {"slug", "client", "effort", "profile"}; budgets: profile
     -> its model budget files; condition: arena -> its condition id (default rules); max_cost_models: profile -> its
     side's cap in place of the arena's (each side's in sides.<A|B>.max_cost; the arena's stays in max_cost); seeds:
-    arena -> its seed (a job's `seed` is it + repeat - 1); single: a self-pair (one profile twice) plays m1 only."""
+    arena -> its seed (a job's `seed` is it + repeat - 1); single: a self-pair (one profile twice) plays m1 only;
+    first_repeat: the repeats are first_repeat .. first_repeat + repeats - 1."""
     if repeats < 1:
         raise ValueError("repeats must be >= 1")
-    if over := sorted(a for a in arenas if seeds[a] + repeats - 1 > scenario.SEED_MAX):
-        raise ValueError(f"arena {over[0]}: seed {seeds[over[0]]} + {repeats - 1} repeats is past {scenario.SEED_MAX}")
+    if first_repeat < 1:
+        raise ValueError("first_repeat must be >= 1")
+    last = first_repeat + repeats - 1
+    if over := sorted(a for a in arenas if seeds[a] + last - 1 > scenario.SEED_MAX):
+        raise ValueError(f"arena {over[0]}: seed {seeds[over[0]]} + {last - 1} repeats is past {scenario.SEED_MAX}")
     max_cost, budgets, condition = max_cost or {}, budgets or {}, condition or {}
     per_model = max_cost_models or {}
 
@@ -142,7 +149,7 @@ def plan(
         return {**m, "player": player(m), "max_cost": per_model.get(m["profile"], max_cost.get(a))}
 
     jobs = []
-    for r in range(1, repeats + 1):
+    for r in range(first_repeat, last + 1):
         for x, y in pairs:
             for a in arenas:
                 pid = f"{matrix._slug(player(x))}~vs~{matrix._slug(player(y))}~{a}~r{r}"
@@ -232,7 +239,18 @@ def load(path: str | Path, repo: Path) -> dict[str, Any]:
         raise MatrixFileError(f"{path}: {e}") from None
     if unknown := sorted(
         set(raw)
-        - {"name", "models", "pairs", "arenas", "repeats", "single", "allow_unverified", "allow_drift", "budget"}
+        - {
+            "name",
+            "models",
+            "pairs",
+            "arenas",
+            "repeats",
+            "first_repeat",
+            "single",
+            "allow_unverified",
+            "allow_drift",
+            "budget",
+        }
     ):
         raise MatrixFileError(f"{path}: unknown keys: {', '.join(unknown)}")
     name = raw.get("name")
@@ -241,6 +259,9 @@ def load(path: str | Path, repo: Path) -> dict[str, Any]:
     repeats = raw.get("repeats", 1)
     if not isinstance(repeats, int) or isinstance(repeats, bool) or repeats < 1:
         raise MatrixFileError(f"{path}: repeats must be an integer >= 1")
+    first_repeat = raw.get("first_repeat", 1)
+    if not isinstance(first_repeat, int) or isinstance(first_repeat, bool) or first_repeat < 1:
+        raise MatrixFileError(f"{path}: first_repeat must be an integer >= 1")
     single = raw.get("single", False)
     if not isinstance(single, bool):
         raise MatrixFileError(f"{path}: single must be true or false")
@@ -274,6 +295,7 @@ def load(path: str | Path, repo: Path) -> dict[str, Any]:
             max_cost_models=budget["max_cost_models"],
             seeds={a: arenas[a]["seed"] for a in playable},
             single=single,
+            first_repeat=first_repeat,
         )
     except ValueError as e:
         raise MatrixFileError(f"{path}: {e}") from None

@@ -95,6 +95,18 @@ def test_each_repeat_plays_its_own_seed_and_a_pairings_two_matches_share_it(tmp_
         assert one["seed"] == two["seed"]
 
 
+def test_first_repeat_continues_another_files_repeats_on_their_own_seeds(tmp_path):
+    """A division file goes on from a placement file that played repeat 1: with first_repeat = 2 its repeats are 2
+    and 3, on the arena's seed + 1 and + 2, so no pairing replays placement's dice (or another's ids)."""
+    one = load(tmp_path / "a")["jobs"]
+    later = load(tmp_path / "b", BODY.replace("repeats = 2", "repeats = 2\nfirst_repeat = 2"))["jobs"]
+    seed = DRAFT["seed"]
+    assert [j["repeat"] for j in later] == [2] * 6 + [3] * 6
+    assert [j["seed"] for j in later] == [seed + 1] * 6 + [seed + 2] * 6
+    assert later[:6] == one[6:]  # repeat 2 is the same match whichever file plays it
+    assert not {j["id"] for j in later} & {j["id"] for j in one[:6]}
+
+
 def test_a_repeats_seed_past_the_largest_is_refused(tmp_path):
     repo = fake_repo(tmp_path)
     p = repo / "packages" / "bench" / "arenas" / "field.json"
@@ -246,6 +258,8 @@ BAD = {
     "a model file for a profile not in it": ('"profiles/flash.toml" = [', '"profiles/other.toml" = ['),
     "an unknown key": ("repeats = 2", 'repeats = 2\norder = "cell"'),
     "repeats 0": ("repeats = 2", "repeats = 0"),
+    "first_repeat 0": ("repeats = 2", "repeats = 2\nfirst_repeat = 0"),
+    "first_repeat not an integer": ("repeats = 2", 'repeats = 2\nfirst_repeat = "2"'),
     "allow_drift not a bool": ("repeats = 2", 'repeats = 2\nallow_drift = "yes"'),
     "a bad name": ('name = "arena-test"', 'name = "arena test"'),
     "max_cost_models for a profile not in it": (
