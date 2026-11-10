@@ -251,7 +251,7 @@ for _, part in ipairs({ "test_act_lua_move.lua", "test_act_lua_react.lua", "test
     "test_act_lua_revive.lua", "test_act_lua_idle.lua", "test_act_lua_rolls.lua", "test_act_lua_held.lua",
     "test_act_lua_rules.lua",
     "test_act_lua_walks.lua", "test_act_lua_prone.lua", "test_act_lua_cooldowns.lua",
-    "test_act_lua_lost.lua" }) do
+    "test_act_lua_lost.lua", "test_act_lua_pickup.lua" }) do
     dofile(DIR .. "/" .. part)
 end
 

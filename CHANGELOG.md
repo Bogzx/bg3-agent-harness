@@ -262,6 +262,17 @@ game unless it says so.
   refreshed from here; the refresh token stays in that file, out of the sandbox. A run with an expired token is refused
   with the words to run the Codex CLI once, which refreshes its own file.
   The backend reports tokens, so the spend ledger counts pi's estimate at the profile's rates.
+- 0.20.0 (2026-11-10): what the agent sees changed: `pick_up` and `interact` refuse a target the walkable ground
+  doesn't reach before anything is sent: `can't reach it: the walkable ground ends 4.0m short of it, at
+  (-164.0,24.0,-63.0)`. It is path_preview's own read (its `NOT REACHED`), taken only when the tool would walk to a
+  spot around the target (not from within reach, and not for a ladder's ends, a big target's rim or a walk with no path
+  answer) and only when all the free spots around the target were checked. The game drops an order to such a target
+  without a word: v011-day-opus act3_gold_max (2026-11-10) sent Pickup on Omotola's Chest Key from 2.3 m twice, got no
+  failure back, waited out 40 s each time and the run was voided as a tool timeout. A `pick_up` whose order leaves the
+  game's queue a third time (sent, then re-sent twice) with nothing picked up now fails then, `the game didn't run the
+  pickup: sent 3 times, each order left the queue with nothing picked up and no failure from the game (2.3m from it)`,
+  not at the timeout. Offline only, not read live on this code. The `interact` check comes from sharing the approach
+  with `pick_up`; no `interact` failure of this kind has been read. Tool definitions don't change.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at

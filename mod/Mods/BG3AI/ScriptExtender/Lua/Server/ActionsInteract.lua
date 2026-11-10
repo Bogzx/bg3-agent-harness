@@ -159,6 +159,21 @@ function A.unlocked_lately(item)
     if t and G.now_ms() - t <= A.LOCK_FRESH_MS then return t end
 end
 
+-- v011-day-opus act3_gold_max 2026-11-10: Pickup on Omotola's Chest Key from 2.3 m went out twice (approach_point's
+-- ring spot read walkable), the game raised no PickupFailed, and each job waited out its 40 s timeout; path_preview
+-- on the key then read "NOT REACHED: the walkable path ends @(-164,24,-63), 4m short of the target". The game drops an
+-- order to a target nobody can walk to without a word. Refused before the start on path_preview's own read
+-- (nav.path): only a found path that still ends short after the free spots around the target were all checked.
+function A.walk_short(char, target)
+    local fn = RPC.ops["nav.path"]
+    if not fn then return end
+    local ok, r = pcall(fn, { char = char, target = target })
+    if not ok or type(r) ~= "table" or not (r.reachable and r.partial) or r.free_spots_unchecked then return end
+    local e = r.end_pos or {}
+    G.refuse(string.format("can't reach it: the walkable ground ends %.1fm short of it, at (%.1f,%.1f,%.1f)",
+        r.end_off or 0, e[1] or 0, e[2] or 0, e[3] or 0))
+end
+
 reg("interact", function(args)
     local char = G.actor(args.char)
     G.not_in_dialogue(char)
@@ -250,6 +265,8 @@ reg("interact", function(args)
     end
 
     local plan = carried and { here = true, length_m = 0 } or G.approach_point(char, target, A.USE_REACH)
+    -- a walk to a ring spot (not a ladder's ends, a big target's rim, or an unverified walk): the target's own reach
+    if plan.pos and not (ladder or plan.rim or plan.unverified) then A.walk_short(char, target) end
 
     return start("interact", char, {
         eta_s = walk_eta(plan.length_m) + 1.0, route_m = plan.length_m,
@@ -547,6 +564,7 @@ reg("pickup", function(args)
         return true
     end
     local plan = G.approach_point(char, item, A.USE_REACH)
+    if plan.pos and not (plan.rim or plan.unverified) then A.walk_short(char, item) end
     return start("pickup", char, {
         eta_s = walk_eta(plan.length_m) + 1.0, route_m = plan.length_m,
         timeout_ms = 30000 + walk_timeout(plan.length_m),
@@ -593,8 +611,16 @@ reg("pickup", function(args)
             -- Pickup, sent at once, never ran (no task, travelled=0) until the 40 s timeout. An order that is gone
             -- from the queue with nothing picked is sent again (A.PICKUP_REORDER_MS after it, up to twice).
             local now = RPC.now_ms()
-            if job.picked_order and now - job.picked_order >= A.PICKUP_REORDER_MS and osi_tasks(char) == 0
-                and (job.reorders or 0) < 2 then
+            if job.picked_order and now - job.picked_order >= A.PICKUP_REORDER_MS and osi_tasks(char) == 0 then
+                -- act3_gold_max 2026-11-10 (Chest Key, see A.walk_short): both re-sends left the queue the same way and
+                -- the job waited ~37 s more for nothing. The second re-send gone too ends it with what was read.
+                if (job.reorders or 0) >= 2 then
+                    local a, t = G.pos(char), G.pos(item)
+                    RPC.finish_job(job, "failed", nil, "the game didn't run the pickup: sent 3 times, each order left"
+                        .. " the queue with nothing picked up and no failure from the game"
+                        .. (a and t and string.format(" (%.1fm from it)", U.dist(a, t)) or ""))
+                    return
+                end
                 job.reorders = (job.reorders or 0) + 1
                 job.picked_order = now
                 G.osi("Pickup", char, item, ev_name(job, "pick"), 0)
