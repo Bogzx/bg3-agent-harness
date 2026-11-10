@@ -1,4 +1,4 @@
-# bench-v0.11 at 3 runs per scenario (owner 2026-11-10: "make it 3 runs for the secnarios"), gpt-6-astra-pi. Played round by
+# bench-v0.11 at 3 runs per scenario (owner 2026-11-10: "make it 3 runs for the secnarios", Opus 2), gpt-6-astra-pi. Played round by
 # round (order "repeat": every scenario's next run before any scenario's run after it), shortest first, so the model is
 # on the board early and a stop leaves even coverage. No v0.11 run of this model counts yet: 3 runs of each.
 # max_cost: as the night files (windmill from v011-night-astra-windmill, now folded in: the owner counts Codex credits as

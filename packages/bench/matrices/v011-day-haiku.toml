@@ -1,4 +1,4 @@
-# bench-v0.11 at 3 runs per scenario (owner 2026-11-10: "make it 3 runs for the secnarios"), claude-haiku-5-5. Played round by
+# bench-v0.11 at 3 runs per scenario (owner 2026-11-10: "make it 3 runs for the secnarios", Opus 2), claude-haiku-5-5. Played round by
 # round (order "repeat": every scenario's next run before any scenario's run after it), shortest first, so the model is
 # on the board early and a stop leaves even coverage. A valid run already counts for fight_act2_balthazar (v011-night/v011-sol-bench, accepted
 # against bench-v0.11), so those get 2 more (each round after the
