@@ -1,7 +1,8 @@
 # bench-v0.11 at 2 runs per scenario (owner 2026-11-10: "make it 3 runs for the secnarios", Opus 2), claude-opus-5-5. Played round by
 # round (order "repeat": every scenario's next run before any scenario's run after it), shortest first, so the model is
 # on the board early and a stop leaves even coverage. No v0.11 run of Opus counts yet: 2 runs of each (owner 2026-11-10: "opus plays fewer secnarios runs,2").
-# Today's Opus scenarios are its round 1.
+# Today's Opus scenarios are its round 1. repeats = 1 for now: a matrix can't stop between rounds (runtime/STOP ends
+# a bench run at once), and round 2 waits on the owner's choice of cuts or money; it gets its own file then.
 # max_cost: Opus's dearest launch-v1 run x 1.5 (balthazar $0.91, moonrise $1.73, crash_site_grove $10.27, act1_level_3 $17.47);
 # windmill moonrise's $2.60 (launch-v1's $1.19 was the shorter east-pack fight); gold: the estimate's Opus high per gold
 # run ($14.88, ops/logs/pilot-v011-estimate.md) x 1.5.
@@ -20,7 +21,7 @@ scenarios = [
   "act3_gold_max",
 ]
 conditions = ["rules"]
-repeats = 2
+repeats = 1  # round 1 only (night 2026-11-10, D513); round 2 waits on the owner's cuts vs money
 
 [budget]
 file = "runtime/budget-v011-day-opus.json"
