@@ -1,10 +1,10 @@
 # bench-v0.11 round robin, new models (orchestrator 2026-11-10 day round, owner: "You can start testing other modeks"):
-# Claude Opus 5.5, DeepSeek V4 Pro and GPT-6 Sol each against the six of the night round robin, then each other.
-# L5, pair 13 of 21 in the order of ops/logs/day-2026-11-10-pg-part3.md; one pair per file so pK picks pairs
-# on a clean tree. Two matches, sides swapped. max_cost per side: the six as the night's L5 files; Opus, V4 Pro and
-# GPT-6 Sol about 1.5-2x their high estimate (Sonnet's, DeepSeek flash's and GPT-6.1 Sol's measured L5 tokens at
-# their own rates, peak DeepSeek rates), since none has played this arena. An invalid match is rerun, at most 2 times;
-# one ending at its cap is not.
+# Claude Opus 5.5 and GPT-6 Sol each against the six of the night round robin, then each other (DeepSeek V4 Pro dropped,
+# owner 2026-11-10: flash only). L5, pair 2 of 13 in the order of ops/logs/day-2026-11-10-pg-part3.md (Opus
+# first, owner's order); one pair per file so pK picks pairs on a clean tree. Two matches, sides swapped. max_cost per
+# side: the six as the night's L5 files; Opus and GPT-6 Sol about 1.5-2x their high estimate (Sonnet's and GPT-6.1
+# Sol's measured L5 tokens at their own rates), since neither has played this arena. An invalid match is rerun, at
+# most 2 times; one ending at its cap is not.
 name = "v011-rr-l5-opus-sol"
 pairs = [["profiles/claude-opus-5-5.toml", "profiles/gpt-6.1-sol-pi.toml"]]
 arenas = ["builds-l5-4v4-v1"]
