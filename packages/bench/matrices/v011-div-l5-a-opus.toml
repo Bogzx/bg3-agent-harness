@@ -1,10 +1,11 @@
 # bench-v0.11 L5 division tournament (owner 2026-11-10, D500; docs/ARENA-RESULTS.md amendment), division A, Opus's 3 pairs (Opus placed in A).
-# Each pair to 15 pairings at L5: placement (the v011-rr-l5 file, repeat 1, the arena's seed) is the first, so this
-# file plays repeats 2-15 (first_repeat = 2, repeats = 14: seeds + 1 .. + 14, no placement dice replayed).
+# Each pair to 10 pairings at L5, not 15 (owner 2026-11-11, cut 4 of the Anthropic plan: "(a) cuts, no new money"):
+# placement (the v011-rr-l5 file, repeat 1, the arena's seed) is the first, so this file plays repeats 2-10
+# (first_repeat = 2, repeats = 9: seeds + 1 .. + 9, no placement dice replayed).
 # Repeat-major: every pair's next pairing before any later one, so a stop leaves even pairs.
-# 84 matches, about 13.3 h at L5's measured 9.5 min a match. Expected $86.30 from
+# 54 matches, about 8.6 h at L5's measured 9.5 min a match. Expected $55.48 (Opus's sides $25.70) from
 # the L5 placement's measured mean side costs (2026-11-10 14:10). Side caps as the placement files'.
-# Own file cap: expected x 1.5 + the dearest match's two reserves = 144.9.
+# Own file cap: expected x 1.5 + the dearest match's two reserves (Opus 1.5 + Astra 13.92) = 98.7.
 # An invalid match is rerun, at most 2 times; one ending at its cap is not.
 name = "v011-div-l5-a-opus"
 pairs = [
@@ -13,7 +14,7 @@ pairs = [
   ["profiles/claude-opus-5-5.toml", "profiles/deepseek-flash.toml"],
 ]
 arenas = ["builds-l5-4v4-v1"]
-repeats = 14
+repeats = 9
 first_repeat = 2
 allow_unverified = true
 
