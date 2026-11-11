@@ -1,0 +1,23 @@
+# bench-v0.11 round robin, new models (orchestrator 2026-11-10 day round, owner: "You can start testing other modeks"):
+# Claude Opus 5.5 against each of the six of the night round robin (DeepSeek V4 Pro and GPT-6 Sol dropped, owner
+# 2026-11-10). L5, pair 4 of 6 in the owner's order (ops/logs/day-2026-11-10-pg-part3.md); one pair per file
+# so pK picks pairs on a clean tree. Two matches, sides swapped. max_cost per side: the six as the night's L5 files;
+# Opus about 1.5-2x its high estimate (Sonnet's measured L5 tokens at Opus's rates), since it hasn't played this
+# arena. An invalid match is rerun, at most 2 times; one ending at its cap is not.
+name = "v011-rr-l5-opus-haiku"
+pairs = [["profiles/claude-opus-5-5.toml", "profiles/claude-haiku-5-5.toml"]]
+arenas = ["builds-l5-4v4-v1"]
+repeats = 1
+allow_unverified = true
+
+[budget]
+file = "runtime/budget-v011-rr-new-l5.json"
+max_cost = { "builds-l5-4v4-v1" = 1.5 }
+
+[budget.models]
+"profiles/claude-opus-5-5.toml" = ["../ovh-e2e/runtime/budget-opus.json", "../ovh-e2e/runtime/budget-anthropic.json"]
+"profiles/claude-haiku-5-5.toml" = ["../ovh-e2e/runtime/budget-haiku.json", "../ovh-e2e/runtime/budget-anthropic.json"]
+
+[budget.max_cost_models]
+"profiles/claude-opus-5-5.toml" = 1.5
+"profiles/claude-haiku-5-5.toml" = 0.5

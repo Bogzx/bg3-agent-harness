@@ -256,6 +256,12 @@ game unless it says so.
   `invalid: "tool_faults"`; its reason and winner stay what happened). Our tools failing is infrastructure, not the
   side's play, and a real timeout can decide a match. The bench still voids a run at the first. Tool definitions don't
   change. bench-v0.11's release cites it.
+- Codex through pi, on 0.19.0: what the agent sees doesn't change. A pi profile can play a Codex model on the account's Codex
+  credits: `api = "openai-codex-responses"`, whose only egress is `chatgpt.com`. The token comes from the profile's
+  `api_key_env`, else the access token of the Codex CLI's own login in `~/.codex/auth.json`, read only and never
+  refreshed from here; the refresh token stays in that file, out of the sandbox. A run with an expired token is refused
+  with the words to run the Codex CLI once, which refreshes its own file.
+  The backend reports tokens, so the spend ledger counts pi's estimate at the profile's rates.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at
@@ -696,6 +702,14 @@ game unless it says so.
   just before a win would grade the win as a defeat.
   The arena grader's forfeit streak skips a forced turn carrying `excused`, as it does `charged_cap`: the runner and
   the grader read the same run. `arena.py` isn't a suite file, so no digest; no match on record carries it.
+  fight_act1_windmill (and its Tactician twin) is won only by a combat with Fezzerk among the dead: the goal's enemy
+  is `^fezzerk$` instead of any goblin or worg, and the task and note name him. The goblin pack east of the windmill
+  passed the old goal and is another fight (claude-run-2's Opus fixture and the v0.11 night's Haiku r2 won only it).
+  bench-v0.11's sixth digest; only these two scenarios' digests move in its release, so runs of the other scenarios
+  still match it. The night's two windmill runs (sol, Haiku) no longer validate (P01) and are played again.
+  An arena matrix file may set `first_repeat` (default 1): its repeats are numbered from there, with the seed of that
+  number. The v0.11 division files go on from the placement round's repeat 1 with `first_repeat = 2`, so no division
+  pairing replays placement's dice. `arena_matrix.py` isn't a suite or code-pin file, so no digest moves.
 - Matrix runner: a models x scenarios x conditions x repeats queue that resumes after a crash, reruns invalid runs
   and stops at the global budget. It drives `runner/play.py` through a temporary adapter, with a condition table
   that maps each condition to play.py flags and lists what play.py still lacks.

@@ -1,0 +1,22 @@
+# bench-v0.11 round robin at L12 (owner 2026-11-09: "arena all night till 7"), pair 8 of 14 in the balanced round order,
+# one pair per file so pK can pick pairs with a clean tree. Two matches, sides swapped. sol v DeepSeek is in
+# v011-sol-arena.toml. max_cost per side: Claude's high estimate x 1.5 (at least $0.50), sol's and DeepSeek's as
+# v011-sol-arena.toml, Luna $0.50, Astra its dearest measured L5 side x sol's measured tier ratio x 5. An invalid match
+# is rerun, at most 2 times; one ending at its cap is not.
+name = "v011-rr-l12-astra-sol"
+pairs = [["profiles/gpt-6-astra-pi.toml", "profiles/gpt-6.1-sol-pi.toml"]]
+arenas = ["builds-l12-4v4-v1"]
+repeats = 1
+allow_unverified = true
+
+[budget]
+file = "runtime/budget-v011-rr-l12.json"
+max_cost = { "builds-l12-4v4-v1" = 11.5 }
+
+[budget.models]
+"profiles/gpt-6-astra-pi.toml" = ["runtime/budget-v011-night-codex.json"]
+"profiles/gpt-6.1-sol-pi.toml" = ["runtime/budget-v011-sol.json"]
+
+[budget.max_cost_models]
+"profiles/gpt-6-astra-pi.toml" = 11.5
+"profiles/gpt-6.1-sol-pi.toml" = 5.3

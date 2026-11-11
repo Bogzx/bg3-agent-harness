@@ -85,7 +85,7 @@ START: dict[str, dict] = {
         "party": [("Tav", "Paladin", 3), ("Wyll", "Warlock", 3), ("Gale", "Wizard", 3), ("Shadowheart", "Cleric", 3)],
         "gold": 200,
         "quests": [],
-        "nearby": ["Goblin", "Worg"],
+        "nearby": ["Fezzerk", "Goblin", "Worg"],
     },
     "fight_act2_balthazar": {
         "area": "Gauntlet of Shar",
@@ -334,7 +334,7 @@ ORACLE: dict[str, list[Callable]] = {
     "choice_act1_arabella": [finish_quest("Save Arabella")],
     "choice_act2_nightsong": [finish_quest("The Chosen of Shar")],
     "choice_act3_wyll_pact": [finish_quest("Rescue the Grand Duke")],
-    "fight_act1_windmill": fight("Goblin", "Worg"),
+    "fight_act1_windmill": fight("Fezzerk", "Goblin", "Worg"),
     "fight_act1_grove_gate": fight("Goblin Tracker"),
     "fight_act1_dror_ragzlin": fight("Dror Ragzlin", "Goblin"),
     "fight_act1_gith_patrol": fight("Sarth Baretha"),
@@ -357,7 +357,7 @@ START["act1_gold_max"] = START["act1_gold_1000"]  # the same start save, without
 # Ends one step short of the goal, which the grader must fail: (name, the steps).
 NEAR_MISS: dict[str, list[Callable]] = {
     "act1_recruit_3": [recruit("Gale")],  # one companion recruited, the goal wants two more
-    "fight_act1_windmill": fight("Goblin", "Worg")[:1],  # the fight started, never won
+    "fight_act1_windmill": fight("Goblin", "Worg"),  # a goblin fight won without Fezzerk: another group
     "act1_gold_1000": [lambda m: m.add_gold(999 - m.gold)],
     "fight_act2_ketheric": fight("Ketheric Thorm"),  # the fight won, the quest still open
     **{v: ORACLE[v][:1] for v in TACTICIAN},  # the fight started, never won

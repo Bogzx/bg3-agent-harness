@@ -1,0 +1,20 @@
+# bench-v0.11 Codex subset, part 2 of 3: the other two fights, then the gold runs. Only after v011-sol-windmill.toml has
+# been read. Same ledger, rates and max_cost rule as that file; an invalid run is rerun, at most 2 times.
+# Played by `runner/play.py bench run --matrix packages/bench/matrices/v011-sol-bench.toml`.
+name = "v011-sol-bench"
+order = "cell"
+allow_gaps = false
+allow_unverified = true  # the profile's status is offline until its first live run
+models = ["profiles/gpt-6.1-sol-pi.toml"]
+scenarios = [
+  "fight_act2_moonrise_assault",
+  "fight_act2_balthazar",
+  "act1_gold_max",
+  "act3_gold_max",
+]
+conditions = ["rules"]
+repeats = 1
+
+[budget]
+file = "runtime/budget-v011-sol.json"
+max_cost = { fight_act2_moonrise_assault = 5.7, fight_act2_balthazar = 5.6, act1_gold_max = 18.8, act3_gold_max = 24.4 }

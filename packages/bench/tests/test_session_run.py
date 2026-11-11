@@ -190,6 +190,31 @@ def test_a_crash_ends_the_run_invalid_without_a_resume(tmp_path):
     assert again.valid and again.run_id == f"{series}-r002" and host.started[1][2].name == f"{series}-r2"
 
 
+def test_an_attempt_killed_before_its_record_leaves_its_dir_and_the_rerun_plays_in_a_fresh_one(tmp_path):
+    """Night 2026-11-09, Haiku moonrise: attempt 1 was killed, so no runs.jsonl line closed it. Attempt 2 got its run
+    number and appended to its facts.jsonl: a bundle with 2 run_starts and 2 session starts, rejected (X02, X03, X06)."""
+    host, j = Host([[("exited", 5)]]), job()
+    run = run_one(tmp_path, host)
+    series = series_name("m", j)
+    killed = run.run_dir(j)
+    assert killed.name == series
+    killed.mkdir(parents=True)
+    (killed / "facts.jsonl").write_text('{"v":1,"kind":"mark","mark":"run_start"}\n')
+    planned = run.run_dir(j)  # the matrix's start record names it before the run plays
+    assert planned.name == f"{series}-r2"
+    again = run(j)
+    assert again.valid and again.run_id == f"{series}-r002" and host.started[0][2] == planned
+    assert (killed / "facts.jsonl").read_text().count("\n") == 1  # the killed attempt's file is left as it was
+
+
+def test_a_first_run_plays_where_the_matrix_start_record_says(tmp_path):
+    # series.json is in run 1's directory before the run plays: only a played run's facts.jsonl moves the number on
+    host, j = Host([[("exited", 5)]]), job()
+    run = run_one(tmp_path, host)
+    planned = run.run_dir(j)
+    assert run(j).valid and host.started[0][2] == planned and planned.name == series_name("m", j)
+
+
 def test_the_matrix_reruns_a_crashed_job_and_settles_paid_costs(tmp_path):
     budget = tmp_path / "budget.json"
     budget.write_text(json.dumps({"cap": 10.0, "spent": 0.0}))

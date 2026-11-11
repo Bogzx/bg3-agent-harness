@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """A stub model for the pi conformance suite: OpenAI chat completions over SSE, or Anthropic's Messages API over
-SSE for a request to .../messages; standard library only.
+SSE for a request to .../messages, or the Codex backend's Responses stream for .../codex/responses; standard library
+only.
 
     python3 stub_llm.py <script.json> <request log.jsonl> <port file>
 
@@ -14,11 +15,13 @@ repeating; a step is one of
 and may add "usage": {...} (merged into the final chunk's usage) or "delay": <s> (before answering). The final
 chunk carries OpenRouter-style usage with `cost`, plus `provider`, like OpenRouter's streams. A Messages API answer
 carries Anthropic's usage instead (token counts, no cost: ANTHROPIC_USAGE, "usage" merged into it) on message_start
-and message_delta, the way Anthropic streams it. Every request (headers + body) is appended to the log.
+and message_delta, the way Anthropic streams it. A Codex request's step is the count of Codex requests so far (its zstd
+body can't be read here, and is logged as {}). Every request (headers + body) is appended to the log.
 """
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import sys
@@ -138,19 +141,62 @@ def anthropic_events(step: dict, n: int) -> list[bytes]:
     return [*out, sse("message_delta", {"delta": stop, "usage": usage}), sse("message_stop", {})]
 
 
+def codex_events(step: dict, n: int) -> list[bytes]:
+    """One Codex backend stream (Responses API events), the usage only on response.completed."""
+    output: list[dict] = []
+    out = [sse("response.created", {"response": {"id": f"resp_stub_{n}", "status": "in_progress"}})]
+    if "text" in step:
+        part = {"type": "output_text", "text": step["text"], "annotations": []}
+        item = {"type": "message", "id": f"msg_{n}", "role": "assistant", "status": "completed", "content": [part]}
+        out += [
+            sse("response.output_item.added", {"item": {**item, "status": "in_progress", "content": []}}),
+            sse("response.content_part.added", {"part": {**part, "text": ""}}),
+            sse("response.output_text.delta", {"delta": step["text"]}),
+            sse("response.output_item.done", {"item": item}),
+        ]
+        output.append(item)
+    for i, c in enumerate(step.get("tool_calls") or []):
+        args = json.dumps(c.get("arguments", {}))
+        item = {"type": "function_call", "id": f"fc_{n}_{i}", "call_id": f"call_{n}_{i}", "name": c["name"]}
+        out += [
+            sse("response.output_item.added", {"item": {**item, "arguments": ""}}),
+            sse("response.function_call_arguments.delta", {"delta": args}),
+            sse("response.function_call_arguments.done", {"arguments": args}),
+            sse("response.output_item.done", {"item": {**item, "arguments": args}}),
+        ]
+        output.append({**item, "arguments": args})
+    usage = {
+        "input_tokens": 1000,
+        "output_tokens": 10,
+        "total_tokens": 1010,
+        "input_tokens_details": {"cached_tokens": 0},
+    }
+    done = {"id": f"resp_stub_{n}", "status": "completed", "output": output, "usage": usage}
+    return [*out, sse("response.completed", {"response": done})]
+
+
 def serve(script: list[dict], log: Path, port_file: Path) -> None:
+    codex_turns = itertools.count()
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
 
         def do_POST(self):
-            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            raw = self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}"
+            # pi sends the Codex backend a zstd body, which this standard-library stub can't read
+            body = {} if self.headers.get("Content-Encoding") == "zstd" else json.loads(raw)
             with open(log, "a") as f:
                 f.write(
                     json.dumps({"t": time.time(), "path": self.path, "headers": dict(self.headers), "body": body})
                     + "\n"
                 )
-            n = sum(1 for m in body.get("messages") or [] if m.get("role") == "assistant")
+            codex = urlparse(self.path).path.endswith("/codex/responses")
+            n = (
+                next(codex_turns)
+                if codex
+                else sum(1 for m in body.get("messages") or [] if m.get("role") == "assistant")
+            )
             step = script[min(n, len(script) - 1)]
             time.sleep(float(step.get("delay") or 0))
             if "error" in step:
@@ -164,7 +210,14 @@ def serve(script: list[dict], log: Path, port_file: Path) -> None:
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
-            for e in (anthropic_events if urlparse(self.path).path.endswith("/messages") else events)(step, n):
+            stream = (
+                codex_events
+                if codex
+                else anthropic_events
+                if urlparse(self.path).path.endswith("/messages")
+                else events
+            )
+            for e in stream(step, n):
                 self.wfile.write(e)
                 self.wfile.flush()
 

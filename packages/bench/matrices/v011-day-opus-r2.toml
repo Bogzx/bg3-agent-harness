@@ -1,0 +1,26 @@
+# bench-v0.11 Opus round 2 (claude-opus-5-5), after the owner's cuts (2026-11-11: "(a) cuts, no new money"): one more
+# run of the three fights and crash_site_grove only, so those cells reach 2 runs. No 2nd run of act1_level_3,
+# act1_gold_max or act3_gold_max (cuts 1-3; act3_gold_max's valid run is v011-day-opus's 2026-11-11 rerun, r003).
+# Round 1 is v011-day-opus (repeats = 1). A bench series is per matrix name (adapters/session_run.series_name), so these
+# runs start their own series (v011-day-opus-r2-..., r001); results.py's cells are (scenario, model, condition), so
+# they count with round 1's runs of the same cells. Shortest first. Expected $4.05 (round 1's costs: $0.72, 1.34, 0.62,
+# 1.37), about 1.5 h.
+# Budget as v011-day-opus: its own ledger (the Opus bench's share) and Opus's and Anthropic's, max_cost as round 1's
+# (the run's cap and its reserve). An invalid run is rerun, at most 2 times.
+name = "v011-day-opus-r2"
+allow_gaps = false
+allow_unverified = false
+models = ["profiles/claude-opus-5-5.toml"]
+scenarios = [
+  "fight_act2_balthazar",
+  "fight_act2_moonrise_assault",
+  "fight_act1_windmill",
+  "crash_site_grove",
+]
+conditions = ["rules"]
+repeats = 1
+
+[budget]
+file = "runtime/budget-v011-day-opus.json"
+shared = ["../ovh-e2e/runtime/budget-opus.json", "../ovh-e2e/runtime/budget-anthropic.json"]
+max_cost = { fight_act2_balthazar = 1.37, fight_act2_moonrise_assault = 2.6, fight_act1_windmill = 2.6, crash_site_grove = 15.41 }

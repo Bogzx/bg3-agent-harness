@@ -1,0 +1,27 @@
+# GPT-6 Luna through pi's openai-codex-responses API, on the account's Codex credits; the token is the Codex CLI's
+# login, read only. Model numbers, thinking map, compat flags and rates from pi 1.3.0's catalog. A ledger dollar is 25
+# credits (the rate card is 25 x these rates).
+client = "pi"
+model = "gpt-6-luna"
+effort = "medium"  # served as medium: the catalog's thinkingLevelMap keeps medium (C04)
+status = "offline"  # never played live; the night matrices set allow_unverified
+
+[endpoint]
+provider = "openai-codex"
+base_url = "https://chatgpt.com/backend-api"
+api = "openai-codex-responses"
+api_key_env = "BG3AI_CODEX_ACCESS_TOKEN"
+
+[model_info]
+input = ["text", "image"]
+reasoning = true
+context_window = 272000
+max_tokens = 128000
+thinking_level_map = { off = "none", minimal = "low" }
+compat = { supportsOpenAIGrammarTools = true, supportsAdditionalTools = true, supportsToolSearch = true, supportsMidConvoSystemMessages = true }
+
+[model_info.cost]
+input = 0.1
+output = 0.5
+cache_read = 0.01
+cache_write = 0.125

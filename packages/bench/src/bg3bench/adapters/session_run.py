@@ -1,7 +1,7 @@
 """The matrix's run_one on bg3harness.session.run_session: one job = one more run of a series, no resume.
 
 The bench builds the run: the series (`series_name`: one per scenario, model, client, effort and condition), the run
-number (one after the series' last runs.jsonl record), the run directory (runtime/sessions/<series.run_name>/), the
+number (one after the series' last runs.jsonl record, past any directory already played in), the run directory (runtime/sessions/<series.run_name>/), the
 SessionSpec (the host's kickoff, the scenario's run_hours, Recovery(max_resumes=0); a maximise scenario's with no
 count on its stop resumes: the host resumes its agent while it acts and at least the minimum is left) and, at the end, the record
 (with a legacy series record's benchmark metrics: run_metrics), its runs.jsonl line (its pins carry the harness,
@@ -186,9 +186,13 @@ class SessionRun:
         return []
 
     def _next_run(self, job: JSON) -> tuple[int, Path]:
-        """The job's next run: its number in the series and its run directory."""
+        """The job's next run: its number in the series and its run directory. A directory with a facts.jsonl has been
+        played in, even with no runs.jsonl line: an attempt killed before its record leaves that, and a rerun sharing it
+        would append to its facts and be rejected as two runs."""
         name = series_name(self.matrix, job)
         k = series.next_run_index(series.series_records(self.sessions / name / "runs.jsonl", name))
+        while (self.sessions / series.run_name(name, k) / run_artifacts.FACTS).exists():
+            k += 1
         return k, self.sessions / series.run_name(name, k)
 
     def run_dir(self, job: JSON) -> Path:

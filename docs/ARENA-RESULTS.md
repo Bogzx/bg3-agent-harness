@@ -78,6 +78,26 @@ picked for its outcome.
    Ratings are provisional below 50 pairings, carry rank ranges from the bootstrap, and are refit with 0.5 and 2
    virtual draws. A rating that moves by more than half its interval under those priors is flagged.
 
+## Schedule amendment: a division tournament at L5 (proposed 2026-11-10, before its matches)
+
+Rule 2's schedule is replaced for bench-v0.11's seven models, decided before any division or playoff match is played.
+Placement pairings already played stay as they are; nothing played is re-run or dropped.
+
+1. **Placement.** One pairing per pair at L5 (the round robin).
+2. **Divisions.** From placement: A = gpt-6.1-sol, gpt-6-astra, deepseek-flash; B = claude-haiku-5-5,
+   claude-sonnet-5-5, gpt-6-luna. Claude Opus 5.5, placed last, joins A when its Elo from `results()` over every L5
+   placement pairing (min_pairings=1) is at least the midpoint of A's lowest and B's highest Elo; else B. A tie goes
+   to A.
+3. **Inside each division** every pair plays to MIN_PAIRINGS (15) complete pairings at L5, placement included.
+4. **Playoff.** A's lowest and B's highest by Elo inside their division after step 3 play to 15 pairings. The one with
+   more points over the playoff pairings ends in A; equal points keep the divisions as they were.
+5. **Ranking.** Division order first (A above B), then Elo inside each division, from `results()` over every L5
+   pairing (placement, division, playoff). The report states this construction above the table and keeps the per-pair
+   pentanomial counts, cap draws and sign tests of rule 3.
+
+A division or playoff file's repeats start at 2: repeat r plays seed + r - 1, so a repeat 1 would replay the
+placement pairing's dice. L2 and L12 keep their placement pairings as side tables, unrated.
+
 ## Dice: per seat, the same in both matches of a pairing (decided 2026-11-04)
 
 Every match of an arena applies the arena's seed before the fight (ArenaSetup -> `Scenario.set_seed`: one base seed,

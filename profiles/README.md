@@ -16,6 +16,9 @@ to write your own.
 | `opus-5.5-claude-code.toml` | claude | verified | none: a subscription; `total_cost_usd` is recorded, never charged |
 | `sonnet-5.5-claude-code.toml` | claude | offline | none: a subscription; `total_cost_usd` is recorded, never charged |
 | `haiku-5.5-claude-code.toml` | claude | offline | none: a subscription; `total_cost_usd` is recorded, never charged |
+| `gpt-6-astra-pi.toml` | pi | offline | pi's estimate at the profile's `cost` table; a dollar there is 25 Codex credits |
+| `gpt-6-luna-pi.toml` | pi | offline | pi's estimate at the profile's `cost` table; a dollar there is 25 Codex credits |
+| `gpt-6.1-sol-pi.toml` | pi | offline | pi's estimate at the profile's `cost` table and its over-272K-token tier; a dollar there is 25 Codex credits |
 | `codex.toml` | codex | offline | none: a subscription; an estimate from `clients.CODEX_PRICES`, unknown for a model not in it |
 | `gemini-cli.toml` | gemini | unsupported | none: a subscription; an estimate from `clients.GEMINI_PRICES` |
 
@@ -27,6 +30,11 @@ refuses an unsupported profile, and an offline one unless the matrix file sets `
 response that its endpoint doesn't bill (any endpoint but OpenRouter and DeepSeek, or an OpenRouter response
 without `usage.cost`) is priced from the profile's `cost` table, which every pi profile must have. The run's
 `served` record (manifest `model.served`) names the providers that answered.
+
+**Codex through pi** (`api = "openai-codex-responses"`) reuses the Codex CLI's ChatGPT login, `~/.codex/auth.json`,
+read only: a run takes only the access token from it and never writes or refreshes the file. An expired token is
+refused; running the Codex CLI once refreshes it. Codex credits are not dollars: the ledger counts pi's estimate at the
+profile's rates (pi 1.3.0's catalog).
 
 **Effort** (`effort`: low, medium, high, xhigh, max) as each client gets it:
 

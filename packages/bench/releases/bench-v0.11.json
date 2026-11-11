@@ -11,7 +11,7 @@
   "game_build": "25605617",
   "bg3le_sha256": "d21546c06f5f307e6c8bd1f68ca3bf70bf95fb23ca54b809405ce4e8d1c16de9",
   "mod_sha1": "90fc1070a0b3ea1ddbf292fe0ec7881222d54bad",
-  "code_sha1": "fccbf0cf71071275b3b5c87f5a31558f2adff64b"
+  "code_sha1": "64be8d5f08a97375b1d9da55388936cc7c12a462"
  },
  "scenarios": {
   "act1_goblin_camp_no_fight": {
@@ -399,7 +399,7 @@
    }
   },
   "fight_act1_windmill": {
-   "digest": "f9d67d62725f50d0",
+   "digest": "282ae5f7e358c4bf",
    "save": "Tav-26221264947__SCN-fight_act1_windmill",
    "save_sha1": "ca8dae135db0df99b21c9e59197e0953144b63be",
    "fingerprint": {
@@ -429,7 +429,7 @@
    }
   },
   "fight_act1_windmill_tactician": {
-   "digest": "98cd379c26a6b736",
+   "digest": "cb894dfa6725ad8a",
    "save": "Tav-30512631021__SCN-fight_act1_windmill_tactician",
    "save_sha1": "e6e6a815b3204ee5858cd205939fb8dd072ad21d",
    "fingerprint": {

@@ -1,0 +1,22 @@
+# bench-v0.11 Codex subset (owner 2026-11-09: "do a run with sol, medium thinking to test that, the 8 things"), part 1 of
+# 3: fight_act1_windmill alone, so that the run stops here by itself. Read the credits before and after with
+# tools/dev/codex_usage.py, then decide on v011-sol-bench.toml and v011-sol-arena.toml.
+# Played by `runner/play.py bench run --matrix packages/bench/matrices/v011-sol-windmill.toml`.
+#
+# Credits, not dollars: runtime/budget-v011-sol.json counts pi's estimate at the profile's rates, and 1 ledger dollar is
+# 25 credits. Its cap of 60 is 1,500 credits for the three matrices together.
+# max_cost (the run's cap and its reserve) = the job's high estimate x 1.5 / 25. High estimate: DeepSeek's tokens for
+# the job on bench-v0.11 at the rate card, 90% cached, twice the output. An invalid run is rerun, at most 2 times, as in
+# the DeepSeek subset.
+name = "v011-sol-windmill"
+order = "cell"
+allow_gaps = false
+allow_unverified = true  # the profile's status is offline until this run
+models = ["profiles/gpt-6.1-sol-pi.toml"]
+scenarios = ["fight_act1_windmill"]
+conditions = ["rules"]
+repeats = 1
+
+[budget]
+file = "runtime/budget-v011-sol.json"
+max_cost = { fight_act1_windmill = 6.6 }

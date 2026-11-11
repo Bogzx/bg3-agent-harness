@@ -9,10 +9,12 @@ manifest's fields.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
 import subprocess
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +24,10 @@ from bg3harness import profiles
 from bg3harness.profiles import Profile
 
 DEFAULT_MODEL = "opus"  # play.py's --model default (claude)
+# The Codex CLI's own ChatGPT login, which a Codex profile reuses (owner, 2026-11-08). Read only: the CLI owns this
+# file and its refresh. Only the access token leaves it, for the run's env; the refresh token stays out of the sandbox.
+CODEX_LOGIN = Path.home() / ".codex/auth.json"
+CODEX_ACCOUNT_CLAIM = "https://api.openai.com/auth"
 
 
 class SetupRefused(ValueError):
@@ -111,16 +117,39 @@ def read_dotenv(path: Path) -> dict[str, str]:
     return out
 
 
-def api_key_env(prof: Profile | None, environ: Mapping[str, str], dotenv: Path) -> dict[str, str]:
+def codex_token(path: Path) -> str:
+    """The access token of the Codex CLI's login in `path`, read and never written. pi sends the token's account claim
+    as the account header, so a token for another account than the file's is refused, as are no login and an expired
+    token. No refusal names a value, and `from None` keeps the parsed file out of a traceback."""
+    try:
+        tokens = json.loads(path.read_text())["tokens"]
+        access, account = tokens["access_token"], tokens["account_id"]
+        claims = json.loads(base64.urlsafe_b64decode(access.split(".")[1] + "=="))
+        claim, expires = claims[CODEX_ACCOUNT_CLAIM]["chatgpt_account_id"], float(claims["exp"])
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError):
+        raise SetupRefused(f"no Codex CLI login in {path}: log in with the Codex CLI") from None
+    if claim != account:
+        raise SetupRefused(f"the access token in {path} is not for that file's account_id: log in with the Codex CLI")
+    if expires <= time.time():
+        raise SetupRefused(f"the access token in {path} has expired: run the Codex CLI once, it refreshes its own file")
+    return access
+
+
+def api_key_env(
+    prof: Profile | None, environ: Mapping[str, str], dotenv: Path, codex_login: Path = CODEX_LOGIN
+) -> dict[str, str]:
     """{name: value} of the profile's API key env var to add to the runner's env: {} when it is set already (or
-    the client has no endpoint), else the value from the .env file. Missing everywhere: refused. The value is
-    never logged or written: pi's models.json names the variable."""
+    the client has no endpoint), else the value from the .env file, else, for a Codex profile, the access token of
+    the Codex CLI's login. Missing everywhere: refused. The value is never logged or written: pi's models.json names the
+    variable."""
     if prof is None or prof.endpoint is None:
         return {}
     name = prof.endpoint.api_key_env
     if environ.get(name):
         return {}
     value = read_dotenv(dotenv).get(name)
+    if not value and prof.endpoint.api == profiles.CODEX_API:
+        value = codex_token(codex_login)
     if not value:
         raise SetupRefused(f"{name} (the profile's api_key_env) is set neither in the env nor in {dotenv}")
     return {name: value}

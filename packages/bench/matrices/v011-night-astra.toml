@@ -1,0 +1,25 @@
+# bench-v0.11 at 3 runs per scenario (owner 2026-11-10: "make it 3 runs for the secnarios", Opus 2), gpt-6-astra-pi. Played round by
+# round (order "repeat": every scenario's next run before any scenario's run after it), shortest first, so the model is
+# on the board early and a stop leaves even coverage. No v0.11 run of this model counts yet: 3 runs of each.
+# max_cost: as the night files (windmill from v011-night-astra-windmill, now folded in: the owner counts Codex credits as
+# unlimited, so no gate); the 1 h runs act3_gold_max's $153.3 x 60/45. 1 ledger dollar is 25 credits.
+# max_cost is the run's cap and its reserve. An invalid run is rerun, at most 2 times.
+name = "v011-night-astra"
+allow_gaps = false
+allow_unverified = true
+models = ["profiles/gpt-6-astra-pi.toml"]
+scenarios = [
+  "fight_act2_balthazar",
+  "fight_act2_moonrise_assault",
+  "fight_act1_windmill",
+  "crash_site_grove",
+  "act1_level_3",
+  "act1_gold_max",
+  "act3_gold_max",
+]
+conditions = ["rules"]
+repeats = 3
+
+[budget]
+file = "runtime/budget-v011-night-codex.json"
+max_cost = { fight_act2_balthazar = 32.5, fight_act2_moonrise_assault = 34.4, fight_act1_windmill = 38.6, crash_site_grove = 204.4, act1_level_3 = 204.4, act1_gold_max = 117.8, act3_gold_max = 153.3 }

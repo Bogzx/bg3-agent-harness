@@ -6,6 +6,10 @@ python3 -m unittest runner/test_client_setup.py
 
 from __future__ import annotations
 
+import base64
+import json
+import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -15,6 +19,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "bridge" / "src"))
 sys.path.insert(0, str(REPO / "packages" / "harness" / "src"))
 from bg3harness import client_setup as cs  # noqa: E402
+from bg3harness import profiles  # noqa: E402
 
 PI = str(REPO / "profiles" / "deepseek-flash.toml")
 CLAUDE = str(REPO / "profiles" / "opus-5.5-claude-code.toml")
@@ -64,6 +69,86 @@ class ApiKey(unittest.TestCase):
         self.dotenv.write_text("DEEPSEEK_API_KEY=\n")
         with self.assertRaisesRegex(cs.SetupRefused, "DEEPSEEK_API_KEY"):
             cs.api_key_env(self.prof, {}, self.dotenv)
+
+
+class CodexLogin(unittest.TestCase):
+    def setUp(self):
+        raw = {
+            "client": "pi",
+            "model": "gpt-x",
+            "endpoint": {
+                "provider": "openai-codex",
+                "base_url": "https://chatgpt.com/backend-api",
+                "api": profiles.CODEX_API,
+                "api_key_env": "BG3AI_CODEX_ACCESS_TOKEN",
+            },
+            "model_info": {
+                "input": ["text"],
+                "reasoning": True,
+                "context_window": 1000,
+                "max_tokens": 10,
+                "cost": {"input": 1, "output": 1, "cache_read": 1},
+            },
+        }
+        self.prof = profiles.parse(raw)
+        d = Path(tempfile.mkdtemp(prefix="bg3ai-codex-"))
+        self.login, self.dotenv = d / "auth.json", d / ".env"
+        self.addCleanup(shutil.rmtree, d, True)
+
+    def jwt(self, exp, account="acct-1"):
+        claims = {cs.CODEX_ACCOUNT_CLAIM: {"chatgpt_account_id": account}, "exp": exp}
+        payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        return f"e30.{payload}.sig"
+
+    def write(self, exp=4e9, account="acct-1", file_account="acct-1"):
+        access = self.jwt(exp, account)
+        tokens = {"id_token": "id-1", "access_token": access, "refresh_token": "rt-1", "account_id": file_account}
+        self.login.write_text(json.dumps({"auth_mode": "chatgpt", "OPENAI_API_KEY": None, "tokens": tokens}))
+        return access
+
+    def key(self, environ=None):
+        return cs.api_key_env(self.prof, environ or {}, self.dotenv, self.login)
+
+    def test_only_the_access_token_comes_from_the_login(self):
+        access = self.write()
+        self.assertEqual(self.key(), {"BG3AI_CODEX_ACCESS_TOKEN": access})
+
+    def test_the_file_is_left_as_it_was(self):
+        self.write()
+        os.utime(self.login, ns=(10**18, 10**18))  # an old stamp: any rewrite moves it, however fast
+        before = (self.login.read_bytes(), self.login.stat().st_mtime_ns)
+        self.key()
+        self.assertEqual((self.login.read_bytes(), self.login.stat().st_mtime_ns), before)
+
+    def test_env_wins_over_the_login(self):
+        self.write()
+        self.assertEqual(self.key({"BG3AI_CODEX_ACCESS_TOKEN": "x"}), {})
+
+    def test_no_login_is_refused(self):
+        with self.assertRaisesRegex(cs.SetupRefused, "no Codex CLI login"):
+            self.key()
+        self.login.write_text(json.dumps({"auth_mode": "chatgpt", "OPENAI_API_KEY": None, "tokens": None}))
+        with self.assertRaisesRegex(cs.SetupRefused, "no Codex CLI login"):
+            self.key()
+
+    def test_an_expired_token_says_to_run_the_cli_and_names_no_value(self):
+        access = self.write(exp=1)
+        with self.assertRaises(cs.SetupRefused) as e:
+            self.key()
+        self.assertIn("has expired: run the Codex CLI once, it refreshes its own file", str(e.exception))
+        for value in (access, "rt-1", "id-1"):
+            self.assertNotIn(value, str(e.exception))
+
+    def test_a_token_for_another_account_is_refused(self):
+        self.write(account="acct-2")
+        with self.assertRaisesRegex(cs.SetupRefused, "not for that file's account_id"):
+            self.key()
+
+    def test_another_endpoint_never_reads_the_login(self):
+        self.write()
+        other = cs.resolve(None, PI, None, None).profile
+        with self.assertRaisesRegex(cs.SetupRefused, "DEEPSEEK_API_KEY"):
+            cs.api_key_env(other, {}, self.dotenv, self.login)
 
 
 class ToolCount(unittest.TestCase):

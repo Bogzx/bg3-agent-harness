@@ -9,6 +9,9 @@
   "deepseek-flash": "DeepSeek V4.1 Flash",
   "deepseek-v4-pro": "DeepSeek V4 Pro",
   "deepseek/deepseek-v4.1-flash": "DeepSeek V4.1 Flash (OpenRouter)",
-  "gpt-5": "GPT-5"
+  "gpt-5": "GPT-5",
+  "gpt-6-astra": "GPT-6 Astra",
+  "gpt-6-luna": "GPT-6 Luna",
+  "gpt-6.1-sol": "GPT-6.1 Sol"
  }
 }
