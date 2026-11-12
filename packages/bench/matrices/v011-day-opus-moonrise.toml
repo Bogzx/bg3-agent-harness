@@ -1,0 +1,28 @@
+# bench-v0.11 replacement runs (owner 2026-11-11: "rasie the cap from everyone, and rerun the opus run where he went to
+# cap"; "also drop the capped runs, from all models"): one job per v0.11 bench run that ended at its cost cap, same
+# model and scenario. One such run so far: v011-day-opus-r2 fight_act2_moonrise_assault (run id
+# v011-day-opus-r2-fight_act2_moonrise_assault-claude-opus-5-5-pi-medium-rules-r001, outcome over_budget, $2.62 at
+# max_cost $2.60), which an operator invalidation in v011-day-opus-r2's queue takes out of the counted runs (reason
+# "cost cap (owner 2026-11-11)"). This run replaces it, so the Opus moonrise cell counts 2 runs: v011-day-opus's r001
+# and this one. v011-day-opus-r2 must not be run or resumed again (its invalidated job would read as pending and rerun
+# at $2.60).
+# A bench series is per matrix name, so this run starts its own series (v011-day-opus-moonrise-..., r001); results.py's
+# cells are (scenario, model, condition), so it counts with the other Opus runs of the cell.
+# max_cost (owner 2026-11-11: raise the caps so a normal run can't hit them; one rule for every model): the scenario's
+# time cap (caps.run_hours) x 60 x the model's highest measured $/min x 1.5, rounded up to $0.10. Opus $0.3353/min
+# (bench-v0.8 act1_level_3, $17.47 in 52.1 min, results-144): 1 h x 60 x 0.3353 x 1.5 = $30.2. Expected cost about
+# $1.3-2.6 (v011-day-opus $1.34, r2 $2.62 when cut).
+# Budget as v011-day-opus(-r2): its own ledger (the Opus bench's share) and Opus's and Anthropic's. max_cost is the
+# run's cap and its reserve. An invalid run is rerun, at most 2 times.
+name = "v011-day-opus-moonrise"
+allow_gaps = false
+allow_unverified = false
+models = ["profiles/claude-opus-5-5.toml"]
+scenarios = ["fight_act2_moonrise_assault"]
+conditions = ["rules"]
+repeats = 1
+
+[budget]
+file = "runtime/budget-v011-day-opus.json"
+shared = ["../ovh-e2e/runtime/budget-opus.json", "../ovh-e2e/runtime/budget-anthropic.json"]
+max_cost = { fight_act2_moonrise_assault = 30.2 }
