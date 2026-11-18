@@ -474,8 +474,7 @@ class ThermalTest(unittest.TestCase):
         self.assertEqual(R.last_thermal(log)[1], SH_LINE)
 
     def test_limits_from_env(self):
-        self.assertEqual(R.heat_limits({}), {"pause_cpu_c": 92, "pause_gpu_c": 85, "pause_s": 60,
-                                             "kill_cpu_c": 97, "kill_gpu_c": 92, "kill_s": 20})
+        self.assertEqual(R.heat_limits({}), {"pause_cpu_c": 92, "pause_s": 60, "kill_cpu_c": 97, "kill_s": 20})
         lim = R.heat_limits({"BG3AI_HEAT_PAUSE_CPU_C": "88", "BG3AI_HEAT_KILL_S": "x"})
         self.assertEqual((lim["pause_cpu_c"], lim["kill_s"]), (88, 20))   # a bad value = the default
 
@@ -486,8 +485,6 @@ class ThermalTest(unittest.TestCase):
         self.assertTrue(h["pause"])
         self.assertEqual((h["hot_s"], h["cpu"], h["gpu"], h["cool"]), (60, 93, 60, False))
         self.assertFalse(R.heat_state(hot[:-1], t0 + 61, lim)["pause"])   # 55 s
-        gpu = samples(t0, [(70, 86)] * 13)
-        self.assertTrue(R.heat_state(gpu, t0 + 61, lim)["pause"])         # the GPU alone
         gap = hot[:6] + [(t + 20, c, g) for t, c, g in hot[6:]]           # a 25 s hole in the log
         self.assertFalse(R.heat_state(gap, gap[-1][0], lim)["pause"])
         self.assertFalse(R.heat_state(hot, t0 + 200, lim)["pause"])       # stale: no pause
@@ -495,6 +492,13 @@ class ThermalTest(unittest.TestCase):
         cooling = hot + samples(t0 + 70, [(80, 60)] * 12)                 # under the limit for 55 s
         self.assertFalse(R.heat_state(cooling, t0 + 126, lim)["cool"])
         self.assertTrue(R.heat_state(cooling + [(t0 + 130, 79, 60)], t0 + 131, lim)["cool"])
+
+    def test_gpu_heat_alone_never_pauses(self):
+        # owner 2026-11-18: "you can put no limit on gpu temp overall and remove it"; the GPU is logged, not limited
+        lim, t0 = R.heat_limits({}), 1_000_000.0
+        h = R.heat_state(samples(t0, [(70, 110)] * 30), t0 + 146, lim)   # GPU 110 C for 145 s
+        self.assertEqual((h["pause"], h["cool"], h["gpu"]), (False, True, 110))
+        self.assertTrue(R.heat_state(samples(t0, [(93, 110)] * 13), t0 + 61, lim)["pause"])   # the CPU still does
 
     def test_watchdog_writes_synced_lines_and_yields_to_thermal_log_sh(self):
         s = {"k10temp": 70, "acpitz": 69, "amdgpu": 60, "nvme": 40, "nv": "65,30.1,1500,98,0x0", "nv_temp": 65,
@@ -526,6 +530,16 @@ class ThermalTest(unittest.TestCase):
         self.assertIn("CPU 98 C / GPU 70 C for 20 s", rec["why"])
         self.assertEqual(R.json.loads((self.tmp / "heat_kills.jsonl").read_text())["kind"], "heat_kill")
         self.assertTrue(any("KILLED bg3 [100]" in m and "too hot" in m for m in self.logs))
+
+    def test_no_heat_kill_by_the_gpu_alone(self):
+        # owner 2026-11-18: no GPU temperature limit; only the CPU's heat kills the game
+        with mock.patch.object(R.os, "kill") as k, mock.patch.object(R.os, "fsync"):
+            for i in range(20):                                          # 95 s at GPU 110 C (nvidia-smi)
+                self.assertIsNone(self.w.thermal(1_000_000.0 + 5 * i, {"k10temp": 70, "nv_temp": 110}, pids=[100]))
+            for i in range(20):                                          # … and on the amdgpu hwmon
+                self.assertIsNone(self.w.thermal(2_000_000.0 + 5 * i, {"k10temp": 70, "amdgpu": 110}, pids=[100]))
+        k.assert_not_called()
+        self.assertEqual(self.w.heat[-1][1:], (70, 110))                 # the reading is still kept
 
     def test_no_heat_kill_without_a_game_or_under_the_limits(self):
         with mock.patch.object(R.os, "kill") as k, mock.patch.object(R.os, "fsync"):

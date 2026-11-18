@@ -262,6 +262,12 @@ game unless it says so.
   refreshed from here; the refresh token stays in that file, out of the sandbox. A run with an expired token is refused
   with the words to run the Codex CLI once, which refreshes its own file.
   The backend reports tokens, so the spend ledger counts pi's estimate at the profile's rates.
+- No GPU temperature limit, on 0.19.0: what the agent sees doesn't change. Owner, 2026-11-18: "you can put no limit
+  on gpu temp overall and remove it". The recorder's guard no longer stops for the GPU (`GuardLimits.max_gpu_c`, 82 C,
+  was tuned for dev2's RTX 3050 and stopped dev1's RX 6800 recordings 417 times within its spec). ramwatch's heat
+  pause and heat kill go by the CPU alone (`BG3AI_HEAT_PAUSE_GPU_C` / `BG3AI_HEAT_KILL_GPU_C`, 85 / 92 C, are gone),
+  and the live dashboard's `thermal.pause_gpu_c` with them. The GPU temperature is still sampled and logged
+  (thermal.log, the heat records, the runner's messages, the dashboard). The CPU, RAM and disk limits are unchanged.
 - The runner's relaunch point between sessions follows the game's memory cap (the scope's, else
   `BG3AI_GAME_MEMORY_MAX`): 1200 MiB under ramwatch's anon+swap kill to the nearest 100, at most
   `BG3AI_RELAUNCH_RAM_MB`. 6500 at 8G (the flat 7000 left about 45 minutes of growth under the 7692 kill), 7000 at

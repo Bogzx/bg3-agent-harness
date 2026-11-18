@@ -20,10 +20,10 @@
   - below KILL_MB available: SIGTERMs those test runs before the kernel picks the game;
   - every THERMAL_S writes one temperature line to runtime/thermal.log (synced, so the last seconds before a hard
     power-off survive; the format of an operator's thermal_log.sh, which it replaces while it holds
-    runtime/thermal_log.lock), and SIGKILLs bg3 when the CPU or the GPU stays above the heat-kill limits
-    (heat_limits(); runtime/heat_kills.jsonl, with the last tool calls). The test box cut its power twice under the naut
-    series load (2026-10-16 ~20:07, 2026-10-17 ~16:01; no kernel log, no MCE, no OOM). The runner pauses between
-    sessions at the lower heat-pause limits (runner/play.py heat_paused, from the same log).
+    runtime/thermal_log.lock), and SIGKILLs bg3 when the CPU stays above the heat-kill limit (heat_limits();
+    runtime/heat_kills.jsonl, with the last tool calls; the GPU is logged, never limited). The test box cut its power
+    twice under the naut series load (2026-10-16 ~20:07, 2026-10-17 ~16:01; no kernel log, no MCE, no OOM). The
+    runner pauses between sessions at the lower heat-pause limit (runner/play.py heat_paused, from the same log).
 
 runner/play.py runs it as a thread for the whole run; standalone (e.g. live tests with the runner stopped):
     PYTHONPATH=packages/harness/src python3 -m bg3harness.ramwatch          # until Ctrl-C
@@ -93,11 +93,10 @@ HWMON = Path("/sys/class/hwmon")
 PLATFORM_PROFILE = Path("/sys/firmware/acpi/platform_profile")
 NV_QUERY = "temperature.gpu,power.draw,clocks.gr,utilization.gpu,clocks_throttle_reasons.active"
 SAMPLE_GAP_S = 15              # a longer gap between two thermal samples breaks a "sustained" run
-# (env var, default): CPU = k10temp Tctl, GPU = nvidia-smi's temperature (the amdgpu hwmon without nvidia-smi)
-HEAT_ENV = {"pause_cpu_c": ("BG3AI_HEAT_PAUSE_CPU_C", 92), "pause_gpu_c": ("BG3AI_HEAT_PAUSE_GPU_C", 85),
-            "pause_s": ("BG3AI_HEAT_PAUSE_S", 60),
-            "kill_cpu_c": ("BG3AI_HEAT_KILL_CPU_C", 97), "kill_gpu_c": ("BG3AI_HEAT_KILL_GPU_C", 92),
-            "kill_s": ("BG3AI_HEAT_KILL_S", 20)}
+# (env var, default): CPU = k10temp Tctl. The GPU has no limit (owner 2026-11-18: "you can put no limit on gpu temp
+# overall and remove it"); its temperature is still sampled and logged.
+HEAT_ENV = {"pause_cpu_c": ("BG3AI_HEAT_PAUSE_CPU_C", 92), "pause_s": ("BG3AI_HEAT_PAUSE_S", 60),
+            "kill_cpu_c": ("BG3AI_HEAT_KILL_CPU_C", 97), "kill_s": ("BG3AI_HEAT_KILL_S", 20)}
 # The game's own scope (runner/launch_game.sh, --collect): its memory.events/memory.stat go into every tick and sample;
 # when it ends, its Result from the user journal goes to ram.log and the runner log with the last snapshot (r13 a1:
 # the game died with nothing logged about how)
@@ -383,7 +382,7 @@ def thermal_sample(root: Path = HWMON, profile: Path = PLATFORM_PROFILE, nv: str
 
 
 def sample_gpu(s: dict) -> int | None:
-    """The GPU temperature the heat guard watches: NVIDIA's when nvidia-smi answers, else the amdgpu hwmon."""
+    """The GPU temperature the heat samples record: NVIDIA's when nvidia-smi answers, else the amdgpu hwmon."""
     return s.get("nv_temp") if s.get("nv_temp") is not None else s.get("amdgpu")
 
 
@@ -445,18 +444,19 @@ def held_for(samples, hot) -> float:
     return 0.0 if end is None else end - start
 
 
-def over(cpu_c: float, gpu_c: float):
-    return lambda cpu, gpu: (cpu is not None and cpu >= cpu_c) or (gpu is not None and gpu >= gpu_c)
+def over(cpu_c: float):
+    """hot(cpu, gpu) for held_for(): the CPU at cpu_c or above (the GPU never counts)."""
+    return lambda cpu, gpu: cpu is not None and cpu >= cpu_c
 
 
 def heat_state(samples, now: float, limits: dict | None = None, stale_s: float = 30) -> dict:
     """The runner's heat pause from thermal samples (t, cpu, gpu): {"pause": hot for pause_s, "cool": under the
-    pause limits for pause_s, "hot_s", "cool_s", "cpu", "gpu", "fresh"}. Stale data (newest sample older than
+    pause limit for pause_s, "hot_s", "cool_s", "cpu", "gpu", "fresh"}. Stale data (newest sample older than
     stale_s, or none) pauses nothing."""
     lim = limits or heat_limits()
     samples = list(samples)
     fresh = bool(samples) and now - samples[-1][0] <= stale_s
-    hot = over(lim["pause_cpu_c"], lim["pause_gpu_c"])
+    hot = over(lim["pause_cpu_c"])
     hot_s = held_for(samples, hot) if fresh else 0.0
     cool_s = held_for(samples, lambda c, g: not hot(c, g)) if fresh else 0.0
     cpu, gpu = (samples[-1][1], samples[-1][2]) if samples else (None, None)
@@ -726,7 +726,7 @@ class RamWatch:
 
     def thermal(self, now: float | None = None, s: dict | None = None, pids: list[int] | None = None) -> dict | None:
         """One thermal sample: the thermal.log line (when this watchdog is the writer, synced), then the heat kill:
-        bg3 is SIGKILLed when the CPU >= kill_cpu_c or the GPU >= kill_gpu_c for kill_s. Returns the kill record."""
+        bg3 is SIGKILLed when the CPU >= kill_cpu_c for kill_s. Returns the kill record."""
         now = time.time() if now is None else now
         pids = game_pids() if pids is None else pids
         s = thermal_sample(game_up=bool(pids)) if s is None else s
@@ -742,11 +742,11 @@ class RamWatch:
         cpu, gpu = s.get("k10temp"), sample_gpu(s)
         self.heat.append((now, cpu, gpu))
         lim = self.limits
-        hot_s = held_for(self.heat, over(lim["kill_cpu_c"], lim["kill_gpu_c"]))
+        hot_s = held_for(self.heat, over(lim["kill_cpu_c"]))
         if not pids or hot_s < lim["kill_s"]:
             return None
-        why = (f"CPU {cpu} C / GPU {gpu} C for {hot_s:.0f} s (heat kill at CPU >= {lim['kill_cpu_c']:g} C or "
-               f"GPU >= {lim['kill_gpu_c']:g} C for {lim['kill_s']:g} s)")
+        why = (f"CPU {cpu} C / GPU {gpu} C for {hot_s:.0f} s (heat kill at CPU >= {lim['kill_cpu_c']:g} C for "
+               f"{lim['kill_s']:g} s)")
         for pid in pids:
             try:
                 os.kill(pid, signal.SIGKILL)

@@ -639,7 +639,7 @@ def milestones_payload(d: Path) -> dict[str, Any] | None:
 
 def thermal_view(path: Path) -> dict[str, Any] | None:
     """The last thermal.log line (bg3harness.ramwatch or an operator's thermal_log.sh) with its CPU/GPU C and
-    the heat-pause limits, or None."""
+    the CPU's heat-pause limit (the GPU has none), or None."""
     last = ramwatch.last_thermal(path)
     if not last:
         return None
@@ -651,5 +651,4 @@ def thermal_view(path: Path) -> dict[str, Any] | None:
         "cpu": cpu,
         "gpu": gpu,
         "pause_cpu_c": lim["pause_cpu_c"],
-        "pause_gpu_c": lim["pause_gpu_c"],
     }

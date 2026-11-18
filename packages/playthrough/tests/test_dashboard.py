@@ -82,7 +82,8 @@ def test_state(server):
     assert s["agent_log"]["path_id"] == "S001.log"
     assert dash.viewers.watching(dash.clock())
     th = s["thermal"]  # runtime/thermal.log's last line (runner/ramwatch.py or thermal_log.sh)
-    assert (th["cpu"], th["gpu"], th["pause_cpu_c"], th["pause_gpu_c"]) == (51, 47, 92, 85)
+    assert (th["cpu"], th["gpu"], th["pause_cpu_c"]) == (51, 47, 92)
+    assert "pause_gpu_c" not in th  # no GPU temperature limit (owner 2026-11-18)
     assert "profile=balanced" in th["line"]
     assert s["game"] == {"reachable": False, "error": "not polled yet"}
     dash.game.poll(dash.clock())  # what the game thread does while someone watches

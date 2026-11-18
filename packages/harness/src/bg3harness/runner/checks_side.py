@@ -367,9 +367,9 @@ class ChecksSide:
         return kills[-1].get("why", "too hot") if kills else None
 
     def heat_paused(self, after_kill: bool = False) -> bool:
-        """Heat guard: while runtime/thermal.log (ramwatch, or an operator's thermal_log.sh) says the CPU or the
-        GPU stayed at the heat-pause limit for pause_s (ramwatch.heat_limits: 92 C / 85 C for 60 s), no session
-        starts: waits until both stayed under it for pause_s, then True. after_kill (the heat guard killed the game):
+        """Heat guard: while runtime/thermal.log (ramwatch, or an operator's thermal_log.sh) says the CPU stayed at
+        the heat-pause limit for pause_s (ramwatch.heat_limits: 92 C for 60 s; the GPU has no limit), no session
+        starts: waits until it stayed under it for pause_s, then True. after_kill (the heat guard killed the game):
         waits unless it is cool already. The test box cut its power twice under the naut series load (2026-10-16 ~20:07,
         2026-10-17 ~16:01). A stale or missing log pauses nothing."""
         path = renv.RUNTIME / "thermal.log"
@@ -380,14 +380,13 @@ class ChecksSide:
         t0 = time.time()
         what = (f"CPU {h['cpu']} C / GPU {h['gpu']} C" + (f" for {h['hot_s']:.0f} s" if h["pause"] else ""))
         renv.log(f"heat: {what}{' after the heat kill' if after_kill else ''} (pause at CPU >= {lim['pause_cpu_c']:g} C "
-            f"or GPU >= {lim['pause_gpu_c']:g} C for {lim['pause_s']:g} s): pausing until both stay under it for "
-            f"{lim['pause_s']:g} s")
+            f"for {lim['pause_s']:g} s): pausing until it stays under it for {lim['pause_s']:g} s")
         self.event("heat_pause", cpu_c=h["cpu"], gpu_c=h["gpu"], seconds=round(h["hot_s"]), after_kill=after_kill)
         menu = not after_kill and self.heat_menu_open()   # after a heat kill there is no game to pause
         try:
             while not (self.stop_requested or self.abort or (renv.RUNTIME / "STOP").exists()):
                 self.write_status_line(f"PAUSED: too hot (CPU {h['cpu']} C, GPU {h['gpu']} C; "
-                                       f"limit {lim['pause_cpu_c']:g}/{lim['pause_gpu_c']:g} C)")
+                                       f"limit {lim['pause_cpu_c']:g} C)")
                 time.sleep(renv.HEAT_PAUSE_CHECK_S)
                 h = ramwatch.read_heat(path)
                 if h["cool"]:

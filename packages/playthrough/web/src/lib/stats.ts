@@ -46,14 +46,14 @@ export interface ThermalLine {
   stale: boolean;
 }
 
-/** "CPU 51°C · GPU 47°C (2 min old)": hot at the runner's heat-pause limits, stale after 30 s. */
+/** "CPU 51°C · GPU 47°C (2 min old)": hot at the runner's CPU heat-pause limit (the GPU has none), stale after 30 s. */
 export function thermalLine(th: Thermal, now: number): ThermalLine {
   const c = (v: number | null) => (v === null ? "?" : `${v}°C`);
   const age = Math.round(now - th.t);
   const old = age > 30 ? ` (${age > 120 ? `${Math.round(age / 60)} min` : `${age} s`} old)` : "";
   return {
     text: `CPU ${c(th.cpu)} · GPU ${c(th.gpu)}${old}`,
-    hot: (th.cpu !== null && th.cpu >= th.pause_cpu_c) || (th.gpu !== null && th.gpu >= th.pause_gpu_c),
+    hot: th.cpu !== null && th.cpu >= th.pause_cpu_c,
     stale: age > 30,
   };
 }
