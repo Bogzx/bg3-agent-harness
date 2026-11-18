@@ -430,8 +430,9 @@ def disk_free_mb(path: Path) -> int | None:
 @dataclass(frozen=True)
 class GuardLimits:
     min_avail_mb: int = 1500
-    max_cpu_c: int = 90  # below ramwatch's heat pause (92 / 85): recording is the first thing to give up
-    max_gpu_c: int = 82
+    max_cpu_c: int = 90  # below ramwatch's heat pause (92 C): recording is the first thing to give up
+    # No GPU limit (owner 2026-11-18: "you can put no limit on gpu temp overall and remove it"; the old 82 C, tuned
+    # for dev2's RTX 3050, stopped dev1's RX 6800 recordings 417 times within its spec)
     stale_s: float = 30.0  # thermal lines older than this are ignored
     min_disk_mb: int = 1024  # free space on the recording's filesystem
     # Hysteresis: once tripped, the guard clears only this far inside the limits (ffmpeg's own ~300 MB RSS would
@@ -449,7 +450,7 @@ def resource_guard(
     disk: Path | None = None,
     free_mb: Callable[[Path], int | None] | None = None,
 ) -> Callable[[], str | None]:
-    """The default guard: a reason to stop recording (low RAM, hot CPU/GPU from thermal.log, little free space on
+    """The default guard: a reason to stop recording (low RAM, hot CPU from thermal.log, little free space on
     `disk`'s filesystem), or None. A reason says its numbers; while tripped, the limits are the resume levels."""
     now = clock or time.time
     limits = limits or GuardLimits()
@@ -478,12 +479,10 @@ def resource_guard(
                 last = f.read().decode("utf-8", "replace").strip().splitlines()[-1:]
         except OSError:
             return None
-        cpu, gpu = thermal_reading(last[0]) if last else (None, None)
+        cpu = thermal_reading(last[0])[0] if last else None
         cool = limits.resume_heat_c if on else 0
         if cpu is not None and cpu >= limits.max_cpu_c - cool:
             return f"heat: cpu {cpu} C >= {limits.max_cpu_c - cool}"
-        if gpu is not None and gpu >= limits.max_gpu_c - cool:
-            return f"heat: gpu {gpu} C >= {limits.max_gpu_c - cool}"
         return None
 
     def guard() -> str | None:

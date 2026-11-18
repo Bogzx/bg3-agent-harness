@@ -162,12 +162,28 @@ def test_resource_guard(tmp_path: Path):
     assert guard() == "heat: cpu 88 C >= 87"  # tripped: it clears 3 C under the limit
     therm.write_text("2026-10-21 22:44:18 cpu=86 acpi=80 amdgpu=71 nvme=51 nv=[70,1,1,1,0x4] profile=b\n")
     assert guard() is None
-    therm.write_text("2026-10-21 22:44:18 cpu=60 acpi=80 amdgpu=71 nvme=51 nv=[83,1,1,1,0x4] profile=b\n")
-    assert guard() == "heat: gpu 83 C >= 82"
+    therm.write_text("2026-10-21 22:44:18 cpu=91 acpi=80 amdgpu=71 nvme=51 nv=[70,1,1,1,0x4] profile=b\n")
+    assert guard() == "heat: cpu 91 C >= 90"
     clock.t = therm.stat().st_mtime + 31  # stale thermal line: ignored
     assert guard() is None
     mem.write_text("MemAvailable: 1024000 kB\n")
     assert guard() == "ram: 1000 MB available < 1500"
+
+
+def test_resource_guard_never_stops_for_gpu_heat(tmp_path: Path):
+    """Owner 2026-11-18: "you can put no limit on gpu temp overall and remove it" (the 82 C guard, tuned for dev2's
+    RTX 3050, stopped dev1's RX 6800 recordings 417 times within its spec). Only the CPU's heat stops a recording."""
+    mem, therm = tmp_path / "meminfo", tmp_path / "thermal.log"
+    mem.write_text("MemAvailable: 4096000 kB\n")
+    guard = recorder.resource_guard(therm, recorder.GuardLimits(), Clock(time.time()), mem)
+    therm.write_text("2026-10-21 22:44:18 cpu=60 acpi=80 amdgpu=71 nvme=51 nv=[110,1,1,1,0x4] profile=b\n")
+    assert guard() is None
+    therm.write_text("2026-10-21 22:44:18 cpu=60 acpi=80 amdgpu=110 nvme=51 nv=[] profile=b\n")  # no nvidia-smi
+    assert guard() is None
+    therm.write_text("2026-10-21 22:44:18 cpu=91 acpi=80 amdgpu=110 nvme=51 nv=[] profile=b\n")
+    assert guard() == "heat: cpu 91 C >= 90"
+    therm.write_text("2026-10-21 22:44:18 cpu=86 acpi=80 amdgpu=110 nvme=51 nv=[] profile=b\n")
+    assert guard() is None  # tripped by the CPU, cleared by the CPU: the GPU doesn't hold it
 
 
 def test_resource_guard_resumes_inside_the_limits_and_watches_the_disk(tmp_path: Path):
@@ -302,10 +318,10 @@ def test_recorder_guard_stops_and_cools_down(tmp_path: Path, fake_env):
     rec.poll()
     assert rec.run is not None
     rec.live.get(after=0, timeout=10)
-    guard["why"] = "heat: gpu 83 C >= 82"
+    guard["why"] = "heat: cpu 91 C >= 90"
     clock.t = 1010.0
     rec.poll()
-    assert rec.run is None and rec.reason == "guard: heat: gpu 83 C >= 82"
+    assert rec.run is None and rec.reason == "guard: heat: cpu 91 C >= 90"
     guard["why"] = None
     clock.t = 1014.0
     rec.poll()

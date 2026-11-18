@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { checkAllLine, eventLine, hours, meets, passClass, spark, thermalLine } from "./stats";
 
-const TH = { t: 1000, line: "x", cpu: 51, gpu: 47, pause_cpu_c: 92, pause_gpu_c: 85 };
+const TH = { t: 1000, line: "x", cpu: 51, gpu: 47, pause_cpu_c: 92 };
 
 describe("goals", () => {
   it("judges each op", () => {
@@ -22,7 +22,9 @@ describe("goals", () => {
 describe("machine lines", () => {
   it("marks heat at the pause limits and stale readings", () => {
     expect(thermalLine(TH, 1010)).toEqual({ text: "CPU 51°C · GPU 47°C", hot: false, stale: false });
-    expect(thermalLine({ ...TH, gpu: 85 }, 1045)).toEqual({ text: "CPU 51°C · GPU 85°C (45 s old)", hot: true, stale: true });
+    expect(thermalLine({ ...TH, cpu: 92 }, 1045)).toEqual({ text: "CPU 92°C · GPU 47°C (45 s old)", hot: true, stale: true });
+    // no GPU temperature limit (owner 2026-11-18): a hot GPU alone is not "hot"
+    expect(thermalLine({ ...TH, gpu: 110 }, 1010)).toEqual({ text: "CPU 51°C · GPU 110°C", hot: false, stale: false });
     expect(thermalLine({ ...TH, cpu: null }, 1300).text).toBe("CPU ? · GPU 47°C (5 min old)");
   });
 

@@ -149,10 +149,10 @@ class LongRun(unittest.TestCase):
         with mock.patch.object(rcode.time, "sleep", side_effect=sleep):
             self.assertTrue(r.heat_paused())
         self.assertEqual(sleeps, [renv.HEAT_PAUSE_CHECK_S] * 2)              # 1st check: cool for only 55 s
-        self.assertIn("PAUSED: too hot (CPU 80 C, GPU 70 C; limit 92/85 C)", (renv.RUNTIME / renv.STATUS_LINE).read_text())
+        self.assertIn("PAUSED: too hot (CPU 80 C, GPU 70 C; limit 92 C)", (renv.RUNTIME / renv.STATUS_LINE).read_text())
         evs = [json.loads(ln) for ln in (r.state.dir / "runner_events.jsonl").read_text().splitlines()]
         self.assertEqual([(e["kind"], e["cpu_c"]) for e in evs], [("heat_pause", 93), ("heat_resume", 80)])
-        self.thermal([(80, 86)] * 10)                                    # GPU 86 C for 45 s: not yet
+        self.thermal([(80, 110)] * 30)                                   # GPU 110 C for 145 s: no GPU limit
         self.assertFalse(r.heat_paused())
         self.thermal([(99, 99)] * 14, end=time.time() - 120)               # stale log: no pause
         self.assertFalse(r.heat_paused())

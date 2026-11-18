@@ -281,7 +281,6 @@ export interface Thermal {
   cpu: number | null;
   gpu: number | null;
   pause_cpu_c: number;
-  pause_gpu_c: number;
 }
 
 export interface SessionClock {
